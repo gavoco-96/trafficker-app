@@ -272,12 +272,11 @@ function buildTotals(niche, rows) {
 
 // ─── AI REPORT ────────────────────────────────────────────────────────────────
 async function generateReport(client, rows, setReport, setLoading) {
-  const apiKey = typeof import !== "undefined" ? (window.__ENV_KEY__ || "") : "";
   setLoading(true); setReport("");
   const t = buildTotals(client.niche, rows);
   const prompt = `Eres experto en marketing digital. Reporte ejecutivo en español para "${client.name}" (${client.niche}).\nDatos: Inversión $${t.inversion} | Alcance ${t.alcance} | CPM $${t.cpm} | CPC $${t.cpc} | CTR ${t.ctr}%${client.niche==="whatsapp"?` | Leads ${t.leads} | Ventas ${t.ventas} | ROAS ${t.roas}x`:client.niche==="web"?` | Sesiones ${t.sesiones} | Compras ${t.compras} | ROAS ${t.roas}x`:` | Formularios ${t.formularios} | CPF $${t.costo_formulario}`}\n\n3 párrafos cortos: resumen, puntos clave/alertas, recomendación accionable. Tono profesional cercano. Sin bullets.`;
   try {
-    const VITE_KEY = typeof __VITE_KEY__ !== "undefined" ? __VITE_KEY__ : "";
+    const VITE_KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": VITE_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
