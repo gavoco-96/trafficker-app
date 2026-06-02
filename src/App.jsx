@@ -1013,7 +1013,32 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
             </button>
           ))}
         </div>
-        {tab === "info" && <div><ProgressBar client={client} /><div className="card"><div className="card-title">Información del cliente</div><div className="grid2"><div>{[["Negocio", client.name], ["Representante", client.representante], ["Producto/Servicio", client.producto], ["Teléfono", client.telefono], ["Email", client.email], ["Dirección", client.direccion]].map(([l, v]) => <div key={l} className="info-row"><span className="info-label">{l}</span><span>{v || <span style={{ color: "var(--muted)" }}>—</span>}</span></div>)}</div><div>{[["Usuario", client.username], ["Nicho", nicheLabel], ["Servicios", (client.serviciosContratados || []).map(id => SERVICIOS_DEFAULT.find(s => s.id === id)?.nombre || id).join(", ") || "—"]].map(([l, v]) => <div key={l} className="info-row"><span className="info-label">{l}</span><span>{v}</span></div>)}</div></div></div></div>}
+        {tab === "info" && (
+          <div>
+            <ProgressBar client={client} />
+            <div className="card">
+              <div className="card-title">Información del cliente</div>
+              <div className="grid2">
+                <div>
+                  {[["Negocio", client.name], ["Representante", client.representante], ["Producto/Servicio", client.producto], ["Teléfono", client.telefono], ["Email", client.email], ["Dirección", client.direccion]].map(([l, v]) => (
+                    <div key={l} className="info-row">
+                      <span className="info-label">{l}</span>
+                      <span>{v || <span style={{ color: "var(--muted)" }}>—</span>}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  {[["Usuario", client.username], ["Nicho", nicheLabel], ["Servicios", (client.serviciosContratados || []).map(id => SERVICIOS_DEFAULT.find(s => s.id === id)?.nombre || id).join(", ") || "—"]].map(([l, v]) => (
+                    <div key={l} className="info-row">
+                      <span className="info-label">{l}</span>
+                      <span>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {tab === "checklist" && <ChecklistPanel client={client} onUpdate={handleUpdate} />}
         {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
@@ -1026,4 +1051,311 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
           {isLaunch && <div className="grid3" style={{ marginBottom: "1rem" }}><MetricCard label="Potenciales" value={t.clientesPotenciales} /><MetricCard label="Formularios" value={t.formularios} /><MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight /></div>}
           <div className="card scroll-x">
             <table className="tbl">
-              <thead><tr><th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>{isWA && <><th>Leads</th><th>Contactados</th><th>Ventas</th><th>Ingresos</th></>}{isWeb && <><th>Sesiones</th><th>Carrito</th><th>C
+              <thead>
+                <tr>
+                  <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
+                  {isWA && <><th>Leads</th><th>Contactados</th><th>Ventas</th><th>Ingresos</th></>}
+                  {isWeb && <><th>Sesiones</th><th>Carrito</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
+                  {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr><td colSpan={12} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
+                )}
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>
+                    <td>${fmtNum(r.inversion, 2)}</td>
+                    <td>${fmtNum(r.cpm, 2)}</td>
+                    <td>${fmtNum(r.cpc, 2)}</td>
+                    <td>{fmtNum(r.ctr, 2)}%</td>
+                    {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.contactados)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso, 2)}</td></>}
+                    {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.agregar_carrito)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso, 2)}</td><td>{fmtNum(r.roas, 2)}x</td></>}
+                    {isLaunch && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td></>}
+                    <td>
+                      <button className="btn btn-danger btn-sm" onClick={() => {
+                        if (window.confirm("¿Eliminar?"))
+                          handleUpdate({ ...client, records: (client.records || []).filter((_, xi) => xi !== i) });
+                      }}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>}
+        {tab === "reporte" && <div>
+          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          <button className="btn btn-primary" disabled={loadingReport || rows.length === 0} onClick={() => generateReport(client, rows, setReport, setLoadingReport)} style={{ marginBottom: "1rem" }}>{loadingReport ? "Generando..." : "Generar reporte IA"}</button>
+          {(report || loadingReport) && <div className="ai-report"><div className="ai-report-header"><span>✦</span> Reporte · {client.name}</div><div className={`ai-report-body ${loadingReport && !report ? "streaming-cursor" : ""}`}>{report || " "}{loadingReport && report && <span className="streaming-cursor" />}</div></div>}
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
+function ClientDashboard({ client, onLogout }) {
+  const [tab, setTab] = useState("resumen");
+  const [period, setPeriod] = useState("mtd");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
+  const t = buildTotals(client.niche, rows);
+  const isWA = client.niche === "whatsapp", isWeb = client.niche === "web", isLaunch = client.niche === "lanzamiento";
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
+        <div className="nav">
+          <div className="nav-label">Vistas</div>
+          {["resumen", "detalle", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "detalle" ? "Detalle diario" : "Histórico"}</div>)}
+        </div>
+        <div className="sidebar-footer">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
+          <button className="btn btn-ghost btn-sm btn-full" onClick={onLogout}>Cerrar sesión</button>
+        </div>
+      </div>
+      <div className="main">
+        <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
+        <div className="content">
+          <ProgressBar client={client} />
+          {tab === "resumen" && <>
+            <div style={{ marginBottom: "1.25rem" }}><div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Inversión del período</div><div style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--mono)" }}>${t.inversion || "0.00"}</div><div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{rows.length} días con datos</div></div>
+            <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Alcance" value={t.alcance || "—"} /><MetricCard label="CPM" value={"$" + (t.cpm || "—")} /><MetricCard label="CPC" value={"$" + (t.cpc || "—")} /><MetricCard label="CTR" value={(t.ctr || "—") + "%"} /></div>
+            {isWA && <div className="grid4"><MetricCard label="Leads" value={t.leads || "—"} /><MetricCard label="Contactados" value={t.contactados || "—"} /><MetricCard label="Ventas" value={t.ventas || "—"} /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
+            {isWeb && <div className="grid4"><MetricCard label="Sesiones" value={t.sesiones || "—"} /><MetricCard label="Compras" value={t.compras || "—"} /><MetricCard label="Ingresos" value={"$" + (t.ingreso || "0")} highlight /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
+            {isLaunch && <div className="grid3"><MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} /><MetricCard label="Formularios" value={t.formularios || "—"} /><MetricCard label="Costo/form" value={"$" + (t.costo_formulario || "—")} highlight /></div>}
+            {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
+          </>}
+          {tab === "detalle" && (
+            <div className="card scroll-x">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
+                    {isWA && <><th>Leads</th><th>Ventas</th><th>Ingresos</th></>}
+                    {isWeb && <><th>Sesiones</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
+                    {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && <tr><td colSpan={10} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>
+                      <td>${fmtNum(r.inversion, 2)}</td>
+                      <td>${fmtNum(r.cpm, 2)}</td>
+                      <td>${fmtNum(r.cpc, 2)}</td>
+                      <td>{fmtNum(r.ctr, 2)}%</td>
+                      {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso, 2)}</td></>}
+                      {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso, 2)}</td><td>{fmtNum(r.roas, 2)}x</td></>}
+                      {isLaunch && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td></>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
+function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient }) {
+  const [view, setView] = useState("clientes");
+  const [selectedId, setSelectedId] = useState(null);
+  const [addingClient, setAddingClient] = useState(false);
+  const [editingClient, setEditingClient] = useState(null);
+  const [deleteModal, setDeleteModal] = useState(null);
+  const { show, el: toastEl } = useToast();
+  const selected = clients.find(c => c.id === selectedId);
+
+  const Sidebar = () => (
+    <div className="sidebar">
+      <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
+      <div className="nav">
+        <div className="nav-label">Panel</div>
+        {["clientes", "resumen"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : "Resumen general"}</div>)}
+        {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
+      </div>
+      <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
+    </div>
+  );
+
+  function renderModal() {
+    if (!deleteModal) return null;
+    if (deleteModal === "all") return (
+      <ConfirmModal title="⚠️ Eliminar todos los clientes" body="Se descargará un JSON de respaldo por cada cliente. Acción irreversible." confirmLabel="Descargar y eliminar todo" danger
+        onConfirm={() => { clients.forEach(c => exportClientJSON(c)); setTimeout(() => { onDeleteClient("__ALL__"); setDeleteModal(null); }, 600); }}
+        onCancel={() => setDeleteModal(null)} />
+    );
+    return (
+      <ConfirmModal title={`Eliminar a ${deleteModal.name}`} body="Se descargará una copia de respaldo antes de eliminar. Acción irreversible." confirmLabel="Descargar y eliminar" danger
+        onConfirm={() => { exportClientJSON(deleteModal); setTimeout(() => { onDeleteClient(deleteModal.id); setDeleteModal(null); setSelectedId(null); }, 300); }}
+        onCancel={() => setDeleteModal(null)} />
+    );
+  }
+
+  if (selectedId && selected) return <><div className="app"><Sidebar /><AdminClientDetail client={selected} onBack={() => setSelectedId(null)} onUpdate={onUpdate} /></div>{renderModal()}{toastEl}</>;
+  if (addingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setAddingClient(false)}>← Volver</button><div className="topbar-title">Nuevo cliente</div></div><div className="content"><ClientForm onSave={async c => { await onAddClient(c); show("✓ Cliente creado correctamente", "ok"); setAddingClient(false); }} onCancel={() => setAddingClient(false)} /></div></div></div>;
+  if (editingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setEditingClient(null)}>← Volver</button><div className="topbar-title">Editar: {editingClient.name}</div></div><div className="content"><ClientForm initial={editingClient} onSave={async c => { await onUpdate({ ...editingClient, ...c }); show("✓ Cliente actualizado", "ok"); setEditingClient(null); }} onCancel={() => setEditingClient(null)} /></div></div></div>;
+
+  return (
+    <>
+      {toastEl}
+      <div className="app"><Sidebar />
+        <div className="main">
+          <div className="topbar">
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : "Resumen general"}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
+              {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
+            </div>
+          </div>
+          <div className="content">
+            {view === "clientes" && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "1rem" }}>
+              {clients.map(c => {
+                const nl = c.niche === "whatsapp" ? "WhatsApp" : c.niche === "web" ? "Web" : "Lanzamiento";
+                const nc = c.niche === "whatsapp" ? "badge-wa" : c.niche === "web" ? "badge-web" : "badge-launch";
+                return <div key={c.id} className="card" style={{ cursor: "pointer", transition: "border-color .15s", marginBottom: 0 }} onMouseEnter={e => e.currentTarget.style.borderColor = c.color + "88"} onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div className="avatar" style={{ background: c.color + "22", color: c.color }}>{c.logo || c.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div><div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{c.representante || "Sin representante"}</div></div></div>
+                    <span className={`badge ${nc}`}>{nl}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>{(c.records || []).length} registros · {(c.serviciosContratados || []).length} servicios</div>
+                  <div style={{ display: "flex", gap: 8 }}><button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => setSelectedId(c.id)}>Ver perfil</button><button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditingClient(c); }}>Editar</button><button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteModal(c); }}>🗑</button></div>
+                </div>;
+              })}
+              {clients.length === 0 && <div className="empty"><div style={{ fontSize: 32, marginBottom: 12, opacity: .3 }}>◎</div><div>Sin clientes. Crea el primero.</div></div>}
+            </div>}
+            {view === "resumen" && <div>
+              <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Total clientes" value={clients.length} /><MetricCard label="WhatsApp" value={clients.filter(c => c.niche === "whatsapp").length} /><MetricCard label="Web" value={clients.filter(c => c.niche === "web").length} /><MetricCard label="Lanzamiento" value={clients.filter(c => c.niche === "lanzamiento").length} /></div>
+              <div className="card">
+                <div className="card-title">Inversión total por cliente</div>
+                {clients.map(c => {
+                  const total = sum(c.records || [], "inversion");
+                  const maxInv = Math.max(...clients.map(cc => sum(cc.records || [], "inversion")), 1);
+                  return (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                      <div style={{ width: 110, fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                      <div style={{ flex: 1, background: "var(--surface2)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                        <div style={{ width: `${(total / maxInv) * 100}%`, height: "100%", background: c.color, borderRadius: 4 }} />
+                      </div>
+                      <div style={{ fontSize: 13, fontFamily: "var(--mono)", minWidth: 72, textAlign: "right" }}>${fmtNum(total, 0)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>}
+          </div>
+        </div>
+      </div>
+      {renderModal()}
+    </>
+  );
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin, loading }) {
+  const [user, setUser] = useState(""); const [pass, setPass] = useState(""); const [err, setErr] = useState("");
+  async function attempt() { setErr(""); const ok = await onLogin(user.trim(), pass); if (!ok) setErr("Usuario o contraseña no encontrados."); }
+  return (
+    <div className="login">
+      <div className="login-card">
+        <div className="login-logo">Trafficker Pro · Dashboard</div>
+        <div className="login-title">Bienvenido</div>
+        <div className="login-sub">Ingresa con tu usuario y contraseña</div>
+        <div className="field"><label>Usuario</label><input type="text" value={user} onChange={e => { setUser(e.target.value); setErr(""); }} onKeyDown={e => e.key === "Enter" && attempt()} placeholder="tu_usuario" autoFocus /></div>
+        <div className="field"><label>Contraseña</label><PasswordInput value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} /></div>
+        {err && <div className="err">{err}</div>}
+        <button className="btn btn-primary btn-full" style={{ marginTop: "1rem" }} disabled={loading} onClick={attempt}>{loading ? "Verificando..." : "Entrar"}</button>
+        <div style={{ marginTop: "1.25rem", display: "flex", justifyContent: "center" }}><DbStatus /></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [session, setSession] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [appLoading, setAppLoading] = useState(true);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [dbError, setDbError] = useState(null);
+
+  useEffect(() => {
+    db.getAll().then(result => {
+      if (result.ok) { setClients(result.data); setDbError(null); }
+      else { setDbError("No se pudo conectar a la base de datos. Verifica las variables de entorno en Vercel."); }
+      setAppLoading(false);
+    });
+  }, []);
+
+  async function saveClient(client) {
+    const result = await db.upsert(client);
+    if (result.ok) setClients(prev => prev.find(c => c.id === client.id) ? prev.map(c => c.id === client.id ? client : c) : [...prev, client]);
+    return result;
+  }
+
+  async function handleLogin(username, password) {
+    setLoginLoading(true);
+    if (username === ADMIN.username && password === ADMIN.password) { setSession({ role: "admin" }); setLoginLoading(false); return true; }
+    try {
+      const r = await fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: H });
+      if (!r.ok) throw new Error("Sin conexión a BD");
+      const rows = await r.json();
+      const all = rows.map(row => row.data);
+      setClients(all);
+      const found = all.find(c => c.username === username && c.password === password);
+      if (found) { setSession({ role: "client", clientId: found.id }); setLoginLoading(false); return true; }
+    } catch (e) { console.error("Login error:", e); }
+    setLoginLoading(false); return false;
+  }
+
+  async function updateClient(updated) { return await saveClient(updated); }
+  async function addClient(data) {
+    const nc = { antecedentes: [], records: [], checklist: {}, cuentas: [], contratos: [], ...data, id: "c" + Date.now() };
+    return await saveClient(nc);
+  }
+  async function deleteClient(id) {
+    if (id === "__ALL__") { await db.deleteAll(); setClients([]); }
+    else { await db.delete(id); setClients(prev => prev.filter(c => c.id !== id)); }
+  }
+
+  if (appLoading) return (
+    <><style>{css}</style>
+      <div className="loading-screen">
+        <div className="spinner" />
+        <div style={{ fontSize: 14 }}>Conectando con base de datos...</div>
+      </div>
+    </>
+  );
+
+  if (dbError) return (
+    <><style>{css}</style>
+      <div className="loading-screen">
+        <div style={{ fontSize: 28, marginBottom: 12 }}>⚠️</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--red)", marginBottom: 8 }}>Error de conexión</div>
+        <div style={{ fontSize: 13, color: "var(--muted)", textAlign: "center", maxWidth: 400 }}>{dbError}</div>
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => { setAppLoading(true); setDbError(null); db.getAll().then(r => { if (r.ok) { setClients(r.data); } else setDbError(r.error); setAppLoading(false); }); }}>Reintentar conexión</button>
+      </div>
+    </>
+  );
+
+  const clientSession = session?.role === "client" ? clients.find(c => c.id === session.clientId) : null;
+
+  return (
+    <>
+      <style>{css}</style>
+      {!session && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
+      {session?.role === "admin" && <AdminPanel clients={clients} onLogout={() => setSession(null)} onUpdate={updateClient} onAddClient={addClient} onDeleteClient={deleteClient} />}
+      {session?.role === "client" && clientSession && <ClientDashboard client={clientSession} onLogout={() => setSession(null)} />}
+      {session?.role === "client" && !clientSession && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
+    </>
+  );
+}
