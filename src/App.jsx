@@ -232,6 +232,20 @@ const css = `
   .ai-report-body{font-size:13px;line-height:1.7;color:var(--text);white-space:pre-wrap}
   .streaming-cursor::after{content:'▌';animation:blink .7s step-end infinite}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+  /* PROYECCIONES */
+  .kpi-card{background:var(--surface2);border-radius:var(--r);padding:1rem;margin-bottom:.75rem;border:1px solid var(--border)}
+  .kpi-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;gap:12px}
+  .kpi-progress-bar{height:10px;background:var(--border);border-radius:5px;overflow:hidden;margin:.5rem 0}
+  .kpi-progress-fill{height:100%;border-radius:5px;transition:width .4s ease}
+  .kpi-relevance-high{color:var(--red);font-weight:600;font-size:11px}
+  .kpi-relevance-mid{color:var(--amber);font-weight:600;font-size:11px}
+  .kpi-relevance-low{color:var(--green);font-weight:600;font-size:11px}
+  .funnel-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;padding:1rem 0}
+  .funnel-stage{display:flex;align-items:center;width:100%;transition:all .3s}
+  .funnel-bar{height:44px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:13px;font-weight:500;transition:width .4s ease;min-width:120px}
+  .funnel-label{font-size:12px;color:var(--muted);width:100px;text-align:right;margin-right:12px;flex-shrink:0}
+  .funnel-count{font-family:var(--mono);font-size:13px;color:var(--muted);width:80px;text-align:left;margin-left:12px;flex-shrink:0}
+  .funnel-pct{font-size:11px;opacity:.7;margin-left:6px}
   /* MISC */
   .scroll-x{overflow-x:auto}
   .empty{text-align:center;padding:3rem 1rem;color:var(--muted)}
@@ -259,23 +273,42 @@ const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
 const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
-// Formato de número con separadores mientras se escribe
+// Input numérico sin bug de foco - permite decimales fluidos
 function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight }) {
-  const [raw, setRaw] = useState(value === "" || value === undefined ? "" : String(value));
-  useEffect(() => { setRaw(value === "" || value === undefined ? "" : String(value)); }, [value]);
-  function handleChange(e) {
-    const v = e.target.value.replace(/[^0-9.]/g, "");
-    setRaw(v);
-    onChange(v === "" ? "" : parseFloat(v) || 0);
+  const [localVal, setLocalVal] = useState("");
+  const focusedRef = useState(false);
+
+  function handleFocus() {
+    // Al entrar, mostrar el valor actual sin formato
+    setLocalVal(value === "" || value === undefined || value === null ? "" : String(value));
   }
-  const display = raw;
+
+  function handleChange(e) {
+    const raw = e.target.value.replace(/[^0-9.]/g, "");
+    setLocalVal(raw);
+    if (raw === "" || raw === ".") { onChange(""); return; }
+    const num = parseFloat(raw);
+    if (!isNaN(num)) onChange(num);
+  }
+
+  function handleBlur() {
+    const num = parseFloat(localVal);
+    setLocalVal(isNaN(num) ? "" : String(num));
+  }
+
+  // Valor a mostrar: si el campo tiene foco usamos localVal, sino el value externo
+  const displayVal = (value === "" || value === undefined || value === null) ? "" : String(value);
+
   return (
-    <div className="input-prefix" style={{ position: "relative" }}>
+    <div className="input-prefix">
       {prefix && <span className="pre">{prefix}</span>}
       <input
-        type="text" inputMode="decimal"
-        value={display}
+        type="text"
+        inputMode="decimal"
+        value={localVal || displayVal}
         onChange={handleChange}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         placeholder={placeholder || "0"}
         readOnly={readOnly}
         style={highlight ? { borderColor: "rgba(124,58,237,.5)", background: "rgba(124,58,237,.05)" } : {}}
@@ -901,9 +934,448 @@ function AntecedentesPanel({ client, onUpdate, readOnly }) {
   );
 }
 
+
+// ─── METRICAS ADMIN PANEL (ver/editar) ───────────────────────────────────────
+function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom, to, setTo, rows, t, isWA, isWeb, isLaunch, onAdd }) {
+  const [editingRow, setEditingRow] = useState(null); // índice del registro en edición
+  const [editForm, setEditForm] = useState({});
+
+  function startEdit(r, i) {
+    setEditingRow(i);
+    setEditForm({ ...r });
+  }
+  function cancelEdit() { setEditingRow(null); setEditForm({}); }
+  function saveEdit() {
+    const allRecords = [...(client.records || [])];
+    // Encontrar el índice real en client.records (puede diferir por filtro)
+    const realIdx = allRecords.findIndex(r => r === rows[editingRow]);
+    if (realIdx >= 0) {
+      allRecords[realIdx] = { ...editForm };
+      onUpdate({ ...client, records: allRecords });
+    }
+    setEditingRow(null);
+  }
+  function deleteRow(i) {
+    if (!window.confirm("¿Eliminar este registro?")) return;
+    const allRecords = [...(client.records || [])];
+    const realIdx = allRecords.findIndex(r => r === rows[i]);
+    if (realIdx >= 0) allRecords.splice(realIdx, 1);
+    onUpdate({ ...client, records: allRecords });
+  }
+  const ef = (k, v) => setEditForm(p => ({ ...p, [k]: v }));
+  const EditNum = ({ fk, prefix }) => (
+    <NumInput value={editForm[fk] ?? ""} onChange={v => ef(fk, v)} prefix={prefix} placeholder="0" />
+  );
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: 8 }}>
+        <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+        <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Nuevo registro</button>
+      </div>
+      <div className="grid4" style={{ marginBottom: "1rem" }}>
+        <MetricCard label="Inversión" value={"$" + t.inversion} />
+        <MetricCard label="Alcance" value={t.alcance} />
+        <MetricCard label="CPM" value={"$" + t.cpm} />
+        <MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight />
+      </div>
+      {isWA && <div className="grid4" style={{ marginBottom: "1rem" }}>
+        <MetricCard label="Leads" value={t.leads} />
+        <MetricCard label="Contactados" value={t.contactados} />
+        <MetricCard label="Ventas" value={t.ventas} />
+        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
+      </div>}
+      {isWeb && <div className="grid4" style={{ marginBottom: "1rem" }}>
+        <MetricCard label="Sesiones" value={t.sesiones} />
+        <MetricCard label="Carrito" value={t.agregar_carrito} />
+        <MetricCard label="Compras" value={t.compras} />
+        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
+      </div>}
+      {isLaunch && <div className="grid3" style={{ marginBottom: "1rem" }}>
+        <MetricCard label="Potenciales" value={t.clientesPotenciales} />
+        <MetricCard label="Formularios" value={t.formularios} />
+        <MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight />
+      </div>}
+      <div className="card scroll-x">
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+          Haz clic en ✏️ para editar un registro existente
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
+              {isWA && <><th>Leads</th><th>Contactados</th><th>Ventas</th><th>Ingresos</th></>}
+              {isWeb && <><th>Sesiones</th><th>Carrito</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
+              {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
+              <th style={{ width: 80 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={14} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
+            )}
+            {rows.map((r, i) => {
+              const isEdit = editingRow === i;
+              return (
+                <tr key={i} style={isEdit ? { background: "rgba(124,58,237,.06)" } : {}}>
+                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                    {isEdit ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} /> : r.date}
+                  </td>
+                  <td>{isEdit ? <EditNum fk="inversion" prefix="$" /> : "$" + fmtNum(r.inversion, 2)}</td>
+                  <td>{isEdit ? <EditNum fk="cpm" prefix="$" /> : "$" + fmtNum(r.cpm, 2)}</td>
+                  <td>{isEdit ? <EditNum fk="cpc" prefix="$" /> : "$" + fmtNum(r.cpc, 2)}</td>
+                  <td>{isEdit ? <EditNum fk="ctr" /> : fmtNum(r.ctr, 2) + "%"}</td>
+                  {isWA && <>
+                    <td>{isEdit ? <EditNum fk="leads" /> : fmtNum(r.leads)}</td>
+                    <td>{isEdit ? <EditNum fk="contactados" /> : fmtNum(r.contactados)}</td>
+                    <td>{isEdit ? <EditNum fk="ventas" /> : fmtNum(r.ventas)}</td>
+                    <td>{isEdit ? <EditNum fk="ingreso" prefix="$" /> : "$" + fmtNum(r.ingreso, 2)}</td>
+                  </>}
+                  {isWeb && <>
+                    <td>{isEdit ? <EditNum fk="sesiones" /> : fmtNum(r.sesiones)}</td>
+                    <td>{isEdit ? <EditNum fk="agregar_carrito" /> : fmtNum(r.agregar_carrito)}</td>
+                    <td>{isEdit ? <EditNum fk="compras" /> : fmtNum(r.compras)}</td>
+                    <td>{isEdit ? <EditNum fk="ingreso" prefix="$" /> : "$" + fmtNum(r.ingreso, 2)}</td>
+                    <td>{isEdit ? <EditNum fk="roas" /> : fmtNum(r.roas, 2) + "x"}</td>
+                  </>}
+                  {isLaunch && <>
+                    <td>{isEdit ? <EditNum fk="clientesPotenciales" /> : fmtNum(r.clientesPotenciales)}</td>
+                    <td>{isEdit ? <EditNum fk="formularios" /> : fmtNum(r.formularios)}</td>
+                  </>}
+                  <td>
+                    {isEdit ? (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button className="btn btn-green btn-sm" onClick={saveEdit} title="Guardar">✓</button>
+                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Cancelar">×</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(r, i)} title="Editar">✏️</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => deleteRow(i)} title="Eliminar">🗑</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ─── PROYECCIONES / KPIs SMART ────────────────────────────────────────────────
+
+const METRICAS_TRACKEO = [
+  { key: "leads", label: "Leads" },
+  { key: "ventas", label: "Ventas" },
+  { key: "ingreso", label: "Ingresos ($)" },
+  { key: "roas", label: "ROAS" },
+  { key: "contactados", label: "Contactados" },
+  { key: "compras", label: "Compras" },
+  { key: "sesiones", label: "Sesiones" },
+  { key: "formularios", label: "Formularios" },
+  { key: "clientesPotenciales", label: "Clientes potenciales" },
+  { key: "clics", label: "Clics" },
+  { key: "alcance", label: "Alcance" },
+  { key: "cpc", label: "CPC ($)" },
+  { key: "ctr", label: "CTR (%)" },
+];
+
+const FUNNEL_DEFAULT = [
+  { key: "impresiones", label: "Impresiones", color: "#7C3AED" },
+  { key: "alcance_f", label: "Alcance", color: "#0EA5E9" },
+  { key: "clics_f", label: "Clics en el Enlace", color: "#10B981" },
+  { key: "resultados_f", label: "Resultados", color: "#F59E0B" },
+  { key: "ventas_f", label: "Ventas", color: "#EF4444" },
+];
+
+function calcKpiProgress(kpi, records) {
+  if (!kpi.metrica || !records || !records.length) return 0;
+  const total = records.reduce((a, r) => a + (Number(r[kpi.metrica]) || 0), 0);
+  const meta = parseFloat(kpi.meta_valor) || 0;
+  if (meta === 0) return 0;
+  // Si la métrica es porcentaje tipo CTR/ROAS, usar el promedio
+  const avg_val = total / records.length;
+  const use = ["ctr", "roas", "cpc", "cpm"].includes(kpi.metrica) ? avg_val : total;
+  return Math.min(Math.round((use / meta) * 100), 999);
+}
+
+function getKpiColor(pct) {
+  if (pct >= 100) return "var(--green)";
+  if (pct >= 60) return "var(--accent)";
+  if (pct >= 30) return "var(--amber)";
+  return "var(--red)";
+}
+
+function KpiCard({ kpi, records, onEdit, onDelete, readOnly }) {
+  const pct = calcKpiProgress(kpi, records);
+  const color = getKpiColor(pct);
+  const relevanceLabel = kpi.relevancia === "alto" ? "Alta" : kpi.relevancia === "medio" ? "Media" : "Baja";
+  const relevanceCls = kpi.relevancia === "alto" ? "kpi-relevance-high" : kpi.relevancia === "medio" ? "kpi-relevance-mid" : "kpi-relevance-low";
+
+  return (
+    <div className="kpi-card">
+      <div className="kpi-header">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{kpi.nombre || "Sin nombre"}</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+            Meta: <span style={{ color: "var(--text)", fontFamily: "var(--mono)" }}>{kpi.meta_valor || "—"}</span>
+            {kpi.unidad && <span style={{ color: "var(--muted)" }}> {kpi.unidad}</span>}
+            {" · "}Plazo: <span style={{ color: "var(--text)" }}>{kpi.plazo || "—"}</span>
+            {" · "}<span className={relevanceCls}>Relevancia {relevanceLabel}</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--mono)", color }}>{pct}%</div>
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>completado</div>
+          </div>
+          {!readOnly && (
+            <div style={{ display: "flex", gap: 4 }}>
+              <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Editar KPI">✏️</button>
+              <button className="btn btn-danger btn-sm" onClick={onDelete}>×</button>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="kpi-progress-bar">
+        <div className="kpi-progress-fill" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+      </div>
+      {kpi.descripcion && (
+        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>{kpi.descripcion}</div>
+      )}
+      {kpi.realizacion && (
+        <div style={{ fontSize: 11, marginTop: 4, padding: "4px 8px", borderRadius: 6, background: "rgba(124,58,237,.08)", color: "var(--accent)" }}>
+          IA: {kpi.realizacion}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KpiForm({ initial, client, onSave, onCancel }) {
+  const blank = { nombre: "", meta_valor: "", unidad: "", plazo: "", relevancia: "alto", metrica: "leads", descripcion: "", realizacion: "" };
+  const [form, setForm] = useState(initial ? { ...blank, ...initial } : blank);
+  const [loadingIA, setLoadingIA] = useState(false);
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  async function evalIA() {
+    setLoadingIA(true);
+    const ants = client.antecedentes || [];
+    const records = client.records || [];
+    const context = ants.length > 0
+      ? `Antecedentes históricos: ${JSON.stringify(ants.slice(-3))}`
+      : records.length > 0
+        ? `Datos recientes (${records.length} registros): promedio ${form.metrica} = ${(records.reduce((a,r) => a + (Number(r[form.metrica])||0),0)/records.length).toFixed(2)}`
+        : "Sin datos históricos disponibles";
+    const prompt = `Eres experto en marketing digital. Evalúa si este KPI es realista en máximo 2 oraciones. KPI: "${form.nombre}", meta: ${form.meta_valor} ${form.unidad}, plazo: ${form.plazo}, métrica: ${form.metrica}. ${context}. Responde solo con la evaluación, sin preámbulo.`;
+    try {
+      const KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 200, messages: [{ role: "user", content: prompt }] })
+      });
+      const data = await res.json();
+      f("realizacion", data.content?.[0]?.text || "No se pudo evaluar.");
+    } catch { f("realizacion", "Error al conectar con la IA."); }
+    setLoadingIA(false);
+  }
+
+  return (
+    <div className="card" style={{ borderColor: "rgba(124,58,237,.4)", maxWidth: 600 }}>
+      <div className="card-title">{initial ? "Editar KPI" : "Nuevo KPI"}</div>
+      <div className="form-row">
+        <div className="field"><label>Nombre del KPI</label><input type="text" value={form.nombre} onChange={e => f("nombre", e.target.value)} placeholder="Ej: Aumentar ventas" /></div>
+        <div className="field"><label>Métrica a trackear</label>
+          <select value={form.metrica} onChange={e => f("metrica", e.target.value)}>
+            {METRICAS_TRACKEO.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="form-row3">
+        <div className="field"><label>Meta (valor)</label><input type="text" inputMode="decimal" value={form.meta_valor} onChange={e => f("meta_valor", e.target.value)} placeholder="Ej: 30" /></div>
+        <div className="field"><label>Unidad</label><input type="text" value={form.unidad} onChange={e => f("unidad", e.target.value)} placeholder="%, $, unidades..." /></div>
+        <div className="field"><label>Plazo</label><input type="text" value={form.plazo} onChange={e => f("plazo", e.target.value)} placeholder="Ej: 30 días" /></div>
+      </div>
+      <div className="field"><label>Relevancia</label>
+        <select value={form.relevancia} onChange={e => f("relevancia", e.target.value)}>
+          <option value="alto">Alta</option>
+          <option value="medio">Media</option>
+          <option value="bajo">Baja</option>
+        </select>
+      </div>
+      <div className="field"><label>Descripción (opcional)</label><input type="text" value={form.descripcion} onChange={e => f("descripcion", e.target.value)} placeholder="Contexto o detalles adicionales" /></div>
+      {form.realizacion && (
+        <div style={{ background: "rgba(124,58,237,.08)", border: "1px solid rgba(124,58,237,.2)", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "var(--text)", marginBottom: "1rem" }}>
+          <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, marginBottom: 4 }}>✦ Evaluación IA</div>
+          {form.realizacion}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button className="btn btn-primary btn-sm" onClick={() => { if (!form.nombre || !form.meta_valor) return alert("Completa nombre y meta."); onSave({ ...form, id: initial?.id || "kpi" + Date.now() }); }}>
+          {initial ? "Guardar cambios" : "Crear KPI"}
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={evalIA} disabled={loadingIA || !form.nombre || !form.meta_valor}>
+          {loadingIA ? "Evaluando..." : "✦ Evaluar con IA"}
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+function FunnelPanel({ client, onUpdate, readOnly }) {
+  const funnelData = client.funnel || FUNNEL_DEFAULT.map(f => ({ ...f, valor: "" }));
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(funnelData);
+
+  const maxVal = Math.max(...local.map(f => parseFloat(f.valor) || 0), 1);
+
+  function updLocal(i, k, v) { setLocal(p => p.map((f, xi) => xi === i ? { ...f, [k]: v } : f)); }
+  function addStage() { setLocal(p => [...p, { key: "custom_" + Date.now(), label: "Nueva etapa", color: "#7B7A8E", valor: "" }]); }
+  function removeStage(i) { if (local.length > 2) setLocal(p => p.filter((_, xi) => xi !== i)); }
+
+  function save() {
+    onUpdate({ ...client, funnel: local });
+    setEditing(false);
+  }
+
+  return (
+    <div className="card">
+      <div className="sec-header">
+        <div>
+          <div className="card-title" style={{ margin: 0 }}>Embudo de conversión</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Ingresa los valores de cada etapa</div>
+        </div>
+        {!readOnly && (
+          editing
+            ? <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setLocal(funnelData); setEditing(false); }}>Cancelar</button>
+              </div>
+            : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>
+        )}
+      </div>
+      <div className="funnel-wrap">
+        {local.map((stage, i) => {
+          const val = parseFloat(stage.valor) || 0;
+          const pct = maxVal > 0 ? (val / maxVal) * 100 : 0;
+          const convPct = i > 0 ? (() => {
+            const prev = parseFloat(local[i-1].valor) || 0;
+            return prev > 0 ? ((val / prev) * 100).toFixed(1) : null;
+          })() : null;
+          const barWidth = `${Math.max(pct, 8)}%`;
+          return (
+            <div key={stage.key} className="funnel-stage" style={{ justifyContent: "center" }}>
+              <div className="funnel-label">{stage.label}</div>
+              <div className="funnel-bar" style={{ width: barWidth, background: stage.color + "33", border: `1px solid ${stage.color}66` }}>
+                {editing ? (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", width: "100%" }}>
+                    <input type="text" inputMode="decimal" value={stage.valor} onChange={e => updLocal(i, "valor", e.target.value.replace(/[^0-9.]/g, ""))}
+                      style={{ width: 80, padding: "2px 6px", fontSize: 12, background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 4, color: "var(--text)" }}
+                      placeholder="0" />
+                    <input type="text" value={stage.label} onChange={e => updLocal(i, "label", e.target.value)}
+                      style={{ flex: 1, padding: "2px 6px", fontSize: 11, background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 4, color: "var(--text)" }}
+                      placeholder="Etapa" />
+                    <input type="color" value={stage.color} onChange={e => updLocal(i, "color", e.target.value)}
+                      style={{ width: 24, height: 24, padding: 2, border: "none", borderRadius: 4, cursor: "pointer", background: "none" }} />
+                    {local.length > 2 && <button onClick={() => removeStage(i)} style={{ background: "none", border: "none", color: "rgba(255,255,255,.5)", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>}
+                  </div>
+                ) : (
+                  <>
+                    <span style={{ color: stage.color, fontFamily: "var(--mono)", fontSize: 13, fontWeight: 600 }}>
+                      {val > 0 ? val.toLocaleString("es-EC") : "—"}
+                    </span>
+                    {convPct && <span className="funnel-pct" style={{ color: stage.color }}>↓{convPct}%</span>}
+                  </>
+                )}
+              </div>
+              <div className="funnel-count">
+                {val > 0 && !editing && <span style={{ fontSize: 11, color: "var(--muted)" }}>{pct.toFixed(0)}%</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {editing && (
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={addStage}>+ Agregar etapa</button>
+      )}
+    </div>
+  );
+}
+
+function ProyeccionesPanel({ client, onUpdate, readOnly }) {
+  const kpis = client.kpis || [];
+  const [showForm, setShowForm] = useState(false);
+  const [editingKpi, setEditingKpi] = useState(null);
+  const records = client.records || [];
+
+  function saveKpi(kpi) {
+    const existing = kpis.find(k => k.id === kpi.id);
+    const updated = existing ? kpis.map(k => k.id === kpi.id ? kpi : k) : [...kpis, kpi];
+    onUpdate({ ...client, kpis: updated });
+    setShowForm(false);
+    setEditingKpi(null);
+  }
+
+  function deleteKpi(id) {
+    if (window.confirm("¿Eliminar este KPI?")) onUpdate({ ...client, kpis: kpis.filter(k => k.id !== id) });
+  }
+
+  return (
+    <div>
+      {/* KPIs SMART */}
+      <div className="sec-header">
+        <div>
+          <div className="sec-title">KPIs y metas SMART</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Las barras se actualizan automáticamente con los datos diarios</div>
+        </div>
+        {!readOnly && !showForm && !editingKpi && (
+          <button className="btn btn-primary btn-sm" onClick={() => setShowForm(true)}>+ Nuevo KPI</button>
+        )}
+      </div>
+
+      {(showForm || editingKpi) && (
+        <KpiForm
+          initial={editingKpi}
+          client={client}
+          onSave={saveKpi}
+          onCancel={() => { setShowForm(false); setEditingKpi(null); }}
+        />
+      )}
+
+      {kpis.length === 0 && !showForm && (
+        <div className="empty" style={{ padding: "2rem" }}>
+          <div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>🎯</div>
+          <div>Sin KPIs definidos. {!readOnly && "Crea el primero."}</div>
+        </div>
+      )}
+
+      {kpis.map(kpi => (
+        <KpiCard
+          key={kpi.id}
+          kpi={kpi}
+          records={records}
+          readOnly={readOnly}
+          onEdit={() => { setEditingKpi(kpi); setShowForm(false); }}
+          onDelete={() => deleteKpi(kpi.id)}
+        />
+      ))}
+
+      {/* EMBUDO */}
+      <div style={{ marginTop: "1.5rem" }}>
+        <FunnelPanel client={client} onUpdate={onUpdate} readOnly={readOnly} />
+      </div>
+    </div>
+  );
+}
+
 // ─── CLIENT FORM ──────────────────────────────────────────────────────────────
 function ClientForm({ initial, onSave, onCancel }) {
-  const blank = { name: "", username: "", password: "", niche: "whatsapp", color: "#7C3AED", logo: "", producto: "", email: "", telefono: "", direccion: "", representante: "", serviciosContratados: [], checklist: {}, cuentas: [], contratos: [], antecedentes: [], records: [] };
+  const blank = { name: "", username: "", password: "", niche: "whatsapp", color: "#7C3AED", logo: "", producto: "", email: "", telefono: "", direccion: "", representante: "", serviciosContratados: [], checklist: {}, cuentas: [], contratos: [], antecedentes: [], records: [], kpis: [], funnel: [] };
   const [form, setForm] = useState(initial ? { ...blank, ...initial } : blank);
   const [nuevoSvc, setNuevoSvc] = useState({ nombre: "", subetapas: "" });
   const [customSvcs, setCustomSvcs] = useState([]);
@@ -1007,9 +1479,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "checklist", "cuentas", "contratos", "antecedentes", "metricas", "reporte"].map(t2 => (
+          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Métricas" : "Reporte IA"}
+              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Métricas" : "Reporte IA"}
             </button>
           ))}
         </div>
@@ -1043,49 +1515,8 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
         {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
         {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
-        {tab === "metricas" && <>
-          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
-          <div className="grid4" style={{ marginBottom: "1rem" }}><MetricCard label="Inversión" value={"$" + t.inversion} /><MetricCard label="Alcance" value={t.alcance} /><MetricCard label="CPM" value={"$" + t.cpm} /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>
-          {isWA && <div className="grid4" style={{ marginBottom: "1rem" }}><MetricCard label="Leads" value={t.leads} /><MetricCard label="Contactados" value={t.contactados} /><MetricCard label="Ventas" value={t.ventas} /><MetricCard label="Ingresos" value={"$" + t.ingreso} highlight /></div>}
-          {isWeb && <div className="grid4" style={{ marginBottom: "1rem" }}><MetricCard label="Sesiones" value={t.sesiones} /><MetricCard label="Carrito" value={t.agregar_carrito} /><MetricCard label="Compras" value={t.compras} /><MetricCard label="Ingresos" value={"$" + t.ingreso} highlight /></div>}
-          {isLaunch && <div className="grid3" style={{ marginBottom: "1rem" }}><MetricCard label="Potenciales" value={t.clientesPotenciales} /><MetricCard label="Formularios" value={t.formularios} /><MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight /></div>}
-          <div className="card scroll-x">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
-                  {isWA && <><th>Leads</th><th>Contactados</th><th>Ventas</th><th>Ingresos</th></>}
-                  {isWeb && <><th>Sesiones</th><th>Carrito</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
-                  {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 && (
-                  <tr><td colSpan={12} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
-                )}
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>
-                    <td>${fmtNum(r.inversion, 2)}</td>
-                    <td>${fmtNum(r.cpm, 2)}</td>
-                    <td>${fmtNum(r.cpc, 2)}</td>
-                    <td>{fmtNum(r.ctr, 2)}%</td>
-                    {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.contactados)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso, 2)}</td></>}
-                    {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.agregar_carrito)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso, 2)}</td><td>{fmtNum(r.roas, 2)}x</td></>}
-                    {isLaunch && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td></>}
-                    <td>
-                      <button className="btn btn-danger btn-sm" onClick={() => {
-                        if (window.confirm("¿Eliminar?"))
-                          handleUpdate({ ...client, records: (client.records || []).filter((_, xi) => xi !== i) });
-                      }}>×</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>}
+        {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
+        {tab === "metricas" && <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />}
         {tab === "reporte" && <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
           <button className="btn btn-primary" disabled={loadingReport || rows.length === 0} onClick={() => generateReport(client, rows, setReport, setLoadingReport)} style={{ marginBottom: "1rem" }}>{loadingReport ? "Generando..." : "Generar reporte IA"}</button>
@@ -1110,7 +1541,7 @@ function ClientDashboard({ client, onLogout }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "detalle", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "detalle" ? "Detalle diario" : "Histórico"}</div>)}
+          {["resumen", "detalle", "proyecciones", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "detalle" ? "Detalle diario" : v === "proyecciones" ? "Proyecciones" : "Histórico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -1158,6 +1589,7 @@ function ClientDashboard({ client, onLogout }) {
               </table>
             </div>
           )}
+          {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
         </div>
       </div>
