@@ -1410,27 +1410,39 @@ function BannerViewer({ banners }) {
   const [idx, setIdx] = useState(0);
   const visible = banners.filter(b => b.url && b.url.trim());
   if (!visible.length) return null;
-  const prev = () => setIdx(i => (i - 1 + visible.length) % visible.length);
-  const next = () => setIdx(i => (i + 1) % visible.length);
+  const prev = (e) => { e.stopPropagation(); setIdx(i => (i - 1 + visible.length) % visible.length); };
+  const next = (e) => { e.stopPropagation(); setIdx(i => (i + 1) % visible.length); };
   const slide = visible[idx];
+
+  const imgEl = (
+    <img
+      className="banner-slide"
+      src={slide.url}
+      alt={slide.titulo || "Banner"}
+      onError={e => { e.target.style.display = "none"; }}
+      style={{ cursor: slide.enlace ? "pointer" : "default" }}
+    />
+  );
+
   return (
     <div className="banner-wrap">
-      <img
-        className="banner-slide"
-        src={slide.url}
-        alt={slide.titulo || "Banner"}
-        onError={e => { e.target.style.display = "none"; }}
-      />
+      {slide.enlace ? (
+        <a href={slide.enlace} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
+          {imgEl}
+        </a>
+      ) : imgEl}
       {slide.titulo && (
-        <div style={{ position: "absolute", bottom: 28, left: 16, background: "rgba(0,0,0,.6)", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600 }}>
+        <div style={{ position: "absolute", bottom: 28, left: 16, background: "rgba(0,0,0,.6)", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, pointerEvents: "none" }}>
           {slide.titulo}
         </div>
       )}
       {visible.length > 1 && <>
-        <button className="banner-arrow left" onClick={prev}>‹</button>
-        <button className="banner-arrow right" onClick={next}>›</button>
+        <button className="banner-arrow left" onClick={prev}>&#8249;</button>
+        <button className="banner-arrow right" onClick={next}>&#8250;</button>
         <div className="banner-dots">
-          {visible.map((_, i) => <button key={i} className={`banner-dot ${i === idx ? "active" : ""}`} onClick={() => setIdx(i)} />)}
+          {visible.map((_, i) => (
+            <button key={i} className={"banner-dot " + (i === idx ? "active" : "")} onClick={e => { e.stopPropagation(); setIdx(i); }} />
+          ))}
         </div>
       </>}
     </div>
@@ -1503,11 +1515,11 @@ function BannerAdmin({ clients, banners, onSave }) {
               <label>URL de la imagen</label>
               <input type="text" value={b.url} onChange={e => upd(i, "url", e.target.value)} placeholder="https://... (enlace directo a la imagen)" />
               <div className="banner-hint">
-                <strong>Google Drive:</strong> Sube la imagen → clic derecho → "Obtener enlace" → cambia a "Cualquier persona con el enlace" → pega el enlace aquí. El sistema lo convierte automáticamente.{"
-"}
-                <strong>Otros:</strong> Imgur, Cloudinary, o cualquier URL que termine en .jpg/.png/.webp funciona directamente.{"
-"}
-                <strong>Dimensiones recomendadas:</strong> 1200×300 px mínimo · Relación 4:1 · Máximo 2MB
+                <b>Google Drive:</b> Sube la imagen, clic derecho, Obtener enlace, cambia a Cualquier persona, pega aqui. Se convierte automaticamente.
+                <br/>
+                <b>Otros:</b> Imgur, Cloudinary, o cualquier URL que termine en .jpg .png .webp funciona directo.
+                <br/>
+                <b>Dimensiones:</b> 1200x300 px minimo · Relacion 4:1 · Maximo 2MB
               </div>
             </div>
             {b.url && (
@@ -1515,19 +1527,23 @@ function BannerAdmin({ clients, banners, onSave }) {
                 className="banner-preview"
                 src={getDriveDirectUrl(b.url)}
                 alt="Preview"
-                onError={e => { e.target.src = ""; e.target.style.display = "none"; }}
+                onError={e => { e.target.style.display = "none"; }}
                 onLoad={e => { e.target.style.display = "block"; }}
               />
             )}
             <div className="field" style={{ marginTop: 10 }}>
-              <label>Título (opcional)</label>
-              <input type="text" value={b.titulo} onChange={e => upd(i, "titulo", e.target.value)} placeholder="Ej: ¡Nueva promoción disponible!" />
+              <label>Titulo (opcional)</label>
+              <input type="text" value={b.titulo} onChange={e => upd(i, "titulo", e.target.value)} placeholder="Ej: Nueva promocion disponible" />
+            </div>
+            <div className="field">
+              <label>Enlace al hacer clic (opcional)</label>
+              <input type="text" value={b.enlace || ""} onChange={e => upd(i, "enlace", e.target.value)} placeholder="https://wa.me/... o cualquier URL" />
             </div>
             <div className="field">
               <label>Mostrar a</label>
               <select value={b.destinatarios} onChange={e => upd(i, "destinatarios", e.target.value)}>
                 <option value="todos">Todos los clientes</option>
-                <option value="seleccionados">Clientes específicos</option>
+                <option value="seleccionados">Clientes especificos</option>
               </select>
             </div>
             {b.destinatarios === "seleccionados" && (
@@ -1538,7 +1554,7 @@ function BannerAdmin({ clients, banners, onSave }) {
                     const sel = (b.clientesSeleccionados || []).includes(c.id);
                     return (
                       <div key={c.id}
-                        className={`servicio-chip ${sel ? "selected" : ""}`}
+                        className={"servicio-chip " + (sel ? "selected" : "")}
                         onClick={() => toggleCliente(i, c.id)}>
                         {sel ? "✓ " : ""}{c.name}
                       </div>
