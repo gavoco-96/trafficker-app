@@ -260,6 +260,14 @@ const css = `
   .banner-admin-card{background:var(--surface2);border-radius:10px;padding:1rem;margin-bottom:.75rem;border:1px solid var(--border)}
   .banner-preview{width:100%;height:120px;object-fit:cover;border-radius:8px;background:var(--border);display:block;margin-top:8px}
   .banner-hint{font-size:11px;color:var(--muted);opacity:.7;margin-top:6px;line-height:1.5}
+  /* COLUMN SELECTOR */
+  .col-selector{display:flex;flex-wrap:wrap;gap:6px;padding:10px;background:var(--surface2);border-radius:var(--r);margin-bottom:1rem}
+  .col-chip{padding:4px 10px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:transparent;transition:all .15s;user-select:none}
+  .col-chip.active{background:rgba(124,58,237,.15);border-color:var(--accent);color:var(--accent)}
+  /* TELEGRAM VIEW/EDIT */
+  .tg-plantilla-view{background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer;border:1px solid var(--border);transition:border-color .15s}
+  .tg-plantilla-view:hover{border-color:var(--accent2)}
+  .tg-plantilla-view.selected{border-color:var(--accent2);background:rgba(14,165,233,.06)}
   /* Ocultar flechas nativas de input number en todos los browsers */
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -985,6 +993,84 @@ function AntecedentesPanel({ client, onUpdate, readOnly }) {
 }
 
 
+// ─── COLUMNAS PERSONALIZABLES ────────────────────────────────────────────────
+const ALL_COLUMNS = [
+  { key: "date",     label: "Fecha",       always: true  },
+  { key: "inversion", label: "Inversión",  prefix: "$"   },
+  { key: "alcance",   label: "Alcance"                   },
+  { key: "impresiones", label: "Impresiones"              },
+  { key: "cpm",      label: "CPM",         prefix: "$"   },
+  { key: "cpc",      label: "CPC",         prefix: "$"   },
+  { key: "ctr",      label: "CTR",         suffix: "%"   },
+  { key: "clics_enlace", label: "Clics enlace"           },
+  { key: "leads",    label: "Leads"                      },
+  { key: "contactados", label: "Contactados"             },
+  { key: "ventas",   label: "Ventas"                     },
+  { key: "ingreso",  label: "Ingresos",    prefix: "$"   },
+  { key: "roas",     label: "ROAS",        suffix: "x"   },
+  { key: "sesiones", label: "Sesiones"                   },
+  { key: "agregar_carrito", label: "Carrito"             },
+  { key: "compras",  label: "Compras"                    },
+  { key: "clientesPotenciales", label: "Potenciales"     },
+  { key: "formularios", label: "Formularios"             },
+  { key: "resultados", label: "Resultados"               },
+  { key: "ticket_promedio", label: "Ticket prom.", prefix: "$" },
+];
+
+const DEFAULT_COLS_WA     = ["date","inversion","alcance","cpm","cpc","ctr","leads","contactados","ventas","ingreso"];
+const DEFAULT_COLS_WEB    = ["date","inversion","alcance","cpm","cpc","ctr","sesiones","agregar_carrito","compras","ingreso","roas"];
+const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","ventas","ingreso"];
+
+function useColPrefs(client, isWA, isWeb) {
+  const storageKey = "cols_" + client.id;
+  const defaults = isWA ? DEFAULT_COLS_WA : isWeb ? DEFAULT_COLS_WEB : DEFAULT_COLS_LAUNCH;
+  const [cols, setCols] = useState(() => {
+    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s) : defaults; } catch { return defaults; }
+  });
+  function toggle(key) {
+    if (key === "date") return;
+    setCols(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+  return { cols, toggle };
+}
+
+function ColumnSelector({ cols, onToggle }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button className="btn btn-ghost btn-sm" onClick={() => setOpen(o => !o)}>
+        ⚙️ Columnas visibles ({cols.length})
+      </button>
+      {open && (
+        <div className="col-selector" style={{ marginTop: 8 }}>
+          {ALL_COLUMNS.map(c => (
+            <div key={c.key} className={"col-chip " + (cols.includes(c.key) ? "active" : "")}
+              onClick={() => !c.always && onToggle(c.key)}
+              style={{ opacity: c.always ? 0.5 : 1, cursor: c.always ? "default" : "pointer" }}>
+              {c.label}{c.always ? " (fijo)" : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtCell(r, col) {
+  const v = r[col.key];
+  if (v === undefined || v === null || v === "") return "—";
+  const n = parseFloat(v);
+  if (isNaN(n)) return String(v);
+  const fmt2 = fmtNum(n, 2);
+  if (col.prefix) return col.prefix + fmt2;
+  if (col.suffix) return fmt2 + col.suffix;
+  return fmtNum(n, col.key === "date" ? 0 : 0);
+}
+
 // ─── METRICAS ADMIN PANEL (ver/editar) ───────────────────────────────────────
 function exportMetricas(rows, client, formato) {
   if (!rows.length) return;
@@ -1011,6 +1097,8 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
   const [editForm, setEditForm] = useState({});
   const [sortCol, setSortCol] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
+  const { cols, toggle: toggleCol } = useColPrefs(client, isWA, isWeb);
+  const visibleCols = ALL_COLUMNS.filter(c => cols.includes(c.key));
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -1086,70 +1174,59 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <MetricCard label="Formularios" value={t.formularios} />
         <MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight />
       </div>}
-      <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "flex-end" }}>
-        <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "csv")}>⬇ CSV</button>
-        <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "xls")}>⬇ XLS</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+        <ColumnSelector cols={cols} onToggle={toggleCol} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "csv")}>&#11015; CSV</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "xls")}>&#11015; XLS</button>
+        </div>
       </div>
       <div className="card scroll-x">
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Clic en encabezado para ordenar · ✏️ para editar
-        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Clic en encabezado para ordenar</div>
         <table className="tbl">
           <thead>
             <tr>
-              <SortTh col="date" label="Fecha" />
-              <SortTh col="inversion" label="Inversión" />
-              <SortTh col="cpm" label="CPM" />
-              <SortTh col="cpc" label="CPC" />
-              <SortTh col="ctr" label="CTR" />
-              {isWA && <><SortTh col="leads" label="Leads" /><SortTh col="contactados" label="Contactados" /><SortTh col="ventas" label="Ventas" /><SortTh col="ingreso" label="Ingresos" /></>}
-              {isWeb && <><SortTh col="sesiones" label="Sesiones" /><SortTh col="agregar_carrito" label="Carrito" /><SortTh col="compras" label="Compras" /><SortTh col="ingreso" label="Ingresos" /><SortTh col="roas" label="ROAS" /></>}
-              {isLaunch && <><SortTh col="clientesPotenciales" label="Potenciales" /><SortTh col="formularios" label="Formularios" /></>}
+              {visibleCols.map(c => <SortTh key={c.key} col={c.key} label={c.label} />)}
               <th style={{ width: 80 }}></th>
             </tr>
           </thead>
           <tbody>
             {sortedRows.length === 0 && (
-              <tr><td colSpan={14} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
+              <tr><td colSpan={visibleCols.length + 1} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
             )}
             {sortedRows.map((r, i) => {
               const isEdit = editingRow === i;
               return (
                 <tr key={i} style={isEdit ? { background: "rgba(124,58,237,.06)" } : {}}>
-                  <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
-                    {isEdit ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} /> : r.date}
-                  </td>
-                  <td>{isEdit ? <EditNum fk="inversion" prefix="$" /> : "$" + fmtNum(r.inversion, 2)}</td>
-                  <td>{isEdit ? <EditNum fk="cpm" prefix="$" /> : "$" + fmtNum(r.cpm, 2)}</td>
-                  <td>{isEdit ? <EditNum fk="cpc" prefix="$" /> : "$" + fmtNum(r.cpc, 2)}</td>
-                  <td>{isEdit ? <EditNum fk="ctr" /> : fmtNum(r.ctr, 2) + "%"}</td>
-                  {isWA && <>
-                    <td>{isEdit ? <EditNum fk="leads" /> : fmtNum(r.leads)}</td>
-                    <td>{isEdit ? <EditNum fk="contactados" /> : fmtNum(r.contactados)}</td>
-                    <td>{isEdit ? <EditNum fk="ventas" /> : fmtNum(r.ventas)}</td>
-                    <td>{isEdit ? <EditNum fk="ingreso" prefix="$" /> : "$" + fmtNum(r.ingreso, 2)}</td>
-                  </>}
-                  {isWeb && <>
-                    <td>{isEdit ? <EditNum fk="sesiones" /> : fmtNum(r.sesiones)}</td>
-                    <td>{isEdit ? <EditNum fk="agregar_carrito" /> : fmtNum(r.agregar_carrito)}</td>
-                    <td>{isEdit ? <EditNum fk="compras" /> : fmtNum(r.compras)}</td>
-                    <td>{isEdit ? <EditNum fk="ingreso" prefix="$" /> : "$" + fmtNum(r.ingreso, 2)}</td>
-                    <td>{isEdit ? <EditNum fk="roas" /> : fmtNum(r.roas, 2) + "x"}</td>
-                  </>}
-                  {isLaunch && <>
-                    <td>{isEdit ? <EditNum fk="clientesPotenciales" /> : fmtNum(r.clientesPotenciales)}</td>
-                    <td>{isEdit ? <EditNum fk="formularios" /> : fmtNum(r.formularios)}</td>
-                  </>}
+                  {visibleCols.map(c => (
+                    <td key={c.key} style={c.key === "date" ? { fontFamily: "var(--mono)", fontSize: 12 } : {}}>
+                      {isEdit
+                        ? c.key === "date"
+                          ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} />
+                          : <EditNum fk={c.key} prefix={c.prefix} />
+                        : (() => {
+                            const v = r[c.key];
+                            if (v === undefined || v === null || v === "") return "—";
+                            const n = parseFloat(v);
+                            if (isNaN(n)) return String(v);
+                            const fmt2 = fmtNum(n, 2);
+                            if (c.prefix) return c.prefix + fmt2;
+                            if (c.suffix) return fmt2 + c.suffix;
+                            return fmtNum(n, 0);
+                          })()
+                      }
+                    </td>
+                  ))}
                   <td>
                     {isEdit ? (
                       <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-green btn-sm" onClick={saveEdit} title="Guardar">✓</button>
-                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Cancelar">x</button>
+                        <button className="btn btn-green btn-sm" onClick={saveEdit}>&#10003;</button>
+                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>x</button>
                       </div>
                     ) : (
                       <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(r, i)} title="Editar">&#9998;</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteRow(i)} title="Eliminar">&#128465;</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(r, i)}>&#9998;</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => deleteRow(i)}>&#128465;</button>
                       </div>
                     )}
                   </td>
@@ -1157,32 +1234,17 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
               );
             })}
           </tbody>
-          {/* FILA DE TOTALES */}
           {sortedRows.length > 1 && (
             <tfoot>
               <tr style={{ background: "rgba(124,58,237,.08)", fontWeight: 600 }}>
-                <td style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>TOTAL</td>
-                <td>${fmtNum(sum(sortedRows, "inversion"), 2)}</td>
-                <td>${fmtNum(avg(sortedRows, "cpm"), 2)}</td>
-                <td>${fmtNum(avg(sortedRows, "cpc"), 2)}</td>
-                <td>{fmtNum(avg(sortedRows, "ctr"), 2)}%</td>
-                {isWA && <>
-                  <td>{fmtNum(sum(sortedRows, "leads"))}</td>
-                  <td>{fmtNum(sum(sortedRows, "contactados"))}</td>
-                  <td>{fmtNum(sum(sortedRows, "ventas"))}</td>
-                  <td>${fmtNum(sum(sortedRows, "ingreso"), 2)}</td>
-                </>}
-                {isWeb && <>
-                  <td>{fmtNum(sum(sortedRows, "sesiones"))}</td>
-                  <td>{fmtNum(sum(sortedRows, "agregar_carrito"))}</td>
-                  <td>{fmtNum(sum(sortedRows, "compras"))}</td>
-                  <td>${fmtNum(sum(sortedRows, "ingreso"), 2)}</td>
-                  <td>{fmtNum(avg(sortedRows, "roas"), 2)}x</td>
-                </>}
-                {isLaunch && <>
-                  <td>{fmtNum(sum(sortedRows, "clientesPotenciales"))}</td>
-                  <td>{fmtNum(sum(sortedRows, "formularios"))}</td>
-                </>}
+                {visibleCols.map(c => {
+                  if (c.key === "date") return <td key="date" style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>TOTAL</td>;
+                  const isAvg = ["cpm","cpc","ctr","roas"].includes(c.key);
+                  const val = isAvg ? avg(sortedRows, c.key) : sum(sortedRows, c.key);
+                  const fmt2 = fmtNum(val, 2);
+                  const display = c.prefix ? c.prefix + fmt2 : c.suffix ? fmt2 + c.suffix : fmtNum(val, 0);
+                  return <td key={c.key}>{display}</td>;
+                })}
                 <td></td>
               </tr>
             </tfoot>
@@ -2024,8 +2086,13 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const [saving, setSaving] = useState(false);
   const [plantillas, setPlantillas] = useState(tgConfig?.plantillas || PLANTILLAS_DEFAULT);
   const [selectedPlantilla, setSelectedPlantilla] = useState("p1");
-  const [customTexto, setCustomTexto] = useState("");
+  const [editingPlantilla, setEditingPlantilla] = useState(null); // id de la que se está editando
   const { show, el: toastEl } = useToast();
+
+  // Sincronizar plantillas cuando el cliente cambia (viene de Supabase)
+  useEffect(() => {
+    if (tgConfig?.plantillas) setPlantillas(tgConfig.plantillas);
+  }, [client.id]);
 
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
 
@@ -2097,58 +2164,82 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
         {/* PLANTILLAS */}
         <div style={{ marginBottom: "1rem" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Plantillas de mensaje</div>
-            <button className="btn btn-ghost btn-sm" onClick={addPlantilla}>+ Añadir</button>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Plantillas de mensaje ({plantillas.length}/5)
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {editingPlantilla && (
+                <button className="btn btn-green btn-sm" onClick={async () => { setEditingPlantilla(null); await saveConfig(); }}>
+                  💾 Guardar cambios
+                </button>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={addPlantilla}>+ Añadir</button>
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-            {plantillas.map(p => (
-              <button key={p.id}
-                className={"pill " + (selectedPlantilla === p.id ? "active" : "")}
-                onClick={() => setSelectedPlantilla(p.id)}>
-                {p.nombre}
-              </button>
-            ))}
-          </div>
-          {(() => {
-            const p = plantillas.find(x => x.id === selectedPlantilla);
-            if (!p) return null;
+
+          {/* Lista de plantillas: modo vista o edición */}
+          {plantillas.map(p => {
+            const isEditing = editingPlantilla === p.id;
+            const isSelected = selectedPlantilla === p.id;
             return (
-              <div style={{ background: "var(--surface2)", borderRadius: 10, padding: 12 }}>
-                <div className="form-row" style={{ marginBottom: 8 }}>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Nombre de la plantilla</label>
-                    <input type="text" value={p.nombre} onChange={e => updPlantilla(p.id, "nombre", e.target.value)} />
+              <div key={p.id}
+                className={"tg-plantilla-view " + (isSelected ? "selected" : "")}
+                onClick={() => !isEditing && setSelectedPlantilla(p.id)}>
+                {isEditing ? (
+                  /* MODO EDICIÓN */
+                  <div onClick={e => e.stopPropagation()}>
+                    <div className="form-row" style={{ marginBottom: 8 }}>
+                      <div className="field" style={{ marginBottom: 0 }}>
+                        <label>Nombre</label>
+                        <input type="text" value={p.nombre} onChange={e => updPlantilla(p.id, "nombre", e.target.value)} />
+                      </div>
+                      <div className="field" style={{ marginBottom: 0 }}>
+                        <label>Tipo</label>
+                        <select value={p.tipo} onChange={e => updPlantilla(p.id, "tipo", e.target.value)}>
+                          <option value="reporte">Reporte diario (automatico)</option>
+                          <option value="cobro">Recordatorio de cobro (contrato)</option>
+                          <option value="custom">Mensaje personalizado</option>
+                        </select>
+                      </div>
+                    </div>
+                    {p.tipo === "custom" && (
+                      <div className="field" style={{ marginBottom: 0 }}>
+                        <label>Texto del mensaje</label>
+                        <textarea value={p.texto} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
+                      </div>
+                    )}
+                    {p.tipo === "reporte" && <div style={{ fontSize: 11, color: "var(--muted)" }}>Genera automaticamente con los datos del ultimo registro diario.</div>}
+                    {p.tipo === "cobro" && <div style={{ fontSize: 11, color: "var(--muted)" }}>Genera automaticamente con la informacion de cuotas pendientes del contrato.</div>}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditingPlantilla(null)}>Cancelar</button>
+                      {plantillas.length > 1 && (
+                        <button className="btn btn-danger btn-sm" onClick={() => { setPlantillas(prev => prev.filter(x => x.id !== p.id)); setEditingPlantilla(null); setSelectedPlantilla(plantillas[0]?.id); }}>Eliminar</button>
+                      )}
+                    </div>
                   </div>
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Tipo</label>
-                    <select value={p.tipo} onChange={e => updPlantilla(p.id, "tipo", e.target.value)}>
-                      <option value="reporte">Reporte diario (automatico)</option>
-                      <option value="cobro">Recordatorio de cobro (del contrato)</option>
-                      <option value="custom">Mensaje personalizado</option>
-                    </select>
+                ) : (
+                  /* MODO VISTA */
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                        {p.tipo === "reporte" ? "Reporte automatico" : p.tipo === "cobro" ? "Recordatorio de cobro" : "Mensaje personalizado"}
+                        {isSelected && <span style={{ color: "var(--accent2)", marginLeft: 8 }}>● Seleccionada</span>}
+                      </div>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditingPlantilla(p.id); setSelectedPlantilla(p.id); }}
+                      title="Editar plantilla">&#9998;</button>
                   </div>
-                </div>
-                {p.tipo === "custom" && (
-                  <div className="field" style={{ marginBottom: 0 }}>
-                    <label>Texto del mensaje</label>
-                    <textarea value={p.texto} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
-                  </div>
-                )}
-                {p.tipo === "reporte" && !lastRecord.length && (
-                  <div style={{ fontSize: 12, color: "var(--amber)" }}>Agrega un registro diario para activar este tipo.</div>
-                )}
-                {p.tipo === "cobro" && !(client.contratos || []).length && (
-                  <div style={{ fontSize: 12, color: "var(--amber)" }}>Este cliente no tiene contratos registrados.</div>
                 )}
               </div>
             );
-          })()}
+          })}
         </div>
 
         {/* PREVIEW */}
         {preview && (
           <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto" }}>
-            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa:</div>
+            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa del mensaje seleccionado:</div>
             {preview}
           </div>
         )}
@@ -2158,7 +2249,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
             {sending ? "Enviando..." : "📤 Enviar mensaje"}
           </button>
           <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
-            💾 Guardar plantillas
+            💾 Guardar todo
           </button>
         </div>
       </div>
@@ -2284,10 +2375,14 @@ function ClientDashboard({ client, onLogout, banners }) {
       </div>
       <div className="main">
         <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
-        {banners && banners.length > 0 && <BannerViewer banners={banners} />}
         <div className="content">
           <ProgressBar client={client} />
           {tab === "resumen" && <>
+            {banners && banners.length > 0 && (
+              <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
+                <BannerViewer banners={banners} />
+              </div>
+            )}
             <div style={{ marginBottom: "1.25rem" }}><div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Inversión del período</div><div style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--mono)" }}>${t.inversion || "0.00"}</div><div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{rows.length} días con datos</div></div>
             <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Alcance" value={t.alcance || "—"} /><MetricCard label="CPM" value={"$" + (t.cpm || "—")} /><MetricCard label="CPC" value={"$" + (t.cpc || "—")} /><MetricCard label="CTR" value={(t.ctr || "—") + "%"} /></div>
             {isWA && <div className="grid4"><MetricCard label="Leads" value={t.leads || "—"} /><MetricCard label="Contactados" value={t.contactados || "—"} /><MetricCard label="Ventas" value={t.ventas || "—"} /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
@@ -2295,35 +2390,43 @@ function ClientDashboard({ client, onLogout, banners }) {
             {isLaunch && <div className="grid3"><MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} /><MetricCard label="Formularios" value={t.formularios || "—"} /><MetricCard label="Costo/form" value={"$" + (t.costo_formulario || "—")} highlight /></div>}
             {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
           </>}
-          {tab === "detalle" && (
-            <div className="card scroll-x">
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
-                    {isWA && <><th>Leads</th><th>Ventas</th><th>Ingresos</th></>}
-                    {isWeb && <><th>Sesiones</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
-                    {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.length === 0 && <tr><td colSpan={10} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
-                  {rows.map((r, i) => (
-                    <tr key={i}>
-                      <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>
-                      <td>${fmtNum(r.inversion, 2)}</td>
-                      <td>${fmtNum(r.cpm, 2)}</td>
-                      <td>${fmtNum(r.cpc, 2)}</td>
-                      <td>{fmtNum(r.ctr, 2)}%</td>
-                      {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso, 2)}</td></>}
-                      {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso, 2)}</td><td>{fmtNum(r.roas, 2)}x</td></>}
-                      {isLaunch && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td></>}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {tab === "detalle" && (() => {
+            const { cols: clientCols, toggle: clientToggle } = (() => {
+              // Hook inline para el cliente - columnas guardadas por browser
+              const defaults = isWA ? DEFAULT_COLS_WA : isWeb ? DEFAULT_COLS_WEB : DEFAULT_COLS_LAUNCH;
+              const storageKey = "cols_client_" + client.id;
+              const [cc, setCC] = useState(() => {
+                try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s) : defaults; } catch { return defaults; }
+              });
+              const tog = (key) => { if (key === "date") return; setCC(prev => { const n = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]; localStorage.setItem(storageKey, JSON.stringify(n)); return n; }); };
+              return { cols: cc, toggle: tog };
+            })();
+            const visClient = ALL_COLUMNS.filter(c => clientCols.includes(c.key));
+            return (
+              <div>
+                <ColumnSelector cols={clientCols} onToggle={clientToggle} />
+                <div className="card scroll-x">
+                  <table className="tbl">
+                    <thead><tr>{visClient.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+                    <tbody>
+                      {rows.length === 0 && <tr><td colSpan={visClient.length} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
+                      {rows.map((r, i) => (
+                        <tr key={i}>
+                          {visClient.map(c => {
+                            if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>;
+                            const v = r[c.key]; if (v === undefined || v === null || v === "") return <td key={c.key}>—</td>;
+                            const n = parseFloat(v); if (isNaN(n)) return <td key={c.key}>{v}</td>;
+                            const fmt2 = fmtNum(n, 2);
+                            return <td key={c.key}>{c.prefix ? c.prefix + fmt2 : c.suffix ? fmt2 + c.suffix : fmtNum(n, 0)}</td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
           {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
         </div>
