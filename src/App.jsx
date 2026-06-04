@@ -260,6 +260,13 @@ const css = `
   .banner-admin-card{background:var(--surface2);border-radius:10px;padding:1rem;margin-bottom:.75rem;border:1px solid var(--border)}
   .banner-preview{width:100%;height:120px;object-fit:cover;border-radius:8px;background:var(--border);display:block;margin-top:8px}
   .banner-hint{font-size:11px;color:var(--muted);opacity:.7;margin-top:6px;line-height:1.5}
+  /* Ocultar flechas nativas de input number en todos los browsers */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  /* TELEGRAM */
+  .tg-card{background:rgba(14,165,233,.08);border:1px solid rgba(14,165,233,.25);border-radius:var(--r2);padding:1.25rem;margin-top:1rem}
+  .tg-header{display:flex;align-items:center;gap:10px;margin-bottom:.75rem;font-size:13px;font-weight:600;color:var(--accent2)}
   /* MISC */
   .scroll-x{overflow-x:auto}
   .empty{text-align:center;padding:3rem 1rem;color:var(--muted)}
@@ -1674,27 +1681,262 @@ function ClientForm({ initial, onSave, onCancel }) {
 }
 
 // ─── ADD RECORD ───────────────────────────────────────────────────────────────
-function AddRecordForm({ client, onSave, onCancel }) {
-  const isWA = client.niche === "whatsapp", isWeb = client.niche === "web";
-  const today = new Date().toISOString().slice(0, 10);
-  const [form, setForm] = useState({ date: today, inversion: "", alcance: "", cpm: "", cpc: "", ctr: "", leads: "", contactados: "", ventas: "", ingreso: "", sesiones: "", agregar_carrito: "", compras: "", roas: "", clientesPotenciales: "", formularios: "" });
-  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const Num = ({ lbl, fk, prefix }) => (
-    <div className="field"><label>{lbl}</label><NumInput value={form[fk]} onChange={v => f(fk, v)} prefix={prefix} placeholder="0" /></div>
+// Campo numérico estable: definido FUERA de cualquier componente padre
+// para que React nunca lo destruya ni recree entre renders
+function StableNumField({ label, name, formRef, prefix }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div className="input-prefix">
+        {prefix && <span className="pre">{prefix}</span>}
+        <input
+          type="number"
+          step="any"
+          min="0"
+          name={name}
+          defaultValue=""
+          placeholder="0"
+          ref={el => { if (el && formRef.current) formRef.current[name] = el; }}
+          style={{ MozAppearance: "textfield" }}
+        />
+      </div>
+    </div>
   );
-  function handleSave() { const rec = { date: form.date }; Object.entries(form).forEach(([k, v]) => { if (k !== "date" && v !== "") rec[k] = parseFloat(v) || 0; }); onSave(rec); }
+}
+
+function AddRecordForm({ client, onSave, onCancel }) {
+  const isWA = client.niche === "whatsapp";
+  const isWeb = client.niche === "web";
+  const isLaunch = !isWA && !isWeb;
+  const today = new Date().toISOString().slice(0, 10);
+  const dateRef = useRef(null);
+  // formRef guarda referencias directas a cada input por nombre
+  const formRef = useRef({});
+
+  function handleSave() {
+    const rec = { date: dateRef.current?.value || today };
+    Object.entries(formRef.current).forEach(([k, el]) => {
+      if (el && el.value !== "" && el.value !== null) {
+        const n = parseFloat(el.value);
+        if (!isNaN(n)) rec[k] = n;
+      }
+    });
+    onSave(rec);
+  }
+
+  const F = ({ lbl, name, prefix }) => (
+    <StableNumField label={lbl} name={name} formRef={formRef} prefix={prefix} />
+  );
+
   return (
     <div style={{ maxWidth: 560 }}>
-      <div className="sec-title" style={{ marginBottom: "1.25rem" }}>Nuevo registro — {client.name}</div>
-      <div className="field"><label>Fecha</label><input type="date" value={form.date} onChange={e => f("date", e.target.value)} /></div>
+      <div className="sec-title" style={{ marginBottom: "1.25rem" }}>
+        Nuevo registro — {client.name}
+      </div>
+      <div className="field">
+        <label>Fecha</label>
+        <input type="date" defaultValue={today} ref={dateRef} />
+      </div>
+
       <div className="section-label">Pauta</div>
-      <div className="form-row"><Num lbl="Inversión" fk="inversion" prefix="$" /><Num lbl="Alcance" fk="alcance" /></div>
-      <div className="form-row3"><Num lbl="CPM" fk="cpm" prefix="$" /><Num lbl="CPC" fk="cpc" prefix="$" /><Num lbl="CTR (%)" fk="ctr" /></div>
-      {isWA && <><div className="section-label">Ventas WhatsApp</div><div className="form-row"><Num lbl="Leads" fk="leads" /><Num lbl="Contactados" fk="contactados" /></div><div className="form-row"><Num lbl="Ventas cerradas" fk="ventas" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /></div></>}
-      {isWeb && <><div className="section-label">E-commerce</div><div className="form-row"><Num lbl="Sesiones" fk="sesiones" /><Num lbl="Agregar carrito" fk="agregar_carrito" /></div><div className="form-row3"><Num lbl="Compras" fk="compras" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /><Num lbl="ROAS" fk="roas" /></div></>}
-      {!isWA && !isWeb && <><div className="section-label">Lanzamiento</div><div className="form-row"><Num lbl="Clientes potenciales" fk="clientesPotenciales" /><Num lbl="Formularios" fk="formularios" /></div><div className="form-row"><Num lbl="Ventas" fk="ventas" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /></div></>}
-      <div style={{ display: "flex", gap: 10, marginTop: "1.25rem" }}><button className="btn btn-primary" onClick={handleSave}>Guardar</button><button className="btn btn-ghost" onClick={onCancel}>Cancelar</button></div>
+      <div className="form-row">
+        <F lbl="Inversión" name="inversion" prefix="$" />
+        <F lbl="Alcance" name="alcance" />
+      </div>
+      <div className="form-row3">
+        <F lbl="CPM" name="cpm" prefix="$" />
+        <F lbl="CPC" name="cpc" prefix="$" />
+        <F lbl="CTR (%)" name="ctr" />
+      </div>
+      <div className="form-row">
+        <F lbl="Impresiones" name="impresiones" />
+        <F lbl="Clics en enlace" name="clics_enlace" />
+      </div>
+
+      {isWA && <>
+        <div className="section-label">Ventas WhatsApp</div>
+        <div className="form-row">
+          <F lbl="Leads" name="leads" />
+          <F lbl="Contactados" name="contactados" />
+        </div>
+        <div className="form-row">
+          <F lbl="Ventas cerradas" name="ventas" />
+          <F lbl="Ingresos" name="ingreso" prefix="$" />
+        </div>
+      </>}
+
+      {isWeb && <>
+        <div className="section-label">E-commerce</div>
+        <div className="form-row">
+          <F lbl="Sesiones" name="sesiones" />
+          <F lbl="Agregar carrito" name="agregar_carrito" />
+        </div>
+        <div className="form-row3">
+          <F lbl="Compras" name="compras" />
+          <F lbl="Ingresos" name="ingreso" prefix="$" />
+          <F lbl="ROAS" name="roas" />
+        </div>
+        <div className="form-row">
+          <F lbl="Ventas" name="ventas" />
+          <F lbl="Resultados" name="resultados" />
+        </div>
+      </>}
+
+      {isLaunch && <>
+        <div className="section-label">Lanzamiento / Leads</div>
+        <div className="form-row">
+          <F lbl="Clientes potenciales" name="clientesPotenciales" />
+          <F lbl="Formularios" name="formularios" />
+        </div>
+        <div className="form-row">
+          <F lbl="Ventas" name="ventas" />
+          <F lbl="Ingresos" name="ingreso" prefix="$" />
+        </div>
+        <div className="form-row">
+          <F lbl="Resultados" name="resultados" />
+          <F lbl="Ticket promedio" name="ticket_promedio" prefix="$" />
+        </div>
+      </>}
+
+      <div style={{ display: "flex", gap: 10, marginTop: "1.25rem" }}>
+        <button className="btn btn-primary" onClick={handleSave}>Guardar</button>
+        <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+      </div>
     </div>
+  );
+}
+
+// ─── TELEGRAM INTEGRATION ────────────────────────────────────────────────────
+// Para activar: crear bot en @BotFather en Telegram, obtener token
+// El cliente debe iniciar conversacion con el bot una vez para obtener chat_id
+
+function buildReportMessage(client, records) {
+  const t = buildTotals(client.niche, records);
+  const isWA = client.niche === "whatsapp";
+  const isWeb = client.niche === "web";
+  const hoy = new Date().toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const ultimo = records[records.length - 1];
+
+  let msg = `📊 *Reporte diario - ${client.name}*\n`;
+  msg += `📅 ${hoy}\n\n`;
+  msg += `💰 *Pauta*\n`;
+  msg += `Inversión: $${ultimo?.inversion ?? "—"}\n`;
+  msg += `Alcance: ${ultimo?.alcance ?? "—"}\n`;
+  msg += `CPM: $${ultimo?.cpm ?? "—"} | CPC: $${ultimo?.cpc ?? "—"} | CTR: ${ultimo?.ctr ?? "—"}%\n\n`;
+
+  if (isWA) {
+    msg += `📱 *Ventas WhatsApp*\n`;
+    msg += `Leads: ${ultimo?.leads ?? "—"} | Contactados: ${ultimo?.contactados ?? "—"}\n`;
+    msg += `Ventas: ${ultimo?.ventas ?? "—"} | Ingresos: $${ultimo?.ingreso ?? "—"}\n`;
+    if (ultimo?.leads && ultimo?.ventas) {
+      msg += `Tasa de cierre: ${((ultimo.ventas / ultimo.leads) * 100).toFixed(1)}%\n`;
+    }
+  } else if (isWeb) {
+    msg += `🛒 *E-commerce*\n`;
+    msg += `Sesiones: ${ultimo?.sesiones ?? "—"} | Compras: ${ultimo?.compras ?? "—"}\n`;
+    msg += `Ingresos: $${ultimo?.ingreso ?? "—"} | ROAS: ${ultimo?.roas ?? "—"}x\n`;
+  } else {
+    msg += `🎯 *Lanzamiento*\n`;
+    msg += `Potenciales: ${ultimo?.clientesPotenciales ?? "—"} | Formularios: ${ultimo?.formularios ?? "—"}\n`;
+    msg += `Ventas: ${ultimo?.ventas ?? "—"} | Ingresos: $${ultimo?.ingreso ?? "—"}\n`;
+  }
+
+  msg += `\n_Enviado desde Trafficker Pro_`;
+  return msg;
+}
+
+async function sendTelegram(token, chatId, text) {
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" })
+    });
+    const data = await res.json();
+    if (!data.ok) return { ok: false, error: data.description };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
+  const [token, setToken] = useState(tgConfig?.token || "");
+  const [chatId, setChatId] = useState(tgConfig?.chatId || client.telefono || "");
+  const [sending, setSending] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
+  const previewMsg = lastRecord.length > 0 ? buildReportMessage(client, lastRecord) : null;
+
+  async function saveConfig() {
+    setSaving(true);
+    await onSaveConfig({ token, chatId });
+    show("✓ Configuracion guardada", "ok");
+    setSaving(false);
+  }
+
+  async function sendReport() {
+    if (!token || !chatId) return show("Completa el token y chat ID primero", "err");
+    if (!lastRecord.length) return show("No hay registros para enviar", "err");
+    setSending(true);
+    const msg = buildReportMessage(client, lastRecord);
+    const result = await sendTelegram(token, chatId, msg);
+    show(result.ok ? "✓ Reporte enviado a Telegram" : "Error: " + result.error, result.ok ? "ok" : "err");
+    setSending(false);
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="tg-card">
+        <div className="tg-header">
+          <span style={{ fontSize: 18 }}>✈️</span> Enviar reporte por Telegram
+        </div>
+
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
+          <b style={{ color: "var(--text)" }}>Como configurar (una sola vez):</b><br/>
+          1. Abre Telegram y busca <b>@BotFather</b><br/>
+          2. Escribe <b>/newbot</b>, ponle un nombre y copia el <b>Token</b><br/>
+          3. El cliente busca tu bot en Telegram y le da <b>/start</b><br/>
+          4. Para obtener el Chat ID: visita <b>https://api.telegram.org/bot[TOKEN]/getUpdates</b> y copia el id que aparece en "chat"
+        </div>
+
+        <div className="form-row">
+          <div className="field">
+            <label>Bot Token</label>
+            <input type="text" value={token} onChange={e => setToken(e.target.value)} placeholder="1234567890:ABCdef..." />
+          </div>
+          <div className="field">
+            <label>Chat ID del destinatario</label>
+            <input type="text" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="Ej: 123456789" />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginBottom: "1rem" }}>
+          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
+            {saving ? "Guardando..." : "💾 Guardar configuracion"}
+          </button>
+        </div>
+
+        {previewMsg && (
+          <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
+            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa del mensaje:</div>
+            {previewMsg.replace(/\*/g, "").replace(/\_/g, "").replace(/\
+/g, "
+")}
+          </div>
+        )}
+
+        <button className="btn btn-primary" disabled={sending || !lastRecord.length} onClick={sendReport}
+          style={{ background: "var(--accent2)" }}>
+          {sending ? "Enviando..." : "📤 Enviar reporte del ultimo dia"}
+        </button>
+        {!lastRecord.length && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>Agrega un registro diario primero para poder enviarlo.</div>}
+      </div>
+    </>
   );
 }
 
@@ -1735,9 +1977,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte"].map(t2 => (
+          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "telegram"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Métricas" : "Reporte IA"}
+              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : "✈️ Telegram"}
             </button>
           ))}
         </div>
@@ -1778,6 +2020,16 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
           <button className="btn btn-primary" disabled={loadingReport || rows.length === 0} onClick={() => generateReport(client, rows, setReport, setLoadingReport)} style={{ marginBottom: "1rem" }}>{loadingReport ? "Generando..." : "Generar reporte IA"}</button>
           {(report || loadingReport) && <div className="ai-report"><div className="ai-report-header"><span>✦</span> Reporte · {client.name}</div><div className={`ai-report-body ${loadingReport && !report ? "streaming-cursor" : ""}`}>{report || " "}{loadingReport && report && <span className="streaming-cursor" />}</div></div>}
         </div>}
+        {tab === "telegram" && (
+          <TelegramPanel
+            client={client}
+            records={rows}
+            tgConfig={client.tgConfig || {}}
+            onSaveConfig={async (cfg) => {
+              await handleUpdate({ ...client, tgConfig: cfg });
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -2085,4 +2337,5 @@ export default function App() {
     </>
   );
 }
+
 
