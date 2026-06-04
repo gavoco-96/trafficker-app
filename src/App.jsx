@@ -247,9 +247,9 @@ const css = `
   .funnel-count{font-family:var(--mono);font-size:13px;color:var(--muted);width:80px;text-align:left;margin-left:12px;flex-shrink:0}
   .funnel-pct{font-size:11px;opacity:.7;margin-left:6px}
   /* BANNER */
-  .banner-wrap{width:100%;overflow:hidden;border-radius:0;background:var(--surface);border-bottom:1px solid var(--border);position:relative;user-select:none}
-  .banner-track{display:flex;transition:transform .4s ease;height:180px}
-  .banner-slide{flex-shrink:0;width:100%;height:180px;object-fit:cover;object-position:center}
+  .banner-wrap{width:100%;overflow:hidden;border-radius:var(--r2);background:var(--surface);position:relative;user-select:none}
+  .banner-track{display:flex;transition:transform .4s ease}
+  .banner-slide{flex-shrink:0;width:100%;max-height:320px;object-fit:contain;object-position:center;display:block;background:#000}
   .banner-dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:6px}
   .banner-dot{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.4);cursor:pointer;border:none;transition:background .2s}
   .banner-dot.active{background:#fff}
