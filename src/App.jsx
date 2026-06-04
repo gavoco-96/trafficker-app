@@ -1034,12 +1034,13 @@ const ALL_COLUMNS = [
   { key: "clientesPotenciales", label: "Potenciales"     },
   { key: "formularios", label: "Formularios"             },
   { key: "resultados", label: "Resultados"               },
+  { key: "cpa",      label: "Costo x Resultado", prefix: "$" },
   { key: "ticket_promedio", label: "Ticket prom.", prefix: "$" },
 ];
 
 const DEFAULT_COLS_WA     = ["date","inversion","alcance","cpm","cpc","ctr","leads","contactados","ventas","ingreso"];
 const DEFAULT_COLS_WEB    = ["date","inversion","alcance","cpm","cpc","ctr","sesiones","agregar_carrito","compras","ingreso","roas"];
-const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","ventas","ingreso"];
+const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","resultados","cpa","ingreso"];
 
 function useColPrefs(client, isWA, isWeb) {
   const storageKey = "cols_" + client.id;
@@ -1232,6 +1233,13 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
                           : <EditNum fk={c.key} prefix={c.prefix} />
                         : (() => {
                             if (c.key === "date") return fmtDate(r[c.key]);
+                            // CPA calculado dinámicamente por fila
+                            if (c.key === "cpa") {
+                              const res = r.resultados || r.formularios || r.leads || 0;
+                              const inv = r.inversion || 0;
+                              if (!res || !inv) return "—";
+                              return "$" + fmtNum(inv / res, 2);
+                            }
                             const v = r[c.key];
                             if (v === undefined || v === null || v === "") return "—";
                             const n = parseFloat(v);
@@ -2016,8 +2024,6 @@ function AddRecordForm({ client, onSave, onCancel }) {
 }
 
 // ─── PROGRAMADOR DE MENSAJES ─────────────────────────────────────────────────
-// Zona horaria Ecuador/Quito = UTC-5 → las 8am Quito = 13:00 UTC
-
 const DIAS_SEMANA = [
   { key: 0, label: "Dom" }, { key: 1, label: "Lun" }, { key: 2, label: "Mar" },
   { key: 3, label: "Mie" }, { key: 4, label: "Jue" }, { key: 5, label: "Vie" },
@@ -2026,9 +2032,10 @@ const DIAS_SEMANA = [
 
 function SchedulerPanel({ client, onUpdate }) {
   const schedConfig = client.schedConfig || {};
+  const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState(schedConfig.enabled || false);
   const [hora, setHora] = useState(schedConfig.hora || "08:00");
-  const [dias, setDias] = useState(schedConfig.dias || [1, 2, 3, 4, 5]); // Lun-Vie
+  const [dias, setDias] = useState(schedConfig.dias || [1,2,3,4,5]);
   const [fechaInicio, setFechaInicio] = useState(schedConfig.fechaInicio || "");
   const [fechaFin, setFechaFin] = useState(schedConfig.fechaFin || "");
   const [plantillaId, setPlantillaId] = useState(schedConfig.plantillaId || "p1");
@@ -2038,35 +2045,26 @@ function SchedulerPanel({ client, onUpdate }) {
   const plantillas = client.tgConfig?.plantillas || PLANTILLAS_DEFAULT;
   const tgOk = !!(client.tgConfig?.token && client.tgConfig?.chatId);
 
-  function toggleDia(d) {
-    setDias(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
-  }
+  function toggleDia(d) { setDias(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()); }
 
   async function save() {
     setSaving(true);
-    const updated = {
-      ...client,
-      schedConfig: { enabled, hora, dias, fechaInicio, fechaFin, plantillaId }
-    };
-    await onUpdate(updated);
-    show(enabled ? "✓ Programador activado" : "Programador desactivado", "ok");
+    await onUpdate({ ...client, schedConfig: { enabled, hora, dias, fechaInicio, fechaFin, plantillaId } });
+    show(enabled ? "✓ Envio automatico activado" : "Envio automatico desactivado", "ok");
     setSaving(false);
+    setOpen(false);
   }
 
-  // Calcular próximos envíos
   function proximosEnvios() {
     if (!enabled || !dias.length) return [];
-    const ahora = new Date();
-    const result = [];
-    for (let i = 0; i < 14 && result.length < 5; i++) {
-      const d = new Date(ahora);
-      d.setDate(d.getDate() + i);
-      const diaSemana = d.getDay();
-      if (!dias.includes(diaSemana)) continue;
-      const fechaStr = d.toISOString().slice(0, 10);
-      if (fechaInicio && fechaStr < fechaInicio) continue;
-      if (fechaFin && fechaStr > fechaFin) continue;
-      result.push(fechaStr + " a las " + hora + " (Quito)");
+    const ahora = new Date(); const result = [];
+    for (let i = 0; i < 14 && result.length < 3; i++) {
+      const d = new Date(ahora); d.setDate(d.getDate() + i);
+      const ds = d.getDay(); const fs = d.toISOString().slice(0,10);
+      if (!dias.includes(ds)) continue;
+      if (fechaInicio && fs < fechaInicio) continue;
+      if (fechaFin && fs > fechaFin) continue;
+      result.push(fs + " a las " + hora);
     }
     return result;
   }
@@ -2076,127 +2074,74 @@ function SchedulerPanel({ client, onUpdate }) {
   return (
     <>
       {toastEl}
-      <div style={{ marginBottom: "1.25rem" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-          <div>
-            <div className="sec-title">Programador de envios automaticos</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-              Envia reportes diarios por Telegram automaticamente
+      {/* HEADER colapsable */}
+      <div style={{ background: "var(--surface2)", borderRadius: 10, overflow: "hidden", marginBottom: "1.25rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", cursor: "pointer" }}
+          onClick={() => setOpen(o => !o)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 18 }}>⏰</span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>Envio automatico diario</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                {enabled
+                  ? <span style={{ color: "var(--green)" }}>Activo · {dias.length} dias · {hora} (Quito){proximos[0] ? " · Próximo: " + proximos[0] : ""}</span>
+                  : <span style={{ color: "var(--muted)" }}>Inactivo</span>
+                }
+              </div>
             </div>
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: enabled ? "var(--green)" : "var(--muted)" }}>
-              {enabled ? "Activo" : "Inactivo"}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ width: 36, height: 20, borderRadius: 10, background: enabled ? "var(--green)" : "var(--border)", position: "relative", transition: "background .2s" }}
+              onClick={e => { e.stopPropagation(); setEnabled(v => !v); }}>
+              <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: enabled ? 19 : 3, transition: "left .2s" }} />
             </div>
-            <div style={{ width: 44, height: 24, borderRadius: 12, background: enabled ? "var(--green)" : "var(--border)", position: "relative", transition: "background .2s", cursor: "pointer" }}
-              onClick={() => setEnabled(e => !e)}>
-              <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: enabled ? 23 : 3, transition: "left .2s" }} />
-            </div>
-          </label>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+          </div>
         </div>
 
-        {!tgOk && (
-          <div style={{ background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.3)", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "var(--amber)", marginBottom: "1rem" }}>
-            ⚠️ Configura el Token y Chat ID de Telegram primero en la tab ✈️ Telegram
-          </div>
-        )}
-
-        <div className="card">
-          <div className="card-title">Horario de envio</div>
-          <div className="form-row">
-            <div className="field">
-              <label>Hora de envio (Ecuador / Quito)</label>
-              <input type="time" value={hora} onChange={e => setHora(e.target.value)} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>UTC-5 · Zona horaria Quito</div>
+        {open && (
+          <div style={{ padding: "0 16px 16px" }}>
+            {!tgOk && <div style={{ background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.3)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--amber)", marginBottom: 12 }}>⚠️ Configura Token y Chat ID en la tab ✈️ Telegram primero</div>}
+            <div className="form-row">
+              <div className="field"><label>Hora de envio (Quito UTC-5)</label><input type="time" value={hora} onChange={e => setHora(e.target.value)} /></div>
+              <div className="field"><label>Plantilla</label><select value={plantillaId} onChange={e => setPlantillaId(e.target.value)}>{plantillas.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
             </div>
-            <div className="field">
-              <label>Plantilla a enviar</label>
-              <select value={plantillaId} onChange={e => setPlantillaId(e.target.value)}>
-                {plantillas.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-              </select>
+            <div className="field" style={{ marginBottom: "1rem" }}>
+              <label>Dias de envio</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                {DIAS_SEMANA.map(d => <div key={d.key} className={"fb-chip " + (dias.includes(d.key) ? "active" : "")} onClick={() => toggleDia(d.key)}>{d.label}</div>)}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setDias([1,2,3,4,5])}>Lun-Vie</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setDias([0,1,2,3,4,5,6])}>Todos</button>
+              </div>
             </div>
-          </div>
-
-          <div className="field" style={{ marginBottom: "1rem" }}>
-            <label>Dias de envio</label>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-              {DIAS_SEMANA.map(d => (
-                <div key={d.key}
-                  className={"fb-chip " + (dias.includes(d.key) ? "active" : "")}
-                  onClick={() => toggleDia(d.key)}>
-                  {d.label}
+            <div className="form-row">
+              <div className="field"><label>Fecha inicio</label><input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} /></div>
+              <div className="field"><label>Fecha fin</label><input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} /></div>
+            </div>
+            {(client.contratos || []).filter(c => c.fechaInicio).length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Llenar desde contrato:</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {(client.contratos || []).filter(c => c.fechaInicio).map((c, i) => (
+                    <button key={i} className="btn btn-ghost btn-sm" onClick={() => { setFechaInicio(c.fechaInicio); setFechaFin(c.fechaFin || ""); }}>
+                      Contrato #{i+1}
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setDias([1,2,3,4,5])}>Lun-Vie</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setDias([0,1,2,3,4,5,6])}>Todos</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setDias([])}>Ninguno</button>
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="field">
-              <label>Fecha inicio (opcional)</label>
-              <input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Coincide con inicio del contrato</div>
-            </div>
-            <div className="field">
-              <label>Fecha fin (opcional)</label>
-              <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Coincide con fin del contrato</div>
-            </div>
-          </div>
-
-          {/* Llenar desde contrato activo */}
-          {(client.contratos || []).filter(c => c.fechaInicio).length > 0 && (
-            <div style={{ marginBottom: "1rem" }}>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Llenar fechas desde contrato:</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {(client.contratos || []).filter(c => c.fechaInicio).map((c, i) => (
-                  <button key={i} className="btn btn-ghost btn-sm"
-                    onClick={() => { setFechaInicio(c.fechaInicio); setFechaFin(c.fechaFin || ""); }}>
-                    Contrato #{i+1} ({c.fechaInicio}{c.fechaFin ? " → " + c.fechaFin : ""})
-                  </button>
-                ))}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* PROXIMOS ENVIOS */}
-        {proximos.length > 0 && (
-          <div className="card">
-            <div className="card-title">Proximos envios programados</div>
-            {proximos.map((p, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: i < proximos.length-1 ? "1px solid var(--border)" : "none", fontSize: 13 }}>
-                <span style={{ color: "var(--green)", fontSize: 16 }}>●</span>
-                {p}
-              </div>
-            ))}
+            )}
+            <button className="btn btn-primary btn-sm" disabled={saving || (enabled && !dias.length) || !tgOk} onClick={save}>
+              {saving ? "Guardando..." : "💾 Guardar"}
+            </button>
           </div>
         )}
-
-        {enabled && !dias.length && (
-          <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 8 }}>Selecciona al menos un dia de envio.</div>
-        )}
-
-        {/* INSTRUCCION VERCEL CRON */}
-        <div style={{ background: "rgba(124,58,237,.07)", border: "1px solid rgba(124,58,237,.2)", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.7 }}>
-          <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>✦ Como funciona el envio automatico</div>
-          Un Cron Job en Vercel revisa todos los dias a la hora configurada si hay clientes
-          con envio programado activo. Si corresponde, sincroniza los datos de Facebook
-          y envia el reporte por Telegram. El archivo <b style={{ color: "var(--text)" }}>vercel.json</b> ya
-          esta configurado en tu proyecto para esto.
-        </div>
-
-        <button className="btn btn-primary" disabled={saving || (enabled && !dias.length) || !tgOk} onClick={save}>
-          {saving ? "Guardando..." : "💾 Guardar programacion"}
-        </button>
       </div>
     </>
   );
 }
+
 
 // ─── FACEBOOK ADS INTEGRATION ────────────────────────────────────────────────
 
@@ -2955,6 +2900,186 @@ function ClientDashboard({ client, onLogout, banners }) {
   );
 }
 
+// ─── CAMPAÑAS MASIVAS ────────────────────────────────────────────────────────
+function CampanasPanel({ clients }) {
+  const [campanas, setCampanas] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [sending, setSending] = useState(null); // id de campaña enviando
+  const { show, el: toastEl } = useToast();
+
+  const blank = {
+    id: "", nombre: "", mensaje: "", destinatarios: "todos",
+    clientesSeleccionados: [], programado: false,
+    fechaEnvio: new Date().toISOString().slice(0,10),
+    horaEnvio: "08:00", estado: "borrador"
+  };
+  const [form, setForm] = useState({ ...blank });
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  function toggleCliente(id) {
+    setForm(p => {
+      const sel = p.clientesSeleccionados;
+      return { ...p, clientesSeleccionados: sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id] };
+    });
+  }
+
+  function getDestinatarios(campana) {
+    if (campana.destinatarios === "todos") return clients.filter(c => c.tgConfig?.token && c.tgConfig?.chatId);
+    return clients.filter(c => campana.clientesSeleccionados.includes(c.id) && c.tgConfig?.token && c.tgConfig?.chatId);
+  }
+
+  function saveCampana() {
+    if (!form.nombre || !form.mensaje) return show("Completa nombre y mensaje", "err");
+    if (form.destinatarios === "seleccionados" && !form.clientesSeleccionados.length) return show("Selecciona al menos un cliente", "err");
+    const nueva = { ...form, id: form.id || "camp" + Date.now(), estado: "borrador" };
+    setCampanas(prev => {
+      const idx = prev.findIndex(c => c.id === nueva.id);
+      return idx >= 0 ? prev.map((c, i) => i === idx ? nueva : c) : [...prev, nueva];
+    });
+    setForm({ ...blank });
+    setShowForm(false);
+    show("✓ Campaña guardada", "ok");
+  }
+
+  async function sendCampana(campana) {
+    const dest = getDestinatarios(campana);
+    if (!dest.length) return show("Ningún destinatario tiene Telegram configurado", "err");
+    setSending(campana.id);
+    let ok = 0; let err = 0;
+    for (const client of dest) {
+      try {
+        const r = await sendTelegram(client.tgConfig.token, client.tgConfig.chatId, campana.mensaje);
+        if (r.ok) ok++; else err++;
+      } catch { err++; }
+    }
+    setCampanas(prev => prev.map(c => c.id === campana.id ? { ...c, estado: "enviada", ultimoEnvio: new Date().toLocaleString("es-EC") } : c));
+    show(`✓ Enviado: ${ok} clientes${err > 0 ? ` · ${err} errores` : ""}`, ok > 0 ? "ok" : "err");
+    setSending(null);
+  }
+
+  function editCampana(c) { setForm({ ...c }); setShowForm(true); }
+  function deleteCampana(id) { if (window.confirm("¿Eliminar esta campaña?")) setCampanas(prev => prev.filter(c => c.id !== id)); }
+
+  const estadoBadge = (e) => e === "enviada" ? "badge-paid" : e === "programada" ? "badge-progress" : "badge-pending";
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div>
+            <div className="sec-title">Campañas de mensajería</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Envía mensajes a grupos de clientes a la vez</div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={() => { setForm({ ...blank }); setShowForm(true); }}>+ Nueva campaña</button>
+        </div>
+
+        {/* FORMULARIO */}
+        {showForm && (
+          <div className="card" style={{ borderColor: "rgba(124,58,237,.4)" }}>
+            <div className="card-title">{form.id ? "Editar campaña" : "Nueva campaña"}</div>
+            <div className="form-row">
+              <div className="field"><label>Nombre de la campaña</label><input type="text" value={form.nombre} onChange={e => f("nombre", e.target.value)} placeholder="Ej: Reporte semanal junio" /></div>
+              <div className="field"><label>Destinatarios</label>
+                <select value={form.destinatarios} onChange={e => f("destinatarios", e.target.value)}>
+                  <option value="todos">Todos los clientes con Telegram</option>
+                  <option value="seleccionados">Clientes especificos</option>
+                </select>
+              </div>
+            </div>
+
+            {form.destinatarios === "seleccionados" && (
+              <div className="field" style={{ marginBottom: "1rem" }}>
+                <label>Selecciona clientes</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                  {clients.map(c => {
+                    const tgOk = !!(c.tgConfig?.token && c.tgConfig?.chatId);
+                    const sel = form.clientesSeleccionados.includes(c.id);
+                    return (
+                      <div key={c.id}
+                        className={"fb-chip " + (sel ? "active" : "")}
+                        style={{ opacity: tgOk ? 1 : 0.4 }}
+                        onClick={() => tgOk && toggleCliente(c.id)}>
+                        {sel ? "✓ " : ""}{c.name}
+                        {!tgOk && <span style={{ fontSize: 10, marginLeft: 4, color: "var(--red)" }}>sin TG</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="field" style={{ marginBottom: "1rem" }}>
+              <label>Mensaje</label>
+              <textarea value={form.mensaje} onChange={e => f("mensaje", e.target.value)}
+                placeholder="Escribe el mensaje que recibirán los clientes..." style={{ minHeight: 120 }} />
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                {form.destinatarios === "todos"
+                  ? `Se enviara a ${clients.filter(c => c.tgConfig?.token && c.tgConfig?.chatId).length} clientes con Telegram configurado`
+                  : `Se enviara a ${form.clientesSeleccionados.length} clientes seleccionados`}
+              </div>
+            </div>
+
+            <div className="form-row" style={{ marginBottom: "1rem" }}>
+              <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: ".06em", gridColumn: "1/-1", marginBottom: 4 }}>
+                <input type="checkbox" checked={form.programado} onChange={e => f("programado", e.target.checked)} style={{ width: 14, height: 14, marginRight: 6, accentColor: "var(--accent)" }} />
+                Programar envio para mas tarde
+              </label>
+              {form.programado && <>
+                <div className="field" style={{ marginBottom: 0 }}><label>Fecha</label><input type="date" value={form.fechaEnvio} onChange={e => f("fechaEnvio", e.target.value)} /></div>
+                <div className="field" style={{ marginBottom: 0 }}><label>Hora (Quito)</label><input type="time" value={form.horaEnvio} onChange={e => f("horaEnvio", e.target.value)} /></div>
+              </>}
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={saveCampana}>Guardar campaña</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>Cancelar</button>
+            </div>
+          </div>
+        )}
+
+        {/* LISTA DE CAMPAÑAS */}
+        {campanas.length === 0 && !showForm && (
+          <div className="empty"><div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>📣</div><div>Sin campañas. Crea la primera.</div></div>
+        )}
+
+        {campanas.map(c => {
+          const dest = getDestinatarios(c);
+          const isSending = sending === c.id;
+          return (
+            <div key={c.id} className="card" style={{ marginBottom: "0.75rem" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{c.nombre}</div>
+                    <span className={"badge " + estadoBadge(c.estado)} style={{ fontSize: 10 }}>{c.estado}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+                    {c.destinatarios === "todos" ? `Todos (${dest.length} con Telegram)` : `${dest.length} clientes seleccionados`}
+                    {c.programado && ` · Programado: ${c.fechaEnvio} ${c.horaEnvio}`}
+                    {c.ultimoEnvio && ` · Último envio: ${c.ultimoEnvio}`}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text)", background: "var(--surface2)", padding: "6px 10px", borderRadius: 6, fontFamily: "var(--mono)", whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>
+                    {c.mensaje.slice(0, 120)}{c.mensaje.length > 120 ? "..." : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => editCampana(c)}>✏️</button>
+                  <button className="btn btn-primary btn-sm" disabled={isSending || !dest.length}
+                    style={{ background: "var(--accent2)" }} onClick={() => sendCampana(c)}>
+                    {isSending ? "Enviando..." : "📤 Enviar"}
+                  </button>
+                  <button className="btn btn-danger btn-sm" onClick={() => deleteCampana(c.id)}>×</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
 function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners }) {
   const [view, setView] = useState("clientes");
@@ -2970,7 +3095,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "banner"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : "🖼️ Comunicaciones"}</div>)}
+        {["clientes", "resumen", "banner", "campanas"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "banner" ? "🖼️ Comunicaciones" : "📣 Campanas"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -3001,7 +3126,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : "Comunicaciones / Banner"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "banner" ? "Comunicaciones / Banner" : "Campanas de mensajeria"}</div>
             <div style={{ display: "flex", gap: 8 }}>
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
@@ -3044,6 +3169,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             </div>}
             {view === "banner" && (
               <BannerAdmin clients={clients} banners={banners} onSave={onSaveBanners} />
+            )}
+            {view === "campanas" && (
+              <CampanasPanel clients={clients} />
             )}
           </div>
         </div>
