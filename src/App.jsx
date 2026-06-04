@@ -2097,6 +2097,9 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     if (tgConfig?.plantillas) setPlantillas(tgConfig.plantillas);
   }, [client.id]);
 
+  const [editingMensaje, setEditingMensaje] = useState(false);
+  const [mensajeEditado, setMensajeEditado] = useState("");
+
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
 
   function getMensaje() {
@@ -2109,8 +2112,16 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     } catch (e) { return ""; }
   }
 
-  const mensaje = getMensaje();
-  const preview = mensaje ? mensaje.replace(/[*_]/g, "") : "";
+  const mensajeBase = getMensaje();
+  // Cuando cambia la plantilla seleccionada, resetear el mensaje editado
+  useEffect(() => {
+    setEditingMensaje(false);
+    setMensajeEditado("");
+  }, [selectedPlantilla]);
+
+  const mensajeFinal = editingMensaje ? mensajeEditado : mensajeBase;
+  const preview = mensajeFinal ? mensajeFinal.replace(/[*_]/g, "") : "";
+  const mensaje = mensajeFinal;
 
   async function saveConfig() {
     setSaving(true);
@@ -2241,11 +2252,56 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
           })}
         </div>
 
-        {/* PREVIEW */}
-        {preview && (
-          <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto" }}>
-            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa del mensaje seleccionado:</div>
-            {preview}
+        {/* EDITOR DE MENSAJE */}
+        {mensajeBase && (
+          <div style={{ marginBottom: "1rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent2)", textTransform: "uppercase", letterSpacing: ".06em" }}>
+                {editingMensaje ? "Editando mensaje" : "Vista previa del mensaje"}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {editingMensaje ? (
+                  <>
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setEditingMensaje(false); setMensajeEditado(""); }}>
+                      Restaurar original
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setEditingMensaje(true); setMensajeEditado(mensajeBase.replace(/[*_]/g, "")); }}>
+                    ✏️ Editar mensaje
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {editingMensaje ? (
+              <div>
+                <textarea
+                  value={mensajeEditado}
+                  onChange={e => setMensajeEditado(e.target.value)}
+                  style={{ width: "100%", minHeight: 220, background: "var(--bg)", border: "1px solid var(--accent2)", borderRadius: 8, padding: "10px 14px", fontSize: 13, fontFamily: "var(--mono)", color: "var(--text)", resize: "vertical", outline: "none", lineHeight: 1.6 }}
+                />
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                  Puedes agregar o borrar cualquier parte del mensaje. El original se restaura al cambiar de plantilla.
+                </div>
+              </div>
+            ) : (
+              <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 13, fontFamily: "var(--mono)", color: "var(--text)", whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", lineHeight: 1.6, border: "1px solid var(--border)" }}>
+                {preview}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!mensajeBase && (
+          <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "12px 14px", fontSize: 12, color: "var(--muted)", marginBottom: "1rem" }}>
+            {(() => {
+              const p = plantillas.find(x => x.id === selectedPlantilla);
+              if (!p) return "Selecciona una plantilla.";
+              if (p.tipo === "reporte") return "Agrega un registro diario para generar el reporte.";
+              if (p.tipo === "cobro") return "Este cliente no tiene contratos con cuotas pendientes.";
+              return "Edita el texto de esta plantilla haciendo clic en el lapiz ✏️.";
+            })()}
           </div>
         )}
 
