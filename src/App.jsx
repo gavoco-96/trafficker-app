@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL || "https://rckcrrdkxmdeexkuuqie.supabase.co";
@@ -246,6 +246,20 @@ const css = `
   .funnel-label{font-size:12px;color:var(--muted);width:100px;text-align:right;margin-right:12px;flex-shrink:0}
   .funnel-count{font-family:var(--mono);font-size:13px;color:var(--muted);width:80px;text-align:left;margin-left:12px;flex-shrink:0}
   .funnel-pct{font-size:11px;opacity:.7;margin-left:6px}
+  /* BANNER */
+  .banner-wrap{width:100%;overflow:hidden;border-radius:0;background:var(--surface);border-bottom:1px solid var(--border);position:relative;user-select:none}
+  .banner-track{display:flex;transition:transform .4s ease;height:180px}
+  .banner-slide{flex-shrink:0;width:100%;height:180px;object-fit:cover;object-position:center}
+  .banner-dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:6px}
+  .banner-dot{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.4);cursor:pointer;border:none;transition:background .2s}
+  .banner-dot.active{background:#fff}
+  .banner-arrow{position:absolute;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.4);border:none;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:background .15s}
+  .banner-arrow:hover{background:rgba(0,0,0,.7)}
+  .banner-arrow.left{left:12px}
+  .banner-arrow.right{right:12px}
+  .banner-admin-card{background:var(--surface2);border-radius:10px;padding:1rem;margin-bottom:.75rem;border:1px solid var(--border)}
+  .banner-preview{width:100%;height:120px;object-fit:cover;border-radius:8px;background:var(--border);display:block;margin-top:8px}
+  .banner-hint{font-size:11px;color:var(--muted);opacity:.7;margin-top:6px;line-height:1.5}
   /* MISC */
   .scroll-x{overflow-x:auto}
   .empty{text-align:center;padding:3rem 1rem;color:var(--muted)}
@@ -273,39 +287,56 @@ const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
 const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
-// Input numérico sin bug de foco - permite decimales fluidos
+// Input numérico completamente estable - no interfiere con la escritura
+// Usa un ref de DOM directo para evitar cualquier conflicto con React re-renders
 function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight }) {
-  const [localVal, setLocalVal] = useState("");
-  const focusedRef = useState(false);
+  const inputRef = useRef(null);
+  const isFocused = useRef(false);
+
+  // Sincronizar el valor del DOM solo cuando el campo NO tiene foco
+  useEffect(() => {
+    if (!isFocused.current && inputRef.current) {
+      const v = (value === "" || value === undefined || value === null) ? "" : String(value);
+      inputRef.current.value = v;
+    }
+  }, [value]);
 
   function handleFocus() {
-    // Al entrar, mostrar el valor actual sin formato
-    setLocalVal(value === "" || value === undefined || value === null ? "" : String(value));
+    isFocused.current = true;
+    if (inputRef.current) {
+      const v = (value === "" || value === undefined || value === null) ? "" : String(value);
+      inputRef.current.value = v;
+    }
   }
 
   function handleChange(e) {
-    const raw = e.target.value.replace(/[^0-9.]/g, "");
-    setLocalVal(raw);
+    // Permitir solo dígitos y punto decimal, sin restricciones de longitud
+    let raw = e.target.value;
+    // Eliminar caracteres no numéricos excepto punto
+    raw = raw.replace(/[^0-9.]/g, "");
+    // Solo permitir un punto decimal
+    const parts = raw.split(".");
+    if (parts.length > 2) raw = parts[0] + "." + parts.slice(1).join("");
+    // Actualizar el DOM directamente sin pasar por React state
+    if (inputRef.current) inputRef.current.value = raw;
+    // Notificar al padre
     if (raw === "" || raw === ".") { onChange(""); return; }
     const num = parseFloat(raw);
     if (!isNaN(num)) onChange(num);
   }
 
   function handleBlur() {
-    const num = parseFloat(localVal);
-    setLocalVal(isNaN(num) ? "" : String(num));
+    isFocused.current = false;
   }
-
-  // Valor a mostrar: si el campo tiene foco usamos localVal, sino el value externo
-  const displayVal = (value === "" || value === undefined || value === null) ? "" : String(value);
 
   return (
     <div className="input-prefix">
       {prefix && <span className="pre">{prefix}</span>}
       <input
+        ref={inputRef}
         type="text"
         inputMode="decimal"
-        value={localVal || displayVal}
+        defaultValue={(value === "" || value === undefined || value === null) ? "" : String(value)}
         onChange={handleChange}
         onFocus={handleFocus}
         onBlur={handleBlur}
@@ -1373,6 +1404,171 @@ function ProyeccionesPanel({ client, onUpdate, readOnly }) {
   );
 }
 
+
+// ─── BANNER / COMUNICACIONES ──────────────────────────────────────────────────
+function BannerViewer({ banners }) {
+  const [idx, setIdx] = useState(0);
+  const visible = banners.filter(b => b.url && b.url.trim());
+  if (!visible.length) return null;
+  const prev = () => setIdx(i => (i - 1 + visible.length) % visible.length);
+  const next = () => setIdx(i => (i + 1) % visible.length);
+  const slide = visible[idx];
+  return (
+    <div className="banner-wrap">
+      <img
+        className="banner-slide"
+        src={slide.url}
+        alt={slide.titulo || "Banner"}
+        onError={e => { e.target.style.display = "none"; }}
+      />
+      {slide.titulo && (
+        <div style={{ position: "absolute", bottom: 28, left: 16, background: "rgba(0,0,0,.6)", color: "#fff", padding: "4px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600 }}>
+          {slide.titulo}
+        </div>
+      )}
+      {visible.length > 1 && <>
+        <button className="banner-arrow left" onClick={prev}>‹</button>
+        <button className="banner-arrow right" onClick={next}>›</button>
+        <div className="banner-dots">
+          {visible.map((_, i) => <button key={i} className={`banner-dot ${i === idx ? "active" : ""}`} onClick={() => setIdx(i)} />)}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+function BannerAdmin({ clients, banners, onSave }) {
+  const [local, setLocal] = useState(banners || []);
+  const [saving, setSaving] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  function addSlide() {
+    if (local.length >= 5) return alert("Máximo 5 imágenes en el banner.");
+    setLocal(p => [...p, { id: "b" + Date.now(), url: "", titulo: "", destinatarios: "todos", clientesSeleccionados: [] }]);
+  }
+  function upd(i, k, v) { setLocal(p => p.map((b, xi) => xi === i ? { ...b, [k]: v } : b)); }
+  function rem(i) { setLocal(p => p.filter((_, xi) => xi !== i)); }
+  function toggleCliente(i, clientId) {
+    setLocal(p => p.map((b, xi) => {
+      if (xi !== i) return b;
+      const sel = b.clientesSeleccionados || [];
+      return { ...b, clientesSeleccionados: sel.includes(clientId) ? sel.filter(c => c !== clientId) : [...sel, clientId] };
+    }));
+  }
+
+  async function save() {
+    setSaving(true);
+    await onSave(local);
+    show("✓ Banner guardado correctamente", "ok");
+    setSaving(false);
+  }
+
+  // Preview de URL de Google Drive: convertir link de sharing a link directo de imagen
+  function getDriveDirectUrl(url) {
+    // https://drive.google.com/file/d/ID/view → https://drive.google.com/uc?export=view&id=ID
+    const match = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+    if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+    return url;
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div>
+            <div className="sec-title">Comunicaciones / Banner</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Hasta 5 imágenes · Se muestran en la parte superior del panel del cliente</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={addSlide} disabled={local.length >= 5}>+ Añadir imagen</button>
+            <button className="btn btn-green btn-sm" disabled={saving} onClick={save}>{saving ? "Guardando..." : "💾 Guardar banner"}</button>
+          </div>
+        </div>
+
+        {local.length === 0 && (
+          <div className="empty">
+            <div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>🖼️</div>
+            <div>Sin imágenes. Añade la primera.</div>
+          </div>
+        )}
+
+        {local.map((b, i) => (
+          <div key={b.id} className="banner-admin-card">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>Imagen {i + 1}</div>
+              <button className="btn btn-danger btn-sm" onClick={() => rem(i)}>× Eliminar</button>
+            </div>
+            <div className="field">
+              <label>URL de la imagen</label>
+              <input type="text" value={b.url} onChange={e => upd(i, "url", e.target.value)} placeholder="https://... (enlace directo a la imagen)" />
+              <div className="banner-hint">
+                <strong>Google Drive:</strong> Sube la imagen → clic derecho → "Obtener enlace" → cambia a "Cualquier persona con el enlace" → pega el enlace aquí. El sistema lo convierte automáticamente.{"
+"}
+                <strong>Otros:</strong> Imgur, Cloudinary, o cualquier URL que termine en .jpg/.png/.webp funciona directamente.{"
+"}
+                <strong>Dimensiones recomendadas:</strong> 1200×300 px mínimo · Relación 4:1 · Máximo 2MB
+              </div>
+            </div>
+            {b.url && (
+              <img
+                className="banner-preview"
+                src={getDriveDirectUrl(b.url)}
+                alt="Preview"
+                onError={e => { e.target.src = ""; e.target.style.display = "none"; }}
+                onLoad={e => { e.target.style.display = "block"; }}
+              />
+            )}
+            <div className="field" style={{ marginTop: 10 }}>
+              <label>Título (opcional)</label>
+              <input type="text" value={b.titulo} onChange={e => upd(i, "titulo", e.target.value)} placeholder="Ej: ¡Nueva promoción disponible!" />
+            </div>
+            <div className="field">
+              <label>Mostrar a</label>
+              <select value={b.destinatarios} onChange={e => upd(i, "destinatarios", e.target.value)}>
+                <option value="todos">Todos los clientes</option>
+                <option value="seleccionados">Clientes específicos</option>
+              </select>
+            </div>
+            {b.destinatarios === "seleccionados" && (
+              <div>
+                <label style={{ fontSize: 12, color: "var(--muted)", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".06em" }}>Selecciona clientes</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {clients.map(c => {
+                    const sel = (b.clientesSeleccionados || []).includes(c.id);
+                    return (
+                      <div key={c.id}
+                        className={`servicio-chip ${sel ? "selected" : ""}`}
+                        onClick={() => toggleCliente(i, c.id)}>
+                        {sel ? "✓ " : ""}{c.name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// Función para obtener los banners que corresponden a un cliente específico
+function getBannersForClient(banners, clientId) {
+  return (banners || []).filter(b => {
+    if (!b.url || !b.url.trim()) return false;
+    if (b.destinatarios === "todos") return true;
+    return (b.clientesSeleccionados || []).includes(clientId);
+  }).map(b => ({
+    ...b,
+    url: (() => {
+      const match = b.url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+      return match ? `https://drive.google.com/uc?export=view&id=${match[1]}` : b.url;
+    })()
+  }));
+}
+
 // ─── CLIENT FORM ──────────────────────────────────────────────────────────────
 function ClientForm({ initial, onSave, onCancel }) {
   const blank = { name: "", username: "", password: "", niche: "whatsapp", color: "#7C3AED", logo: "", producto: "", email: "", telefono: "", direccion: "", representante: "", serviciosContratados: [], checklist: {}, cuentas: [], contratos: [], antecedentes: [], records: [], kpis: [], funnel: [] };
@@ -1528,7 +1724,7 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
 }
 
 // ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
-function ClientDashboard({ client, onLogout }) {
+function ClientDashboard({ client, onLogout, banners }) {
   const [tab, setTab] = useState("resumen");
   const [period, setPeriod] = useState("mtd");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -1549,7 +1745,8 @@ function ClientDashboard({ client, onLogout }) {
         </div>
       </div>
       <div className="main">
-        <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
+        <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
+        {banners && banners.length > 0 && <BannerViewer banners={banners} />}
         <div className="content">
           <ProgressBar client={client} />
           {tab === "resumen" && <>
@@ -1598,7 +1795,7 @@ function ClientDashboard({ client, onLogout }) {
 }
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
-function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient }) {
+function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners }) {
   const [view, setView] = useState("clientes");
   const [selectedId, setSelectedId] = useState(null);
   const [addingClient, setAddingClient] = useState(false);
@@ -1612,7 +1809,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient }
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : "Resumen general"}</div>)}
+        {["clientes", "resumen", "banner"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : "🖼️ Comunicaciones"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -1643,7 +1840,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient }
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : "Resumen general"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : "Comunicaciones / Banner"}</div>
             <div style={{ display: "flex", gap: 8 }}>
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
@@ -1684,6 +1881,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient }
                 })}
               </div>
             </div>}
+            {view === "banner" && (
+              <BannerAdmin clients={clients} banners={banners} onSave={onSaveBanners} />
+            )}
           </div>
         </div>
       </div>
@@ -1716,22 +1916,40 @@ function LoginScreen({ onLogin, loading }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [clients, setClients] = useState([]);
+  const [banners, setBanners] = useState([]);
   const [appLoading, setAppLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
 
   useEffect(() => {
-    db.getAll().then(result => {
-      if (result.ok) { setClients(result.data); setDbError(null); }
-      else { setDbError("No se pudo conectar a la base de datos. Verifica las variables de entorno en Vercel."); }
+    async function loadAll() {
+      const result = await db.getAll();
+      if (result.ok) {
+        // Separar banners de clientes reales
+        const allItems = result.data;
+        const clientData = allItems.filter(item => item && item.id && !item.id.startsWith("__banners__"));
+        const bannerItem = allItems.find(item => item && item.id === "__banners__");
+        setClients(clientData);
+        setBanners(bannerItem?.data || []);
+        setDbError(null);
+      } else {
+        setDbError("No se pudo conectar a la base de datos. Verifica las variables de entorno en Vercel.");
+      }
       setAppLoading(false);
-    });
+    }
+    loadAll();
   }, []);
 
   async function saveClient(client) {
     const result = await db.upsert(client);
     if (result.ok) setClients(prev => prev.find(c => c.id === client.id) ? prev.map(c => c.id === client.id ? client : c) : [...prev, client]);
     return result;
+  }
+
+  async function saveBanners(newBanners) {
+    setBanners(newBanners);
+    // Guardar banners como un registro especial en la misma tabla
+    await db.upsert({ id: "__banners__", data: newBanners });
   }
 
   async function handleLogin(username, password) {
@@ -1741,7 +1959,7 @@ export default function App() {
       const r = await fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: H });
       if (!r.ok) throw new Error("Sin conexión a BD");
       const rows = await r.json();
-      const all = rows.map(row => row.data);
+      const all = rows.map(row => row.data).filter(item => item && !item.id?.startsWith("__"));
       setClients(all);
       const found = all.find(c => c.username === username && c.password === password);
       if (found) { setSession({ role: "client", clientId: found.id }); setLoginLoading(false); return true; }
@@ -1751,7 +1969,7 @@ export default function App() {
 
   async function updateClient(updated) { return await saveClient(updated); }
   async function addClient(data) {
-    const nc = { antecedentes: [], records: [], checklist: {}, cuentas: [], contratos: [], ...data, id: "c" + Date.now() };
+    const nc = { antecedentes: [], records: [], checklist: {}, cuentas: [], contratos: [], kpis: [], funnel: [], ...data, id: "c" + Date.now() };
     return await saveClient(nc);
   }
   async function deleteClient(id) {
@@ -1774,20 +1992,37 @@ export default function App() {
         <div style={{ fontSize: 28, marginBottom: 12 }}>⚠️</div>
         <div style={{ fontSize: 15, fontWeight: 600, color: "var(--red)", marginBottom: 8 }}>Error de conexión</div>
         <div style={{ fontSize: 13, color: "var(--muted)", textAlign: "center", maxWidth: 400 }}>{dbError}</div>
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => { setAppLoading(true); setDbError(null); db.getAll().then(r => { if (r.ok) { setClients(r.data); } else setDbError(r.error); setAppLoading(false); }); }}>Reintentar conexión</button>
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => {
+          setAppLoading(true); setDbError(null);
+          db.getAll().then(r => { if (r.ok) { setClients(r.data.filter(i => i && !i.id?.startsWith("__"))); } else setDbError(r.error); setAppLoading(false); });
+        }}>Reintentar conexión</button>
       </div>
     </>
   );
 
   const clientSession = session?.role === "client" ? clients.find(c => c.id === session.clientId) : null;
+  const clientBanners = clientSession ? getBannersForClient(banners, clientSession.id) : [];
 
   return (
     <>
       <style>{css}</style>
       {!session && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
-      {session?.role === "admin" && <AdminPanel clients={clients} onLogout={() => setSession(null)} onUpdate={updateClient} onAddClient={addClient} onDeleteClient={deleteClient} />}
-      {session?.role === "client" && clientSession && <ClientDashboard client={clientSession} onLogout={() => setSession(null)} />}
+      {session?.role === "admin" && (
+        <AdminPanel
+          clients={clients}
+          onLogout={() => setSession(null)}
+          onUpdate={updateClient}
+          onAddClient={addClient}
+          onDeleteClient={deleteClient}
+          banners={banners}
+          onSaveBanners={saveBanners}
+        />
+      )}
+      {session?.role === "client" && clientSession && (
+        <ClientDashboard client={clientSession} onLogout={() => setSession(null)} banners={clientBanners} />
+      )}
       {session?.role === "client" && !clientSession && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
     </>
   );
 }
+
