@@ -1924,9 +1924,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
         {previewMsg && (
           <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
             <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa del mensaje:</div>
-            {previewMsg.replace(/\*/g, "").replace(/\_/g, "").replace(/\
-/g, "
-")}
+            {previewMsg.split("\\n").join("\n").replace(/[*_]/g, "")}
           </div>
         )}
 
@@ -2337,5 +2335,4 @@ export default function App() {
     </>
   );
 }
-
 
