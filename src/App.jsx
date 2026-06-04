@@ -986,9 +986,50 @@ function AntecedentesPanel({ client, onUpdate, readOnly }) {
 
 
 // ─── METRICAS ADMIN PANEL (ver/editar) ───────────────────────────────────────
+function exportMetricas(rows, client, formato) {
+  if (!rows.length) return;
+  const isWA = client.niche === "whatsapp";
+  const isWeb = client.niche === "web";
+  const baseHeaders = ["Fecha", "Inversion", "Alcance", "CPM", "CPC", "CTR"];
+  const nicheHeaders = isWA ? ["Leads", "Contactados", "Ventas", "Ingresos"] : isWeb ? ["Sesiones", "Carrito", "Compras", "Ingresos", "ROAS"] : ["Potenciales", "Formularios", "Ventas", "Ingresos"];
+  const headers = [...baseHeaders, ...nicheHeaders];
+  const dataRows = rows.map(r => {
+    const base = [r.date, r.inversion||"", r.alcance||"", r.cpm||"", r.cpc||"", r.ctr||""];
+    const niche = isWA ? [r.leads||"", r.contactados||"", r.ventas||"", r.ingreso||""] : isWeb ? [r.sesiones||"", r.agregar_carrito||"", r.compras||"", r.ingreso||"", r.roas||""] : [r.clientesPotenciales||"", r.formularios||"", r.ventas||"", r.ingreso||""];
+    return [...base, ...niche];
+  });
+  const sep = formato === "csv" ? "," : "	";
+  const content = [headers, ...dataRows].map(r => r.map(v => `"${v}"`).join(sep)).join("
+");
+  const blob = new Blob(["﻿" + content], { type: formato === "csv" ? "text/csv" : "application/vnd.ms-excel" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = `metricas_${client.name}_${new Date().toISOString().slice(0,10)}.${formato}`; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom, to, setTo, rows, t, isWA, isWeb, isLaunch, onAdd }) {
-  const [editingRow, setEditingRow] = useState(null); // índice del registro en edición
+  const [editingRow, setEditingRow] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [sortCol, setSortCol] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
+
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  }
+
+  const sortedRows = [...rows].sort((a, b) => {
+    const va = a[sortCol] ?? ""; const vb = b[sortCol] ?? "";
+    const na = parseFloat(va); const nb = parseFloat(vb);
+    const numSort = !isNaN(na) && !isNaN(nb) ? na - nb : String(va).localeCompare(String(vb));
+    return sortDir === "asc" ? numSort : -numSort;
+  });
+
+  const SortTh = ({ col, label }) => (
+    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(col)}>
+      {label} {sortCol === col ? (sortDir === "asc" ? " ▲" : " ▼") : " ⇅"}
+    </th>
+  );
 
   function startEdit(r, i) {
     setEditingRow(i);
@@ -1046,25 +1087,33 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <MetricCard label="Formularios" value={t.formularios} />
         <MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight />
       </div>}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "flex-end" }}>
+        <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "csv")}>⬇ CSV</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "xls")}>⬇ XLS</button>
+      </div>
       <div className="card scroll-x">
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Haz clic en ✏️ para editar un registro existente
+          Clic en encabezado para ordenar · ✏️ para editar
         </div>
         <table className="tbl">
           <thead>
             <tr>
-              <th>Fecha</th><th>Inversión</th><th>CPM</th><th>CPC</th><th>CTR</th>
-              {isWA && <><th>Leads</th><th>Contactados</th><th>Ventas</th><th>Ingresos</th></>}
-              {isWeb && <><th>Sesiones</th><th>Carrito</th><th>Compras</th><th>Ingresos</th><th>ROAS</th></>}
-              {isLaunch && <><th>Potenciales</th><th>Formularios</th></>}
+              <SortTh col="date" label="Fecha" />
+              <SortTh col="inversion" label="Inversión" />
+              <SortTh col="cpm" label="CPM" />
+              <SortTh col="cpc" label="CPC" />
+              <SortTh col="ctr" label="CTR" />
+              {isWA && <><SortTh col="leads" label="Leads" /><SortTh col="contactados" label="Contactados" /><SortTh col="ventas" label="Ventas" /><SortTh col="ingreso" label="Ingresos" /></>}
+              {isWeb && <><SortTh col="sesiones" label="Sesiones" /><SortTh col="agregar_carrito" label="Carrito" /><SortTh col="compras" label="Compras" /><SortTh col="ingreso" label="Ingresos" /><SortTh col="roas" label="ROAS" /></>}
+              {isLaunch && <><SortTh col="clientesPotenciales" label="Potenciales" /><SortTh col="formularios" label="Formularios" /></>}
               <th style={{ width: 80 }}></th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {sortedRows.length === 0 && (
               <tr><td colSpan={14} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin registros.</td></tr>
             )}
-            {rows.map((r, i) => {
+            {sortedRows.map((r, i) => {
               const isEdit = editingRow === i;
               return (
                 <tr key={i} style={isEdit ? { background: "rgba(124,58,237,.06)" } : {}}>
@@ -1096,12 +1145,12 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
                     {isEdit ? (
                       <div style={{ display: "flex", gap: 4 }}>
                         <button className="btn btn-green btn-sm" onClick={saveEdit} title="Guardar">✓</button>
-                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Cancelar">×</button>
+                        <button className="btn btn-ghost btn-sm" onClick={cancelEdit} title="Cancelar">x</button>
                       </div>
                     ) : (
                       <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(r, i)} title="Editar">✏️</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => deleteRow(i)} title="Eliminar">🗑</button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(r, i)} title="Editar">&#9998;</button>
+                        <button className="btn btn-danger btn-sm" onClick={() => deleteRow(i)} title="Eliminar">&#128465;</button>
                       </div>
                     )}
                   </td>
@@ -1109,6 +1158,36 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
               );
             })}
           </tbody>
+          {/* FILA DE TOTALES */}
+          {sortedRows.length > 1 && (
+            <tfoot>
+              <tr style={{ background: "rgba(124,58,237,.08)", fontWeight: 600 }}>
+                <td style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>TOTAL</td>
+                <td>${fmtNum(sum(sortedRows, "inversion"), 2)}</td>
+                <td>${fmtNum(avg(sortedRows, "cpm"), 2)}</td>
+                <td>${fmtNum(avg(sortedRows, "cpc"), 2)}</td>
+                <td>{fmtNum(avg(sortedRows, "ctr"), 2)}%</td>
+                {isWA && <>
+                  <td>{fmtNum(sum(sortedRows, "leads"))}</td>
+                  <td>{fmtNum(sum(sortedRows, "contactados"))}</td>
+                  <td>{fmtNum(sum(sortedRows, "ventas"))}</td>
+                  <td>${fmtNum(sum(sortedRows, "ingreso"), 2)}</td>
+                </>}
+                {isWeb && <>
+                  <td>{fmtNum(sum(sortedRows, "sesiones"))}</td>
+                  <td>{fmtNum(sum(sortedRows, "agregar_carrito"))}</td>
+                  <td>{fmtNum(sum(sortedRows, "compras"))}</td>
+                  <td>${fmtNum(sum(sortedRows, "ingreso"), 2)}</td>
+                  <td>{fmtNum(avg(sortedRows, "roas"), 2)}x</td>
+                </>}
+                {isLaunch && <>
+                  <td>{fmtNum(sum(sortedRows, "clientesPotenciales"))}</td>
+                  <td>{fmtNum(sum(sortedRows, "formularios"))}</td>
+                </>}
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </>
@@ -1158,16 +1237,22 @@ function calcKpiProgress(kpi, records) {
   const meta = parseFloat(kpi.meta_valor) || 0;
   if (meta === 0) return { pct: 0, actual: 0, meta: 0 };
 
-  // Filtrar registros dentro del plazo del KPI
+  // Filtrar registros por rango de fechas explícito o por plazo en texto
   let filteredRecords = records;
-  const days = parsePlazoToDays(kpi.plazo);
-  if (days) {
-    const desde = new Date();
-    desde.setDate(desde.getDate() - days);
+  if (kpi.fechaInicio || kpi.fechaFin) {
     filteredRecords = records.filter(r => {
       const d = new Date(r.date + "T12:00:00");
-      return d >= desde;
+      const ok1 = !kpi.fechaInicio || d >= new Date(kpi.fechaInicio + "T00:00:00");
+      const ok2 = !kpi.fechaFin || d <= new Date(kpi.fechaFin + "T23:59:59");
+      return ok1 && ok2;
     });
+  } else {
+    const days = parsePlazoToDays(kpi.plazo);
+    if (days) {
+      const desde = new Date();
+      desde.setDate(desde.getDate() - days);
+      filteredRecords = records.filter(r => new Date(r.date + "T12:00:00") >= desde);
+    }
   }
   if (!filteredRecords.length) return { pct: 0, actual: 0, meta };
 
@@ -1280,7 +1365,20 @@ function KpiForm({ initial, client, onSave, onCancel }) {
       <div className="form-row3">
         <div className="field"><label>Meta (valor)</label><input type="text" inputMode="decimal" value={form.meta_valor} onChange={e => f("meta_valor", e.target.value)} placeholder="Ej: 30" /></div>
         <div className="field"><label>Unidad</label><input type="text" value={form.unidad} onChange={e => f("unidad", e.target.value)} placeholder="%, $, unidades..." /></div>
-        <div className="field"><label>Plazo</label><input type="text" value={form.plazo} onChange={e => f("plazo", e.target.value)} placeholder="Ej: 30 días" /></div>
+        <div className="field"><label>Plazo (texto)</label><input type="text" value={form.plazo} onChange={e => f("plazo", e.target.value)} placeholder="Ej: 30 dias, 2 meses" /></div>
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label>Fecha inicio del KPI (opcional)</label>
+          <input type="date" value={form.fechaInicio || ""} onChange={e => f("fechaInicio", e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Fecha fin del KPI (opcional)</label>
+          <input type="date" value={form.fechaFin || ""} onChange={e => f("fechaFin", e.target.value)} />
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: -8, marginBottom: 12 }}>
+        Si defines un rango de fechas, el progreso se calcula solo con datos de ese periodo.
       </div>
       <div className="field"><label>Relevancia</label>
         <select value={form.relevancia} onChange={e => f("relevancia", e.target.value)}>
@@ -1500,14 +1598,21 @@ function BannerViewer({ banners }) {
   );
 }
 
+function getDriveDirectUrl(url) {
+  const match = url && url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+  if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+  return url || "";
+}
+
 function BannerAdmin({ clients, banners, onSave }) {
   const [local, setLocal] = useState(banners || []);
   const [saving, setSaving] = useState(false);
+  const [collapsed, setCollapsed] = useState({});
   const { show, el: toastEl } = useToast();
 
   function addSlide() {
-    if (local.length >= 5) return alert("Máximo 5 imágenes en el banner.");
-    setLocal(p => [...p, { id: "b" + Date.now(), url: "", titulo: "", destinatarios: "todos", clientesSeleccionados: [] }]);
+    if (local.length >= 5) return alert("Maximo 5 imagenes en el banner.");
+    setLocal(p => [...p, { id: "b" + Date.now(), url: "", titulo: "", enlace: "", destinatarios: "todos", clientesSeleccionados: [] }]);
   }
   function upd(i, k, v) { setLocal(p => p.map((b, xi) => xi === i ? { ...b, [k]: v } : b)); }
   function rem(i) { setLocal(p => p.filter((_, xi) => xi !== i)); }
@@ -1518,20 +1623,16 @@ function BannerAdmin({ clients, banners, onSave }) {
       return { ...b, clientesSeleccionados: sel.includes(clientId) ? sel.filter(c => c !== clientId) : [...sel, clientId] };
     }));
   }
+  function toggleCollapse(id) { setCollapsed(p => ({ ...p, [id]: !p[id] })); }
 
   async function save() {
     setSaving(true);
     await onSave(local);
+    // Colapsar todos al guardar
+    const c = {}; local.forEach(b => { c[b.id] = true; });
+    setCollapsed(c);
     show("✓ Banner guardado correctamente", "ok");
     setSaving(false);
-  }
-
-  // Preview de URL de Google Drive: convertir link de sharing a link directo de imagen
-  function getDriveDirectUrl(url) {
-    // https://drive.google.com/file/d/ID/view → https://drive.google.com/uc?export=view&id=ID
-    const match = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
-    if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
-    return url;
   }
 
   return (
@@ -1541,7 +1642,7 @@ function BannerAdmin({ clients, banners, onSave }) {
         <div className="sec-header">
           <div>
             <div className="sec-title">Comunicaciones / Banner</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Hasta 5 imágenes · Se muestran en la parte superior del panel del cliente</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Hasta 5 imagenes · Visibles en la parte superior del panel del cliente</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-ghost btn-sm" onClick={addSlide} disabled={local.length >= 5}>+ Añadir imagen</button>
@@ -1551,71 +1652,88 @@ function BannerAdmin({ clients, banners, onSave }) {
 
         {local.length === 0 && (
           <div className="empty">
-            <div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>🖼️</div>
-            <div>Sin imágenes. Añade la primera.</div>
+            <div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>🖼</div>
+            <div>Sin imagenes. Añade la primera.</div>
           </div>
         )}
 
-        {local.map((b, i) => (
-          <div key={b.id} className="banner-admin-card">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Imagen {i + 1}</div>
-              <button className="btn btn-danger btn-sm" onClick={() => rem(i)}>× Eliminar</button>
-            </div>
-            <div className="field">
-              <label>URL de la imagen</label>
-              <input type="text" value={b.url} onChange={e => upd(i, "url", e.target.value)} placeholder="https://... (enlace directo a la imagen)" />
-              <div className="banner-hint">
-                <b>Google Drive:</b> Sube la imagen, clic derecho, Obtener enlace, cambia a Cualquier persona, pega aqui. Se convierte automaticamente.
-                <br/>
-                <b>Otros:</b> Imgur, Cloudinary, o cualquier URL que termine en .jpg .png .webp funciona directo.
-                <br/>
-                <b>Dimensiones:</b> 1200x300 px minimo · Relacion 4:1 · Maximo 2MB
-              </div>
-            </div>
-            {b.url && (
-              <img
-                className="banner-preview"
-                src={getDriveDirectUrl(b.url)}
-                alt="Preview"
-                onError={e => { e.target.style.display = "none"; }}
-                onLoad={e => { e.target.style.display = "block"; }}
-              />
-            )}
-            <div className="field" style={{ marginTop: 10 }}>
-              <label>Titulo (opcional)</label>
-              <input type="text" value={b.titulo} onChange={e => upd(i, "titulo", e.target.value)} placeholder="Ej: Nueva promocion disponible" />
-            </div>
-            <div className="field">
-              <label>Enlace al hacer clic (opcional)</label>
-              <input type="text" value={b.enlace || ""} onChange={e => upd(i, "enlace", e.target.value)} placeholder="https://wa.me/... o cualquier URL" />
-            </div>
-            <div className="field">
-              <label>Mostrar a</label>
-              <select value={b.destinatarios} onChange={e => upd(i, "destinatarios", e.target.value)}>
-                <option value="todos">Todos los clientes</option>
-                <option value="seleccionados">Clientes especificos</option>
-              </select>
-            </div>
-            {b.destinatarios === "seleccionados" && (
-              <div>
-                <label style={{ fontSize: 12, color: "var(--muted)", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".06em" }}>Selecciona clientes</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {clients.map(c => {
-                    const sel = (b.clientesSeleccionados || []).includes(c.id);
-                    return (
-                      <div key={c.id}
-                        className={"servicio-chip " + (sel ? "selected" : "")}
-                        onClick={() => toggleCliente(i, c.id)}>
-                        {sel ? "✓ " : ""}{c.name}
-                      </div>
-                    );
-                  })}
+        {local.map((b, i) => {
+          const isCollapsed = !!collapsed[b.id];
+          const imgSrc = getDriveDirectUrl(b.url);
+          return (
+            <div key={b.id} className="banner-admin-card" style={{ padding: 0, overflow: "hidden" }}>
+              {/* HEADER colapsable */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", cursor: "pointer", background: "var(--surface2)" }}
+                onClick={() => toggleCollapse(b.id)}>
+                {isCollapsed && b.url ? (
+                  <img src={imgSrc} alt="" style={{ width: 56, height: 28, objectFit: "cover", borderRadius: 4, flexShrink: 0 }} onError={e => { e.target.style.display = "none"; }} />
+                ) : (
+                  <div style={{ width: 56, height: 28, background: "var(--border)", borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>🖼</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Imagen {i + 1}{b.titulo ? ` — ${b.titulo}` : ""}</div>
+                  {isCollapsed && b.url && <div style={{ fontSize: 11, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.url}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); rem(i); }}>× Eliminar</button>
+                  <span style={{ color: "var(--muted)", fontSize: 12 }}>{isCollapsed ? "▼" : "▲"}</span>
                 </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              {/* BODY expandible */}
+              {!isCollapsed && (
+                <div style={{ padding: "1rem" }}>
+                  <div className="field">
+                    <label>URL de la imagen</label>
+                    <input type="text" value={b.url} onChange={e => upd(i, "url", e.target.value)} placeholder="https://... (enlace directo a la imagen)" />
+                    <div className="banner-hint">
+                      <b>Google Drive:</b> Sube la imagen, clic derecho, Obtener enlace, cambia a Cualquier persona, pega aqui. Se convierte automaticamente.
+                      <br/>
+                      <b>Otros:</b> Imgur, Cloudinary, o cualquier URL .jpg .png .webp funciona directo.
+                      <br/>
+                      <b>Dimensiones:</b> 1200x300 px minimo · Relacion 4:1 · Maximo 2MB
+                    </div>
+                  </div>
+                  {b.url && (
+                    <img src={imgSrc} alt="Preview" className="banner-preview"
+                      onError={e => { e.target.style.display = "none"; }}
+                      onLoad={e => { e.target.style.display = "block"; }} />
+                  )}
+                  <div className="field" style={{ marginTop: 10 }}>
+                    <label>Titulo (opcional)</label>
+                    <input type="text" value={b.titulo} onChange={e => upd(i, "titulo", e.target.value)} placeholder="Ej: Nueva promocion disponible" />
+                  </div>
+                  <div className="field">
+                    <label>Enlace al hacer clic (opcional)</label>
+                    <input type="text" value={b.enlace || ""} onChange={e => upd(i, "enlace", e.target.value)} placeholder="https://wa.me/... o cualquier URL" />
+                  </div>
+                  <div className="field">
+                    <label>Mostrar a</label>
+                    <select value={b.destinatarios} onChange={e => upd(i, "destinatarios", e.target.value)}>
+                      <option value="todos">Todos los clientes</option>
+                      <option value="seleccionados">Clientes especificos</option>
+                    </select>
+                  </div>
+                  {b.destinatarios === "seleccionados" && (
+                    <div>
+                      <label style={{ fontSize: 12, color: "var(--muted)", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".06em" }}>Selecciona clientes</label>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {clients.map(c => {
+                          const sel = (b.clientesSeleccionados || []).includes(c.id);
+                          return (
+                            <div key={c.id} className={"servicio-chip " + (sel ? "selected" : "")} onClick={() => toggleCliente(i, c.id)}>
+                              {sel ? "✓ " : ""}{c.name}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -1861,31 +1979,91 @@ async function sendTelegram(token, chatId, text) {
   }
 }
 
+// Genera mensaje de cobro basado en contratos del cliente
+function buildCobroMessage(client) {
+  const contratos = client.contratos || [];
+  if (!contratos.length) return null;
+  const hoy = new Date();
+  let msg = "💰 Recordatorio de pago - " + client.name + "\n\n";
+  let hayCuotas = false;
+  contratos.forEach((ct, ci) => {
+    (ct.cuotas || []).forEach((c, qi) => {
+      if (!c.pagado && c.monto) {
+        hayCuotas = true;
+        const vence = c.fecha ? new Date(c.fecha + "T12:00:00") : null;
+        const diasRestantes = vence ? Math.ceil((vence - hoy) / (1000 * 60 * 60 * 24)) : null;
+        msg += "Contrato #" + (ci + 1) + " - Cuota " + (qi + 1) + "\n";
+        msg += "Monto: $" + (c.monto || "—") + "\n";
+        if (c.fecha) msg += "Fecha de pago: " + c.fecha + "\n";
+        if (diasRestantes !== null) {
+          if (diasRestantes < 0) msg += "VENCIDA hace " + Math.abs(diasRestantes) + " dias\n";
+          else if (diasRestantes === 0) msg += "Vence HOY\n";
+          else msg += "Vence en " + diasRestantes + " dias\n";
+        }
+        const svcs = (ct.servicios || []).map(s => s.nombre).filter(Boolean).join(", ");
+        if (svcs) msg += "Servicio: " + svcs + "\n";
+        if (ct.totalContrato) msg += "Total contrato: $" + ct.totalContrato + "\n";
+        msg += "\n";
+      }
+    });
+  });
+  if (!hayCuotas) return null;
+  msg += "Por favor confirmar el pago para continuar con los servicios.";
+  return msg;
+}
+
+const PLANTILLAS_DEFAULT = [
+  { id: "p1", nombre: "Reporte diario", tipo: "reporte", texto: "" },
+  { id: "p2", nombre: "Recordatorio de cobro", tipo: "cobro", texto: "" },
+  { id: "p3", nombre: "Mensaje personalizado", tipo: "custom", texto: "" },
+];
+
 function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const [token, setToken] = useState(tgConfig?.token || "");
   const [chatId, setChatId] = useState(tgConfig?.chatId || client.telefono || "");
   const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [plantillas, setPlantillas] = useState(tgConfig?.plantillas || PLANTILLAS_DEFAULT);
+  const [selectedPlantilla, setSelectedPlantilla] = useState("p1");
+  const [customTexto, setCustomTexto] = useState("");
   const { show, el: toastEl } = useToast();
 
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
-  const previewMsg = lastRecord.length > 0 ? buildReportMessage(client, lastRecord) : null;
+
+  function getMensaje() {
+    const p = plantillas.find(x => x.id === selectedPlantilla);
+    if (!p) return "";
+    if (p.tipo === "reporte") return lastRecord.length ? buildReportMessage(client, lastRecord) : "";
+    if (p.tipo === "cobro") return buildCobroMessage(client) || "No hay cuotas pendientes para este cliente.";
+    return p.texto || customTexto || "";
+  }
+
+  const mensaje = getMensaje();
+  const preview = mensaje ? mensaje.split("\n").join("\n").replace(/[*_]/g, "") : "";
 
   async function saveConfig() {
     setSaving(true);
-    await onSaveConfig({ token, chatId });
+    await onSaveConfig({ token, chatId, plantillas });
     show("✓ Configuracion guardada", "ok");
     setSaving(false);
   }
 
-  async function sendReport() {
+  async function send() {
     if (!token || !chatId) return show("Completa el token y chat ID primero", "err");
-    if (!lastRecord.length) return show("No hay registros para enviar", "err");
+    if (!mensaje) return show("No hay mensaje para enviar", "err");
     setSending(true);
-    const msg = buildReportMessage(client, lastRecord);
-    const result = await sendTelegram(token, chatId, msg);
-    show(result.ok ? "✓ Reporte enviado a Telegram" : "Error: " + result.error, result.ok ? "ok" : "err");
+    const result = await sendTelegram(token, chatId, mensaje);
+    show(result.ok ? "✓ Mensaje enviado a Telegram" : "Error: " + result.error, result.ok ? "ok" : "err");
     setSending(false);
+  }
+
+  function updPlantilla(id, k, v) {
+    setPlantillas(p => p.map(x => x.id === id ? { ...x, [k]: v } : x));
+  }
+
+  function addPlantilla() {
+    if (plantillas.length >= 5) return show("Maximo 5 plantillas", "err");
+    setPlantillas(p => [...p, { id: "p" + Date.now(), nombre: "Nueva plantilla", tipo: "custom", texto: "" }]);
   }
 
   return (
@@ -1893,15 +2071,14 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
       {toastEl}
       <div className="tg-card">
         <div className="tg-header">
-          <span style={{ fontSize: 18 }}>✈️</span> Enviar reporte por Telegram
+          <span style={{ fontSize: 18 }}>✈️</span> Mensajeria por Telegram
         </div>
 
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
-          <b style={{ color: "var(--text)" }}>Como configurar (una sola vez):</b><br/>
-          1. Abre Telegram y busca <b>@BotFather</b><br/>
-          2. Escribe <b>/newbot</b>, ponle un nombre y copia el <b>Token</b><br/>
-          3. El cliente busca tu bot en Telegram y le da <b>/start</b><br/>
-          4. Para obtener el Chat ID: visita <b>https://api.telegram.org/bot[TOKEN]/getUpdates</b> y copia el id que aparece en "chat"
+          <b style={{ color: "var(--text)" }}>Configuracion (una sola vez):</b><br/>
+          1. Busca <b>@BotFather</b> en Telegram, escribe /newbot, copia el Token<br/>
+          2. El cliente busca tu bot y le da /start<br/>
+          3. Visita api.telegram.org/bot[TOKEN]/getUpdates para obtener el Chat ID
         </div>
 
         <div className="form-row">
@@ -1914,25 +2091,77 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
             <input type="text" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="Ej: 123456789" />
           </div>
         </div>
+        <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig} style={{ marginBottom: "1.5rem" }}>
+          {saving ? "Guardando..." : "💾 Guardar configuracion"}
+        </button>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: "1rem" }}>
-          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
-            {saving ? "Guardando..." : "💾 Guardar configuracion"}
-          </button>
+        {/* PLANTILLAS */}
+        <div style={{ marginBottom: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Plantillas de mensaje</div>
+            <button className="btn btn-ghost btn-sm" onClick={addPlantilla}>+ Añadir</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            {plantillas.map(p => (
+              <button key={p.id}
+                className={"pill " + (selectedPlantilla === p.id ? "active" : "")}
+                onClick={() => setSelectedPlantilla(p.id)}>
+                {p.nombre}
+              </button>
+            ))}
+          </div>
+          {(() => {
+            const p = plantillas.find(x => x.id === selectedPlantilla);
+            if (!p) return null;
+            return (
+              <div style={{ background: "var(--surface2)", borderRadius: 10, padding: 12 }}>
+                <div className="form-row" style={{ marginBottom: 8 }}>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Nombre de la plantilla</label>
+                    <input type="text" value={p.nombre} onChange={e => updPlantilla(p.id, "nombre", e.target.value)} />
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Tipo</label>
+                    <select value={p.tipo} onChange={e => updPlantilla(p.id, "tipo", e.target.value)}>
+                      <option value="reporte">Reporte diario (automatico)</option>
+                      <option value="cobro">Recordatorio de cobro (del contrato)</option>
+                      <option value="custom">Mensaje personalizado</option>
+                    </select>
+                  </div>
+                </div>
+                {p.tipo === "custom" && (
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Texto del mensaje</label>
+                    <textarea value={p.texto} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
+                  </div>
+                )}
+                {p.tipo === "reporte" && !lastRecord.length && (
+                  <div style={{ fontSize: 12, color: "var(--amber)" }}>Agrega un registro diario para activar este tipo.</div>
+                )}
+                {p.tipo === "cobro" && !(client.contratos || []).length && (
+                  <div style={{ fontSize: 12, color: "var(--amber)" }}>Este cliente no tiene contratos registrados.</div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
-        {previewMsg && (
-          <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 200, overflow: "auto" }}>
-            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa del mensaje:</div>
-            {previewMsg.split("\\n").join("\n").replace(/[*_]/g, "")}
+        {/* PREVIEW */}
+        {preview && (
+          <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 12, fontFamily: "var(--mono)", color: "var(--muted)", marginBottom: "1rem", whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto" }}>
+            <div style={{ fontSize: 11, color: "var(--accent2)", fontWeight: 600, marginBottom: 6 }}>Vista previa:</div>
+            {preview}
           </div>
         )}
 
-        <button className="btn btn-primary" disabled={sending || !lastRecord.length} onClick={sendReport}
-          style={{ background: "var(--accent2)" }}>
-          {sending ? "Enviando..." : "📤 Enviar reporte del ultimo dia"}
-        </button>
-        {!lastRecord.length && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>Agrega un registro diario primero para poder enviarlo.</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="btn btn-primary" disabled={sending || !mensaje} onClick={send} style={{ background: "var(--accent2)" }}>
+            {sending ? "Enviando..." : "📤 Enviar mensaje"}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
+            💾 Guardar plantillas
+          </button>
+        </div>
       </div>
     </>
   );
@@ -2161,13 +2390,13 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
               {clients.map(c => {
                 const nl = c.niche === "whatsapp" ? "WhatsApp" : c.niche === "web" ? "Web" : "Lanzamiento";
                 const nc = c.niche === "whatsapp" ? "badge-wa" : c.niche === "web" ? "badge-web" : "badge-launch";
-                return <div key={c.id} className="card" style={{ cursor: "pointer", transition: "border-color .15s", marginBottom: 0 }} onMouseEnter={e => e.currentTarget.style.borderColor = c.color + "88"} onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}>
+                return <div key={c.id} className="card" style={{ cursor: "pointer", transition: "border-color .15s", marginBottom: 0 }} onClick={() => setSelectedId(c.id)} onMouseEnter={e => e.currentTarget.style.borderColor = c.color + "88"} onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div className="avatar" style={{ background: c.color + "22", color: c.color }}>{c.logo || c.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</div><div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{c.representante || "Sin representante"}</div></div></div>
                     <span className={`badge ${nc}`}>{nl}</span>
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>{(c.records || []).length} registros · {(c.serviciosContratados || []).length} servicios</div>
-                  <div style={{ display: "flex", gap: 8 }}><button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => setSelectedId(c.id)}>Ver perfil</button><button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditingClient(c); }}>Editar</button><button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteModal(c); }}>🗑</button></div>
+                  <div style={{ display: "flex", gap: 8 }}><button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={() => setSelectedId(c.id)}>Ver perfil</button><button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditingClient(c); }}>Editar</button><button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); setDeleteModal(c); }}>&#128465;</button></div>
                 </div>;
               })}
               {clients.length === 0 && <div className="empty"><div style={{ fontSize: 32, marginBottom: 12, opacity: .3 }}>◎</div><div>Sin clientes. Crea el primero.</div></div>}
