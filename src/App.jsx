@@ -287,59 +287,70 @@ const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
 const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
-// Input numérico completamente estable - no interfiere con la escritura
-// Usa un ref de DOM directo para evitar cualquier conflicto con React re-renders
+// Input numérico - solución definitiva con input type=number
+// Maneja su propio string interno para no perder el cursor ni el punto decimal
 function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight }) {
-  const inputRef = useRef(null);
-  const isFocused = useRef(false);
+  // str es el texto que el usuario ve y escribe - NUNCA se resetea desde afuera mientras hay foco
+  const [str, setStr] = useState(
+    value === "" || value === undefined || value === null ? "" : String(value)
+  );
+  const focused = useRef(false);
 
-  // Sincronizar el valor del DOM solo cuando el campo NO tiene foco
+  // Solo actualizar la representación visual cuando el campo no tiene foco
+  // Esto evita que un re-render externo interrumpa lo que el usuario escribe
   useEffect(() => {
-    if (!isFocused.current && inputRef.current) {
-      const v = (value === "" || value === undefined || value === null) ? "" : String(value);
-      inputRef.current.value = v;
+    if (!focused.current) {
+      setStr(value === "" || value === undefined || value === null ? "" : String(value));
     }
   }, [value]);
 
-  function handleFocus() {
-    isFocused.current = true;
-    if (inputRef.current) {
-      const v = (value === "" || value === undefined || value === null) ? "" : String(value);
-      inputRef.current.value = v;
+  function onFocus() {
+    focused.current = true;
+    // Al hacer foco, mostrar el valor actual limpio
+    setStr(value === "" || value === undefined || value === null ? "" : String(value));
+  }
+
+  function onBlur() {
+    focused.current = false;
+    // Al salir, normalizar (quitar punto final, etc)
+    const n = parseFloat(str);
+    if (!isNaN(n)) {
+      setStr(String(n));
+      onChange(n);
+    } else {
+      setStr("");
+      onChange("");
     }
   }
 
-  function handleChange(e) {
-    // Permitir solo dígitos y punto decimal, sin restricciones de longitud
-    let raw = e.target.value;
-    // Eliminar caracteres no numéricos excepto punto
-    raw = raw.replace(/[^0-9.]/g, "");
-    // Solo permitir un punto decimal
-    const parts = raw.split(".");
-    if (parts.length > 2) raw = parts[0] + "." + parts.slice(1).join("");
-    // Actualizar el DOM directamente sin pasar por React state
-    if (inputRef.current) inputRef.current.value = raw;
-    // Notificar al padre
-    if (raw === "" || raw === ".") { onChange(""); return; }
-    const num = parseFloat(raw);
-    if (!isNaN(num)) onChange(num);
-  }
-
-  function handleBlur() {
-    isFocused.current = false;
+  function onChangeInput(e) {
+    const raw = e.target.value;
+    // Permitir: dígitos, un punto decimal, no hay límite de caracteres
+    let clean = raw.replace(/[^0-9.]/g, "");
+    // Solo un punto
+    const dotIdx = clean.indexOf(".");
+    if (dotIdx !== -1) {
+      clean = clean.slice(0, dotIdx + 1) + clean.slice(dotIdx + 1).replace(/\./g, "");
+    }
+    setStr(clean);
+    if (clean === "" || clean === ".") {
+      onChange("");
+    } else {
+      const n = parseFloat(clean);
+      if (!isNaN(n)) onChange(n);
+    }
   }
 
   return (
     <div className="input-prefix">
       {prefix && <span className="pre">{prefix}</span>}
       <input
-        ref={inputRef}
         type="text"
         inputMode="decimal"
-        defaultValue={(value === "" || value === undefined || value === null) ? "" : String(value)}
-        onChange={handleChange}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
+        value={str}
+        onChange={onChangeInput}
+        onFocus={onFocus}
+        onBlur={onBlur}
         placeholder={placeholder || "0"}
         readOnly={readOnly}
         style={highlight ? { borderColor: "rgba(124,58,237,.5)", background: "rgba(124,58,237,.05)" } : {}}
@@ -347,6 +358,7 @@ function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight })
     </div>
   );
 }
+
 
 function filterByPeriod(records, period, from, to) {
   const now = new Date();
@@ -1122,15 +1134,42 @@ const FUNNEL_DEFAULT = [
   { key: "ventas_f", label: "Ventas", color: "#EF4444" },
 ];
 
+// Parsea el plazo del KPI a días (ej: "30 días" → 30, "2 semanas" → 14)
+function parsePlazoToDays(plazo) {
+  if (!plazo) return null;
+  const s = String(plazo).toLowerCase();
+  const n = parseFloat(s);
+  if (isNaN(n)) return null;
+  if (s.includes("semana")) return n * 7;
+  if (s.includes("mes")) return n * 30;
+  if (s.includes("año") || s.includes("anio")) return n * 365;
+  return n; // default: días
+}
+
 function calcKpiProgress(kpi, records) {
-  if (!kpi.metrica || !records || !records.length) return 0;
-  const total = records.reduce((a, r) => a + (Number(r[kpi.metrica]) || 0), 0);
+  if (!kpi.metrica || !records || !records.length) return { pct: 0, actual: 0, meta: 0 };
   const meta = parseFloat(kpi.meta_valor) || 0;
-  if (meta === 0) return 0;
-  // Si la métrica es porcentaje tipo CTR/ROAS, usar el promedio
-  const avg_val = total / records.length;
-  const use = ["ctr", "roas", "cpc", "cpm"].includes(kpi.metrica) ? avg_val : total;
-  return Math.min(Math.round((use / meta) * 100), 999);
+  if (meta === 0) return { pct: 0, actual: 0, meta: 0 };
+
+  // Filtrar registros dentro del plazo del KPI
+  let filteredRecords = records;
+  const days = parsePlazoToDays(kpi.plazo);
+  if (days) {
+    const desde = new Date();
+    desde.setDate(desde.getDate() - days);
+    filteredRecords = records.filter(r => {
+      const d = new Date(r.date + "T12:00:00");
+      return d >= desde;
+    });
+  }
+  if (!filteredRecords.length) return { pct: 0, actual: 0, meta };
+
+  // Métricas de promedio vs acumulado
+  const isAvgMetric = ["ctr", "roas", "cpc", "cpm"].includes(kpi.metrica);
+  const total = filteredRecords.reduce((a, r) => a + (Number(r[kpi.metrica]) || 0), 0);
+  const actual = isAvgMetric ? total / filteredRecords.length : total;
+  const pct = Math.min(Math.round((actual / meta) * 100), 999);
+  return { pct, actual: Math.round(actual * 100) / 100, meta };
 }
 
 function getKpiColor(pct) {
@@ -1141,10 +1180,11 @@ function getKpiColor(pct) {
 }
 
 function KpiCard({ kpi, records, onEdit, onDelete, readOnly }) {
-  const pct = calcKpiProgress(kpi, records);
+  const { pct, actual, meta } = calcKpiProgress(kpi, records);
   const color = getKpiColor(pct);
   const relevanceLabel = kpi.relevancia === "alto" ? "Alta" : kpi.relevancia === "medio" ? "Media" : "Baja";
   const relevanceCls = kpi.relevancia === "alto" ? "kpi-relevance-high" : kpi.relevancia === "medio" ? "kpi-relevance-mid" : "kpi-relevance-low";
+  const metricaLabel = METRICAS_TRACKEO.find(m => m.key === kpi.metrica)?.label || kpi.metrica;
 
   return (
     <div className="kpi-card">
@@ -1152,7 +1192,8 @@ function KpiCard({ kpi, records, onEdit, onDelete, readOnly }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{kpi.nombre || "Sin nombre"}</div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-            Meta: <span style={{ color: "var(--text)", fontFamily: "var(--mono)" }}>{kpi.meta_valor || "—"}</span>
+            Metrica: <span style={{ color: "var(--text)" }}>{metricaLabel}</span>
+            {" · "}Meta: <span style={{ color: "var(--text)", fontFamily: "var(--mono)" }}>{kpi.meta_valor || "—"}</span>
             {kpi.unidad && <span style={{ color: "var(--muted)" }}> {kpi.unidad}</span>}
             {" · "}Plazo: <span style={{ color: "var(--text)" }}>{kpi.plazo || "—"}</span>
             {" · "}<span className={relevanceCls}>Relevancia {relevanceLabel}</span>
@@ -1161,12 +1202,14 @@ function KpiCard({ kpi, records, onEdit, onDelete, readOnly }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--mono)", color }}>{pct}%</div>
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>completado</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>
+              {actual > 0 ? `${actual} / ${meta}` : "sin datos"}
+            </div>
           </div>
           {!readOnly && (
             <div style={{ display: "flex", gap: 4 }}>
-              <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Editar KPI">✏️</button>
-              <button className="btn btn-danger btn-sm" onClick={onDelete}>×</button>
+              <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Editar KPI">&#9998;</button>
+              <button className="btn btn-danger btn-sm" onClick={onDelete}>x</button>
             </div>
           )}
         </div>
@@ -1185,6 +1228,7 @@ function KpiCard({ kpi, records, onEdit, onDelete, readOnly }) {
     </div>
   );
 }
+
 
 function KpiForm({ initial, client, onSave, onCancel }) {
   const blank = { nombre: "", meta_valor: "", unidad: "", plazo: "", relevancia: "alto", metrica: "leads", descripcion: "", realizacion: "" };
@@ -1648,7 +1692,7 @@ function AddRecordForm({ client, onSave, onCancel }) {
       <div className="form-row3"><Num lbl="CPM" fk="cpm" prefix="$" /><Num lbl="CPC" fk="cpc" prefix="$" /><Num lbl="CTR (%)" fk="ctr" /></div>
       {isWA && <><div className="section-label">Ventas WhatsApp</div><div className="form-row"><Num lbl="Leads" fk="leads" /><Num lbl="Contactados" fk="contactados" /></div><div className="form-row"><Num lbl="Ventas cerradas" fk="ventas" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /></div></>}
       {isWeb && <><div className="section-label">E-commerce</div><div className="form-row"><Num lbl="Sesiones" fk="sesiones" /><Num lbl="Agregar carrito" fk="agregar_carrito" /></div><div className="form-row3"><Num lbl="Compras" fk="compras" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /><Num lbl="ROAS" fk="roas" /></div></>}
-      {!isWA && !isWeb && <><div className="section-label">Lanzamiento</div><div className="form-row"><Num lbl="Clientes potenciales" fk="clientesPotenciales" /><Num lbl="Formularios" fk="formularios" /></div></>}
+      {!isWA && !isWeb && <><div className="section-label">Lanzamiento</div><div className="form-row"><Num lbl="Clientes potenciales" fk="clientesPotenciales" /><Num lbl="Formularios" fk="formularios" /></div><div className="form-row"><Num lbl="Ventas" fk="ventas" /><Num lbl="Ingresos" fk="ingreso" prefix="$" /></div></>}
       <div style={{ display: "flex", gap: 10, marginTop: "1.25rem" }}><button className="btn btn-primary" onClick={handleSave}>Guardar</button><button className="btn btn-ghost" onClick={onCancel}>Cancelar</button></div>
     </div>
   );
