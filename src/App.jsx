@@ -998,10 +998,9 @@ function exportMetricas(rows, client, formato) {
     const niche = isWA ? [r.leads||"", r.contactados||"", r.ventas||"", r.ingreso||""] : isWeb ? [r.sesiones||"", r.agregar_carrito||"", r.compras||"", r.ingreso||"", r.roas||""] : [r.clientesPotenciales||"", r.formularios||"", r.ventas||"", r.ingreso||""];
     return [...base, ...niche];
   });
-  const sep = formato === "csv" ? "," : "	";
-  const content = [headers, ...dataRows].map(r => r.map(v => `"${v}"`).join(sep)).join("
-");
-  const blob = new Blob(["﻿" + content], { type: formato === "csv" ? "text/csv" : "application/vnd.ms-excel" });
+  const sep = formato === "csv" ? "," : "\t";
+  const content = [headers, ...dataRows].map(r => r.map(v => '"' + String(v) + '"').join(sep)).join("\n");
+  const blob = new Blob(["\ufeff" + content], { type: formato === "csv" ? "text/csv" : "application/vnd.ms-excel" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a"); a.href = url; a.download = `metricas_${client.name}_${new Date().toISOString().slice(0,10)}.${formato}`; a.click();
   URL.revokeObjectURL(url);
