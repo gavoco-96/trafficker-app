@@ -95,13 +95,40 @@ const css = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   :root{
-    --bg:#0F0F13;--surface:#18181F;--surface2:#22222C;--border:#2A2A38;
-    --text:#F0EFF8;--muted:#7B7A8E;--accent:#7C3AED;--accent2:#0EA5E9;
-    --green:#10B981;--red:#EF4444;--amber:#F59E0B;--orange:#F97316;
+    --bg:#080B12;--surface:#0D1220;--surface2:#111827;--border:#1a2540;
+    --text:#F0EFF8;--muted:#6B7A99;
+    --accent:#004AAD;--accent-glow:rgba(0,74,173,.35);
+    --accent2:#FFDE59;--accent2-glow:rgba(255,222,89,.25);
+    --orange:#FF914D;--orange-glow:rgba(255,145,77,.25);
+    --green:#10B981;--red:#EF4444;--amber:#FFDE59;
     --font:'DM Sans',sans-serif;--mono:'DM Mono',monospace;--r:10px;--r2:16px;
   }
   html,body,#root{height:100%;width:100%}
   body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px}
+  /* Glow effects con colores de marca */
+  .btn-primary{box-shadow:0 0 14px var(--accent-glow)}
+  .btn-primary:hover{box-shadow:0 0 22px var(--accent-glow);opacity:1;background:#0057cc}
+  .nav-item.active{background:rgba(0,74,173,.18);color:#4d9fff;box-shadow:inset 2px 0 0 var(--accent)}
+  .metric{border-color:var(--border)}
+  .metric:hover{border-color:rgba(0,74,173,.4);box-shadow:0 0 12px var(--accent-glow)}
+  .tab.active{color:#4d9fff;border-bottom-color:var(--accent)}
+  .sidebar{background:#0a0f1e;border-right:1px solid var(--border)}
+  .topbar{background:#0a0f1e;border-bottom:1px solid var(--border)}
+  .sidebar-logo-badge{color:var(--accent2);background:var(--accent2-glow)}
+  .login-card{box-shadow:0 0 40px var(--accent-glow)}
+  .card{border-color:var(--border)}
+  .card:hover{border-color:rgba(0,74,173,.3)}
+  .kpi-progress-fill{box-shadow:0 0 8px currentColor}
+  .pill.active{background:var(--accent);box-shadow:0 0 10px var(--accent-glow)}
+  .fb-chip.active{background:rgba(0,74,173,.2);border-color:var(--accent);color:#4d9fff}
+  .col-chip.active{background:rgba(0,74,173,.2);border-color:var(--accent);color:#4d9fff}
+  .servicio-chip.selected{background:rgba(0,74,173,.2);border-color:var(--accent);color:#4d9fff}
+  .badge-wa{background:rgba(16,185,129,.15);color:#10B981}
+  .badge-web{background:rgba(255,222,89,.12);color:#c9a800}
+  .badge-launch{background:rgba(255,145,77,.12);color:#FF914D}
+  .tbl tr:hover td{background:rgba(0,74,173,.06)}
+  /* Highlight accent2 (amarillo) para valores importantes */
+  .metric-value[style*="accent"]{text-shadow:0 0 12px var(--accent2-glow)}
   .app{display:flex;min-height:100vh}
   .login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;background:var(--bg)}
   .login-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:2.5rem;width:100%;max-width:400px}
@@ -268,6 +295,34 @@ const css = `
   .tg-plantilla-view{background:var(--surface2);border-radius:10px;padding:12px;margin-bottom:8px;cursor:pointer;border:1px solid var(--border);transition:border-color .15s}
   .tg-plantilla-view:hover{border-color:var(--accent2)}
   .tg-plantilla-view.selected{border-color:var(--accent2);background:rgba(14,165,233,.06)}
+  /* NOTIFICACIONES */
+  .notif-bell{position:relative;cursor:pointer;padding:6px;border-radius:8px;display:flex;align-items:center;transition:background .15s}
+  .notif-bell:hover{background:var(--surface2)}
+  .notif-badge{position:absolute;top:2px;right:2px;background:var(--red);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+  .notif-dropdown{position:absolute;top:calc(100% + 8px);right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);width:320px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:500;overflow:hidden}
+  .notif-item{display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+  .notif-item:hover{background:var(--surface2)}
+  .notif-item:last-child{border-bottom:none}
+  .notif-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+  .notif-dot-red{background:var(--red);box-shadow:0 0 6px var(--red)}
+  .notif-dot-amber{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+  .notif-dot-blue{background:#4d9fff;box-shadow:0 0 6px var(--accent)}
+  /* ONBOARDING */
+  .onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:2000;padding:1rem}
+  .onboarding-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:2rem;width:100%;max-width:560px;box-shadow:0 0 60px var(--accent-glow)}
+  .onboarding-steps{display:flex;gap:6px;margin-bottom:2rem}
+  .onboarding-step{height:4px;flex:1;border-radius:2px;transition:background .3s}
+  .onboarding-step.done{background:var(--accent)}
+  .onboarding-step.active{background:var(--accent2)}
+  .onboarding-step.pending{background:var(--border)}
+  /* HEALTH DASHBOARD */
+  .health-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:1.25rem;margin-bottom:1rem}
+  .health-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(26,37,64,.8);font-size:13px}
+  .health-row:last-child{border-bottom:none}
+  .health-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .health-ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+  .health-warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+  .health-err{background:var(--red);box-shadow:0 0 6px var(--red)}
   /* Ocultar flechas nativas de input number en todos los browsers */
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -2351,7 +2406,7 @@ function FacebookPanel({ client, onUpdate }) {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-primary btn-sm" disabled={syncing || !token || !adAccountId} onClick={syncDay}
-              style={{ background: "#1877F2" }}>
+              style={{ background: "var(--accent)" }}>
               {syncing ? "Sincronizando..." : "⟳ Sincronizar fecha seleccionada"}
             </button>
             <button className="btn btn-ghost btn-sm" disabled={syncing || !token || !adAccountId} onClick={() => {
@@ -2703,7 +2758,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
         )}
 
         <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-primary" disabled={sending || !mensaje} onClick={send} style={{ background: "var(--accent2)" }}>
+          <button className="btn btn-primary" disabled={sending || !mensaje} onClick={send} style={{ background: "var(--accent)" }}>
             {sending ? "Enviando..." : "📤 Enviar mensaje"}
           </button>
           <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
@@ -3066,7 +3121,7 @@ function CampanasPanel({ clients }) {
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                   <button className="btn btn-ghost btn-sm" onClick={() => editCampana(c)}>✏️</button>
                   <button className="btn btn-primary btn-sm" disabled={isSending || !dest.length}
-                    style={{ background: "var(--accent2)" }} onClick={() => sendCampana(c)}>
+                    style={{ background: "var(--accent)" }} onClick={() => sendCampana(c)}>
                     {isSending ? "Enviando..." : "📤 Enviar"}
                   </button>
                   <button className="btn btn-danger btn-sm" onClick={() => deleteCampana(c.id)}>×</button>
@@ -3077,6 +3132,328 @@ function CampanasPanel({ clients }) {
         })}
       </div>
     </>
+  );
+}
+
+
+// ─── NOTIFICACIONES ───────────────────────────────────────────────────────────
+function getNotificaciones(clients) {
+  const notifs = [];
+  const hoy = new Date();
+
+  clients.forEach(client => {
+    // 1. Cuotas vencidas o por vencer
+    (client.contratos || []).forEach((ct, ci) => {
+      (ct.cuotas || []).forEach((c, qi) => {
+        if (c.pagado) return;
+        if (!c.monto) return;
+        const vence = c.fecha ? new Date(c.fecha + "T12:00:00") : null;
+        if (!vence) return;
+        const dias = Math.ceil((vence - hoy) / 86400000);
+        if (dias < 0) {
+          notifs.push({ id: `${client.id}-ct${ci}-q${qi}`, tipo: "err", icon: "💰",
+            texto: `${client.name} — Cuota ${qi+1} VENCIDA hace ${Math.abs(dias)} dias ($${ct.cuotas[qi].monto})`,
+            clientId: client.id });
+        } else if (dias <= 5) {
+          notifs.push({ id: `${client.id}-ct${ci}-q${qi}v`, tipo: "amber", icon: "⏰",
+            texto: `${client.name} — Cuota ${qi+1} vence en ${dias} dias ($${ct.cuotas[qi].monto})`,
+            clientId: client.id });
+        }
+      });
+    });
+
+    // 2. Sin datos esta semana
+    const records = client.records || [];
+    if (records.length > 0) {
+      const ultimo = new Date(records[records.length-1].date + "T12:00:00");
+      const diasSinDatos = Math.floor((hoy - ultimo) / 86400000);
+      if (diasSinDatos >= 3) {
+        notifs.push({ id: `${client.id}-nodata`, tipo: "amber", icon: "📊",
+          texto: `${client.name} — Sin datos hace ${diasSinDatos} dias`,
+          clientId: client.id });
+      }
+    }
+
+    // 3. KPIs en rojo
+    (client.kpis || []).forEach(kpi => {
+      const { pct } = calcKpiProgress(kpi, client.records || []);
+      if (pct < 30 && pct > 0) {
+        notifs.push({ id: `${client.id}-kpi-${kpi.id}`, tipo: "err", icon: "🎯",
+          texto: `${client.name} — KPI "${kpi.nombre}" al ${pct}% (meta: ${kpi.meta_valor} ${kpi.unidad || ""})`,
+          clientId: client.id });
+      }
+    });
+
+    // 4. Sincronización de Facebook fallida (token viejo)
+    if (client.fbConfig?.token && client.fbConfig?.lastSync) {
+      const lastSync = new Date(client.fbConfig.lastSync);
+      const diasSync = Math.floor((hoy - lastSync) / 86400000);
+      if (diasSync > 2) {
+        notifs.push({ id: `${client.id}-fbsync`, tipo: "amber", icon: "📘",
+          texto: `${client.name} — Facebook sin sincronizar hace ${diasSync} dias`,
+          clientId: client.id });
+      }
+    }
+  });
+
+  return notifs.slice(0, 20);
+}
+
+function NotificationBell({ clients, onGoToClient }) {
+  const [open, setOpen] = useState(false);
+  const [vistas, setVistas] = useState([]);
+  const notifs = getNotificaciones(clients);
+  const nuevas = notifs.filter(n => !vistas.includes(n.id));
+
+  function markAllRead() { setVistas(notifs.map(n => n.id)); }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <div className="notif-bell" onClick={() => { setOpen(o => !o); }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+        </svg>
+        {nuevas.length > 0 && <div className="notif-badge">{nuevas.length > 9 ? "9+" : nuevas.length}</div>}
+      </div>
+      {open && (
+        <div className="notif-dropdown">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>Notificaciones {nuevas.length > 0 && <span style={{ color: "var(--red)", fontSize: 11 }}>({nuevas.length} nuevas)</span>}</div>
+            {nuevas.length > 0 && <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: "3px 8px" }} onClick={markAllRead}>Marcar leidas</button>}
+          </div>
+          <div style={{ maxHeight: 380, overflowY: "auto" }}>
+            {notifs.length === 0 && <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Todo en orden ✓</div>}
+            {notifs.map(n => (
+              <div key={n.id} className="notif-item" style={{ opacity: vistas.includes(n.id) ? 0.5 : 1 }}
+                onClick={() => { setVistas(p => [...p, n.id]); onGoToClient(n.clientId); setOpen(false); }}>
+                <div className={"notif-dot " + (n.tipo === "err" ? "notif-dot-red" : n.tipo === "amber" ? "notif-dot-amber" : "notif-dot-blue")} />
+                <div>
+                  <div style={{ fontSize: 12, lineHeight: 1.4 }}>{n.icon} {n.texto}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── HEALTH DASHBOARD ────────────────────────────────────────────────────────
+function HealthDashboard({ clients }) {
+  const hoy = new Date();
+
+  function getClientHealth(client) {
+    const issues = [];
+    const records = client.records || [];
+
+    // Datos recientes
+    if (records.length === 0) {
+      issues.push({ tipo: "err", msg: "Sin registros de metricas" });
+    } else {
+      const ultimo = new Date(records[records.length-1].date + "T12:00:00");
+      const dias = Math.floor((hoy - ultimo) / 86400000);
+      if (dias >= 3) issues.push({ tipo: "warn", msg: `Sin datos hace ${dias} dias` });
+    }
+
+    // Contrato activo
+    const contratos = client.contratos || [];
+    if (!contratos.length) {
+      issues.push({ tipo: "warn", msg: "Sin contratos registrados" });
+    } else {
+      const cuotasPendientes = contratos.flatMap(ct => (ct.cuotas||[]).filter(c => !c.pagado && c.monto));
+      if (cuotasPendientes.length > 0) {
+        const vencidas = cuotasPendientes.filter(c => c.fecha && new Date(c.fecha + "T12:00:00") < hoy);
+        if (vencidas.length > 0) issues.push({ tipo: "err", msg: `${vencidas.length} cuota(s) vencida(s)` });
+      }
+    }
+
+    // Telegram configurado
+    if (!client.tgConfig?.token || !client.tgConfig?.chatId) {
+      issues.push({ tipo: "warn", msg: "Telegram no configurado" });
+    }
+
+    // Facebook configurado
+    if (!client.fbConfig?.token) {
+      issues.push({ tipo: "warn", msg: "Facebook no conectado" });
+    }
+
+    // KPIs
+    const kpis = client.kpis || [];
+    if (!kpis.length) {
+      issues.push({ tipo: "warn", msg: "Sin KPIs definidos" });
+    } else {
+      const enRojo = kpis.filter(k => { const { pct } = calcKpiProgress(k, records); return pct < 30; });
+      if (enRojo.length > 0) issues.push({ tipo: "err", msg: `${enRojo.length} KPI(s) por debajo del 30%` });
+    }
+
+    if (!issues.length) return { estado: "ok", issues: [] };
+    const tieneErr = issues.some(i => i.tipo === "err");
+    return { estado: tieneErr ? "err" : "warn", issues };
+  }
+
+  const resumen = clients.map(c => ({ client: c, health: getClientHealth(c) }));
+  const ok = resumen.filter(r => r.health.estado === "ok").length;
+  const warn = resumen.filter(r => r.health.estado === "warn").length;
+  const err = resumen.filter(r => r.health.estado === "err").length;
+
+  return (
+    <div>
+      <div className="grid3" style={{ marginBottom: "1.25rem" }}>
+        <div className="metric" style={{ borderColor: "rgba(16,185,129,.3)" }}>
+          <div className="metric-label">En orden</div>
+          <div className="metric-value" style={{ color: "var(--green)" }}>{ok}</div>
+          <div className="metric-sub">clientes sin alertas</div>
+        </div>
+        <div className="metric" style={{ borderColor: "rgba(255,222,89,.3)" }}>
+          <div className="metric-label">Atencion</div>
+          <div className="metric-value" style={{ color: "var(--amber)" }}>{warn}</div>
+          <div className="metric-sub">clientes con advertencias</div>
+        </div>
+        <div className="metric" style={{ borderColor: "rgba(239,68,68,.3)" }}>
+          <div className="metric-label">Critico</div>
+          <div className="metric-value" style={{ color: "var(--red)" }}>{err}</div>
+          <div className="metric-sub">clientes requieren accion</div>
+        </div>
+      </div>
+
+      {resumen.map(({ client: c, health }) => (
+        <div key={c.id} className="health-card">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: health.issues.length > 0 ? 10 : 0 }}>
+            <div className="avatar" style={{ background: c.color + "22", color: c.color, width: 30, height: 30, fontSize: 11 }}>
+              {c.logo || c.name.slice(0,2).toUpperCase()}
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{c.name}</div>
+            <div className={"health-dot " + (health.estado === "ok" ? "health-ok" : health.estado === "warn" ? "health-warn" : "health-err")} style={{ width: 10, height: 10 }} />
+            <span style={{ fontSize: 11, color: health.estado === "ok" ? "var(--green)" : health.estado === "warn" ? "var(--amber)" : "var(--red)", fontWeight: 600 }}>
+              {health.estado === "ok" ? "OK" : health.estado === "warn" ? "Atencion" : "Critico"}
+            </span>
+          </div>
+          {health.issues.map((issue, i) => (
+            <div key={i} className="health-row">
+              <div className={"health-dot " + (issue.tipo === "err" ? "health-err" : "health-warn")} />
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{issue.msg}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {clients.length === 0 && <div className="empty"><div style={{ fontSize: 28, opacity: .3, marginBottom: 8 }}>🏥</div><div>Sin clientes aun.</div></div>}
+    </div>
+  );
+}
+
+// ─── ONBOARDING WIZARD ────────────────────────────────────────────────────────
+function OnboardingWizard({ onSave, onCancel }) {
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState({
+    name: "", username: "", password: "", niche: "lanzamiento",
+    color: "#004AAD", logo: "", producto: "", telefono: "", email: "",
+    representante: "", serviciosContratados: [],
+    tgToken: "", tgChatId: "",
+    fbToken: "", fbAdAccountId: ""
+  });
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const steps = ["Datos del cliente", "Telegram & Automatizacion", "Facebook Ads"];
+
+  function finish() {
+    if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña");
+    const client = {
+      name: form.name, username: form.username, password: form.password,
+      niche: form.niche, color: form.color, logo: form.logo,
+      producto: form.producto, telefono: form.telefono, email: form.email,
+      representante: form.representante,
+      serviciosContratados: form.serviciosContratados,
+      checklist: {}, cuentas: [], contratos: [], antecedentes: [],
+      records: [], kpis: [], funnel: [],
+      tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: PLANTILLAS_DEFAULT } : {},
+      fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: FB_METRICAS_DISPONIBLES.slice(0, 7) } : {},
+      schedConfig: { enabled: false, hora: "08:00", dias: [1,2,3,4,5], plantillaId: "p1" }
+    };
+    onSave(client);
+  }
+
+  return (
+    <div className="onboarding-overlay">
+      <div className="onboarding-card">
+        <div style={{ marginBottom: "1.25rem" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 8 }}>
+            Nuevo cliente — Paso {step + 1} de {steps.length}
+          </div>
+          <div className="onboarding-steps">
+            {steps.map((_, i) => <div key={i} className={"onboarding-step " + (i < step ? "done" : i === step ? "active" : "pending")} />)}
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{steps[step]}</div>
+        </div>
+
+        {step === 0 && (
+          <div>
+            <div className="form-row">
+              <div className="field"><label>Nombre del negocio *</label><input type="text" value={form.name} onChange={e => f("name", e.target.value)} placeholder="Ej: Bella Estetica" autoFocus /></div>
+              <div className="field"><label>Producto / Servicio</label><input type="text" value={form.producto} onChange={e => f("producto", e.target.value)} placeholder="Ej: Tratamientos faciales" /></div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Representante</label><input type="text" value={form.representante} onChange={e => f("representante", e.target.value)} /></div>
+              <div className="field"><label>Telefono</label><input type="text" value={form.telefono} onChange={e => f("telefono", e.target.value)} /></div>
+            </div>
+            <div className="field"><label>Nicho</label>
+              <select value={form.niche} onChange={e => f("niche", e.target.value)}>
+                <option value="whatsapp">Venta por WhatsApp</option>
+                <option value="web">Sitio web / E-commerce</option>
+                <option value="lanzamiento">Lanzamiento (Leads / Formularios)</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Usuario de acceso *</label><input type="text" value={form.username} onChange={e => f("username", e.target.value.toLowerCase().replace(/\s/g,""))} placeholder="bellastetica" /></div>
+              <div className="field"><label>Contrasena *</label><PasswordInput value={form.password} onChange={e => f("password", e.target.value)} /></div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Iniciales</label><input type="text" value={form.logo} onChange={e => f("logo", e.target.value.slice(0,2).toUpperCase())} maxLength={2} placeholder="BE" /></div>
+              <div className="field"><label>Color de marca</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input type="color" value={form.color} onChange={e => f("color", e.target.value)} style={{ width: 44, height: 40, padding: 2, border: "1px solid var(--border)", borderRadius: 8, cursor: "pointer" }} />
+                  <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--mono)" }}>{form.color}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
+              Configura Telegram para enviar reportes automaticos. Si no tienes los datos ahora, puedes configurarlo despues desde la tab ✈️ Telegram del cliente.
+            </div>
+            <div className="field"><label>Bot Token de Telegram</label><input type="text" value={form.tgToken} onChange={e => f("tgToken", e.target.value)} placeholder="1234567890:ABCdef... (opcional)" /></div>
+            <div className="field"><label>Chat ID del cliente</label><input type="text" value={form.tgChatId} onChange={e => f("tgChatId", e.target.value)} placeholder="Ej: 123456789 (opcional)" /></div>
+            <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6, marginTop: 8 }}>
+              El programador automatico quedara configurado en Lun-Vie a las 8:00am. Podras ajustarlo desde la tab ⏰ Programador.
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
+              Conecta la cuenta publicitaria de Facebook para sincronizar metricas automaticamente. Puedes configurarlo despues desde la tab 📘 Facebook.
+            </div>
+            <div className="field"><label>Access Token de Facebook</label><input type="text" value={form.fbToken} onChange={e => f("fbToken", e.target.value)} placeholder="EAAOWMIieni... (opcional)" /></div>
+            <div className="field"><label>Ad Account ID</label><input type="text" value={form.fbAdAccountId} onChange={e => f("fbAdAccountId", e.target.value)} placeholder="120247229359120062 (opcional)" /></div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", justifyContent: "space-between" }}>
+          <button className="btn btn-ghost" onClick={step === 0 ? onCancel : () => setStep(s => s - 1)}>
+            {step === 0 ? "Cancelar" : "← Anterior"}
+          </button>
+          {step < steps.length - 1
+            ? <button className="btn btn-primary" onClick={() => { if (step === 0 && (!form.name || !form.username || !form.password)) return alert("Completa nombre, usuario y contraseña"); setStep(s => s + 1); }}>Siguiente →</button>
+            : <button className="btn btn-primary" onClick={finish}>Crear cliente ✓</button>
+          }
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3095,7 +3472,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "banner", "campanas"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "banner" ? "🖼️ Comunicaciones" : "📣 Campanas"}</div>)}
+        {["clientes", "resumen", "salud", "banner", "campanas"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "banner" ? "🖼️ Comunicaciones" : "📣 Campanas"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -3117,7 +3494,15 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
   }
 
   if (selectedId && selected) return <><div className="app"><Sidebar /><AdminClientDetail client={selected} onBack={() => setSelectedId(null)} onUpdate={onUpdate} /></div>{renderModal()}{toastEl}</>;
-  if (addingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setAddingClient(false)}>← Volver</button><div className="topbar-title">Nuevo cliente</div></div><div className="content"><ClientForm onSave={async c => { await onAddClient(c); show("✓ Cliente creado correctamente", "ok"); setAddingClient(false); }} onCancel={() => setAddingClient(false)} /></div></div></div>;
+  if (addingClient) return (
+    <>
+      <div className="app"><Sidebar /><div className="main"><div className="topbar"><div className="topbar-title">Clientes</div></div><div className="content" /></div></div>
+      <OnboardingWizard
+        onSave={async c => { await onAddClient(c); show("✓ Cliente creado en 3 pasos", "ok"); setAddingClient(false); }}
+        onCancel={() => setAddingClient(false)}
+      />
+    </>
+  );
   if (editingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setEditingClient(null)}>← Volver</button><div className="topbar-title">Editar: {editingClient.name}</div></div><div className="content"><ClientForm initial={editingClient} onSave={async c => { await onUpdate({ ...editingClient, ...c }); show("✓ Cliente actualizado", "ok"); setEditingClient(null); }} onCancel={() => setEditingClient(null)} /></div></div></div>;
 
   return (
@@ -3126,8 +3511,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "banner" ? "Comunicaciones / Banner" : "Campanas de mensajeria"}</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "banner" ? "Comunicaciones / Banner" : "Campanas de mensajeria"}</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
             </div>
@@ -3167,6 +3553,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
                 })}
               </div>
             </div>}
+            {view === "salud" && <HealthDashboard clients={clients} />}
             {view === "banner" && (
               <BannerAdmin clients={clients} banners={banners} onSave={onSaveBanners} />
             )}
