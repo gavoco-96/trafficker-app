@@ -1629,6 +1629,8 @@ function BannerViewer({ banners }) {
       className="banner-slide"
       src={slide.url}
       alt={slide.titulo || "Banner"}
+      referrerPolicy="no-referrer"
+      crossOrigin="anonymous"
       onError={e => { e.target.style.display = "none"; }}
       style={{ cursor: slide.enlace ? "pointer" : "default" }}
     />
@@ -1660,9 +1662,14 @@ function BannerViewer({ banners }) {
 }
 
 function getDriveDirectUrl(url) {
-  const match = url && url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
-  if (match) return `https://drive.google.com/uc?export=view&id=${match[1]}`;
-  return url || "";
+  if (!url) return "";
+  // Formato 1: /file/d/ID/view
+  const match1 = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+  if (match1) return `https://lh3.googleusercontent.com/d/${match1[1]}`;
+  // Formato 2: id= en query string (uc?id=)
+  const match2 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (match2) return `https://lh3.googleusercontent.com/d/${match2[1]}`;
+  return url;
 }
 
 function BannerAdmin({ clients, banners, onSave }) {
@@ -1757,6 +1764,8 @@ function BannerAdmin({ clients, banners, onSave }) {
                   </div>
                   {b.url && (
                     <img src={imgSrc} alt="Preview" className="banner-preview"
+                      referrerPolicy="no-referrer"
+                      crossOrigin="anonymous"
                       onError={e => { e.target.style.display = "none"; }}
                       onLoad={e => { e.target.style.display = "block"; }} />
                   )}
@@ -1806,13 +1815,7 @@ function getBannersForClient(banners, clientId) {
     if (!b.url || !b.url.trim()) return false;
     if (b.destinatarios === "todos") return true;
     return (b.clientesSeleccionados || []).includes(clientId);
-  }).map(b => ({
-    ...b,
-    url: (() => {
-      const match = b.url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
-      return match ? `https://drive.google.com/uc?export=view&id=${match[1]}` : b.url;
-    })()
-  }));
+  }).map(b => ({ ...b, url: getDriveDirectUrl(b.url) }));
 }
 
 // ─── CLIENT FORM ──────────────────────────────────────────────────────────────
@@ -2097,15 +2100,17 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
 
   function getMensaje() {
-    const p = plantillas.find(x => x.id === selectedPlantilla);
-    if (!p) return "";
-    if (p.tipo === "reporte") return lastRecord.length ? buildReportMessage(client, lastRecord) : "";
-    if (p.tipo === "cobro") return buildCobroMessage(client) || "No hay cuotas pendientes para este cliente.";
-    return p.texto || customTexto || "";
+    try {
+      const p = plantillas.find(x => x.id === selectedPlantilla);
+      if (!p) return "";
+      if (p.tipo === "reporte") return lastRecord.length ? buildReportMessage(client, lastRecord) : "";
+      if (p.tipo === "cobro") return buildCobroMessage(client) || "No hay cuotas pendientes para este cliente.";
+      return p.texto || "";
+    } catch (e) { return ""; }
   }
 
   const mensaje = getMensaje();
-  const preview = mensaje ? mensaje.split("\n").join("\n").replace(/[*_]/g, "") : "";
+  const preview = mensaje ? mensaje.replace(/[*_]/g, "") : "";
 
   async function saveConfig() {
     setSaving(true);
@@ -2205,7 +2210,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
                     {p.tipo === "custom" && (
                       <div className="field" style={{ marginBottom: 0 }}>
                         <label>Texto del mensaje</label>
-                        <textarea value={p.texto} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
+                        <textarea value={p.texto || ""} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
                       </div>
                     )}
                     {p.tipo === "reporte" && <div style={{ fontSize: 11, color: "var(--muted)" }}>Genera automaticamente con los datos del ultimo registro diario.</div>}
@@ -2357,9 +2362,12 @@ function ClientDashboard({ client, onLogout, banners }) {
   const [tab, setTab] = useState("resumen");
   const [period, setPeriod] = useState("mtd");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  // Columnas personalizables al nivel correcto del componente
+  const { cols: clientCols, toggle: clientToggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
   const t = buildTotals(client.niche, rows);
   const isWA = client.niche === "whatsapp", isWeb = client.niche === "web", isLaunch = client.niche === "lanzamiento";
+  const visClient = ALL_COLUMNS.filter(c => clientCols.includes(c.key));
   return (
     <div className="app">
       <div className="sidebar">
@@ -2390,43 +2398,31 @@ function ClientDashboard({ client, onLogout, banners }) {
             {isLaunch && <div className="grid3"><MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} /><MetricCard label="Formularios" value={t.formularios || "—"} /><MetricCard label="Costo/form" value={"$" + (t.costo_formulario || "—")} highlight /></div>}
             {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
           </>}
-          {tab === "detalle" && (() => {
-            const { cols: clientCols, toggle: clientToggle } = (() => {
-              // Hook inline para el cliente - columnas guardadas por browser
-              const defaults = isWA ? DEFAULT_COLS_WA : isWeb ? DEFAULT_COLS_WEB : DEFAULT_COLS_LAUNCH;
-              const storageKey = "cols_client_" + client.id;
-              const [cc, setCC] = useState(() => {
-                try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s) : defaults; } catch { return defaults; }
-              });
-              const tog = (key) => { if (key === "date") return; setCC(prev => { const n = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]; localStorage.setItem(storageKey, JSON.stringify(n)); return n; }); };
-              return { cols: cc, toggle: tog };
-            })();
-            const visClient = ALL_COLUMNS.filter(c => clientCols.includes(c.key));
-            return (
-              <div>
-                <ColumnSelector cols={clientCols} onToggle={clientToggle} />
-                <div className="card scroll-x">
-                  <table className="tbl">
-                    <thead><tr>{visClient.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
-                    <tbody>
-                      {rows.length === 0 && <tr><td colSpan={visClient.length} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
-                      {rows.map((r, i) => (
-                        <tr key={i}>
-                          {visClient.map(c => {
-                            if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>;
-                            const v = r[c.key]; if (v === undefined || v === null || v === "") return <td key={c.key}>—</td>;
-                            const n = parseFloat(v); if (isNaN(n)) return <td key={c.key}>{v}</td>;
-                            const fmt2 = fmtNum(n, 2);
-                            return <td key={c.key}>{c.prefix ? c.prefix + fmt2 : c.suffix ? fmt2 + c.suffix : fmtNum(n, 0)}</td>;
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+          {tab === "detalle" && (
+            <div>
+              <ColumnSelector cols={clientCols} onToggle={clientToggle} />
+              <div className="card scroll-x">
+                <table className="tbl">
+                  <thead><tr>{visClient.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+                  <tbody>
+                    {rows.length === 0 && <tr><td colSpan={visClient.length} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
+                    {rows.map((r, i) => (
+                      <tr key={i}>
+                        {visClient.map(c => {
+                          if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>;
+                          const v = r[c.key];
+                          if (v === undefined || v === null || v === "") return <td key={c.key}>—</td>;
+                          const n = parseFloat(v); if (isNaN(n)) return <td key={c.key}>{v}</td>;
+                          const fmt2 = fmtNum(n, 2);
+                          return <td key={c.key}>{c.prefix ? c.prefix + fmt2 : c.suffix ? fmt2 + c.suffix : fmtNum(n, 0)}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            );
-          })()}
+            </div>
+          )}
           {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
         </div>
