@@ -406,6 +406,11 @@ function buildTotals(niche, rows) {
   const contactados = sum(rows, "contactados"), ingreso = sum(rows, "ingreso");
   const sesiones = sum(rows, "sesiones"), compras = sum(rows, "compras"), agregar = sum(rows, "agregar_carrito");
   const alcance = sum(rows, "alcance");
+  const formularios = sum(rows, "formularios");
+  const clientesPotenciales = sum(rows, "clientesPotenciales");
+  // Resultados: tomar el campo resultados si existe, si no usar formularios o leads según nicho
+  const resultadosRaw = sum(rows, "resultados");
+  const resultados = resultadosRaw > 0 ? resultadosRaw : niche === "lanzamiento" ? formularios : leads;
   return {
     inversion: fmtNum(inv, 2), alcance: fmtNum(alcance), leads: fmtNum(leads),
     contactados: fmtNum(contactados), ventas: fmtNum(ventas), ingreso: fmtNum(ingreso, 2),
@@ -418,9 +423,11 @@ function buildTotals(niche, rows) {
     sesiones: fmtNum(sesiones), agregar_carrito: fmtNum(agregar), compras: fmtNum(compras),
     convRate: sesiones ? fmtNum(compras / sesiones * 100, 2) : "—",
     cpp: compras ? fmtNum(inv / compras, 2) : "—",
-    clientesPotenciales: fmtNum(sum(rows, "clientesPotenciales")),
-    formularios: fmtNum(sum(rows, "formularios")),
-    costo_formulario: sum(rows, "formularios") ? fmtNum(inv / sum(rows, "formularios"), 2) : "—",
+    clientesPotenciales: fmtNum(clientesPotenciales),
+    formularios: fmtNum(formularios),
+    resultados: fmtNum(resultados),
+    cpa: resultados ? fmtNum(inv / resultados, 2) : "—",
+    costo_formulario: formularios ? fmtNum(inv / formularios, 2) : "—",
   };
 }
 
@@ -1182,11 +1189,17 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <MetricCard label="Compras" value={t.compras} />
         <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
       </div>}
-      {isLaunch && <div className="grid3" style={{ marginBottom: "1rem" }}>
+      {isLaunch && <><div className="grid4" style={{ marginBottom: "1rem" }}>
         <MetricCard label="Potenciales" value={t.clientesPotenciales} />
         <MetricCard label="Formularios" value={t.formularios} />
-        <MetricCard label="Costo/form" value={"$" + t.costo_formulario} highlight />
-      </div>}
+        <MetricCard label="Resultados" value={t.resultados} highlight />
+        <MetricCard label="CPA" value={"$" + t.cpa} />
+      </div>
+      <div className="grid3" style={{ marginBottom: "1rem" }}>
+        <MetricCard label="Costo/formulario" value={"$" + t.costo_formulario} />
+        <MetricCard label="Ventas" value={t.ventas} />
+        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
+      </div></>}
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
         <div style={{ display: "flex", gap: 8 }}>
@@ -2230,7 +2243,11 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
     selectedMetrics.forEach(m => {
       if (m.key === "actions_lead") {
         const action = (row.actions || []).find(a => a.action_type === "lead");
-        record[m.campo] = parseFloat(action?.value || 0);
+        const val = parseFloat(action?.value || 0);
+        record[m.campo] = val;
+        // Para campañas de lanzamiento/formularios, leads = resultados
+        record["resultados"] = val;
+        record["formularios"] = val;
       } else if (m.key === "actions_purchase") {
         const action = (row.actions || []).find(a => a.action_type === "purchase");
         record[m.campo] = parseFloat(action?.value || 0);
@@ -2892,7 +2909,17 @@ function ClientDashboard({ client, onLogout, banners }) {
             <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Alcance" value={t.alcance || "—"} /><MetricCard label="CPM" value={"$" + (t.cpm || "—")} /><MetricCard label="CPC" value={"$" + (t.cpc || "—")} /><MetricCard label="CTR" value={(t.ctr || "—") + "%"} /></div>
             {isWA && <div className="grid4"><MetricCard label="Leads" value={t.leads || "—"} /><MetricCard label="Contactados" value={t.contactados || "—"} /><MetricCard label="Ventas" value={t.ventas || "—"} /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
             {isWeb && <div className="grid4"><MetricCard label="Sesiones" value={t.sesiones || "—"} /><MetricCard label="Compras" value={t.compras || "—"} /><MetricCard label="Ingresos" value={"$" + (t.ingreso || "0")} highlight /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
-            {isLaunch && <div className="grid3"><MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} /><MetricCard label="Formularios" value={t.formularios || "—"} /><MetricCard label="Costo/form" value={"$" + (t.costo_formulario || "—")} highlight /></div>}
+            {isLaunch && <><div className="grid4">
+              <MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} />
+              <MetricCard label="Formularios" value={t.formularios || "—"} />
+              <MetricCard label="Resultados" value={t.resultados || "—"} highlight />
+              <MetricCard label="CPA" value={"$" + (t.cpa || "—")} />
+            </div>
+            <div className="grid3" style={{ marginTop: "0.75rem" }}>
+              <MetricCard label="Costo/formulario" value={"$" + (t.costo_formulario || "—")} />
+              <MetricCard label="Ventas" value={t.ventas || "—"} />
+              <MetricCard label="Ingresos" value={"$" + (t.ingreso || "0")} highlight />
+            </div></>}
             {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
           </>}
           {tab === "detalle" && (
