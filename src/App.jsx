@@ -311,6 +311,8 @@ const fmtNum = (n, dec = 0) => (n === "" || n === null || n === undefined || isN
 const fmtUSD = (n) => n && !isNaN(n) ? "$" + fmtNum(n, 2) : "—";
 const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
+// Formato de fecha compacto: "2026-06-04" → "04/06/26"
+const fmtDate = (d) => { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${day}/${m}/${y.slice(2)}`; };
 const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
 // Input numérico - solución definitiva con input type=number
@@ -1216,6 +1218,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
                           ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} />
                           : <EditNum fk={c.key} prefix={c.prefix} />
                         : (() => {
+                            if (c.key === "date") return fmtDate(r[c.key]);
                             const v = r[c.key];
                             if (v === undefined || v === null || v === "") return "—";
                             const n = parseFloat(v);
@@ -1999,6 +2002,189 @@ function AddRecordForm({ client, onSave, onCancel }) {
   );
 }
 
+// ─── PROGRAMADOR DE MENSAJES ─────────────────────────────────────────────────
+// Zona horaria Ecuador/Quito = UTC-5 → las 8am Quito = 13:00 UTC
+
+const DIAS_SEMANA = [
+  { key: 0, label: "Dom" }, { key: 1, label: "Lun" }, { key: 2, label: "Mar" },
+  { key: 3, label: "Mie" }, { key: 4, label: "Jue" }, { key: 5, label: "Vie" },
+  { key: 6, label: "Sab" },
+];
+
+function SchedulerPanel({ client, onUpdate }) {
+  const schedConfig = client.schedConfig || {};
+  const [enabled, setEnabled] = useState(schedConfig.enabled || false);
+  const [hora, setHora] = useState(schedConfig.hora || "08:00");
+  const [dias, setDias] = useState(schedConfig.dias || [1, 2, 3, 4, 5]); // Lun-Vie
+  const [fechaInicio, setFechaInicio] = useState(schedConfig.fechaInicio || "");
+  const [fechaFin, setFechaFin] = useState(schedConfig.fechaFin || "");
+  const [plantillaId, setPlantillaId] = useState(schedConfig.plantillaId || "p1");
+  const [saving, setSaving] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  const plantillas = client.tgConfig?.plantillas || PLANTILLAS_DEFAULT;
+  const tgOk = !!(client.tgConfig?.token && client.tgConfig?.chatId);
+
+  function toggleDia(d) {
+    setDias(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
+  }
+
+  async function save() {
+    setSaving(true);
+    const updated = {
+      ...client,
+      schedConfig: { enabled, hora, dias, fechaInicio, fechaFin, plantillaId }
+    };
+    await onUpdate(updated);
+    show(enabled ? "✓ Programador activado" : "Programador desactivado", "ok");
+    setSaving(false);
+  }
+
+  // Calcular próximos envíos
+  function proximosEnvios() {
+    if (!enabled || !dias.length) return [];
+    const ahora = new Date();
+    const result = [];
+    for (let i = 0; i < 14 && result.length < 5; i++) {
+      const d = new Date(ahora);
+      d.setDate(d.getDate() + i);
+      const diaSemana = d.getDay();
+      if (!dias.includes(diaSemana)) continue;
+      const fechaStr = d.toISOString().slice(0, 10);
+      if (fechaInicio && fechaStr < fechaInicio) continue;
+      if (fechaFin && fechaStr > fechaFin) continue;
+      result.push(fechaStr + " a las " + hora + " (Quito)");
+    }
+    return result;
+  }
+
+  const proximos = proximosEnvios();
+
+  return (
+    <>
+      {toastEl}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <div>
+            <div className="sec-title">Programador de envios automaticos</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              Envia reportes diarios por Telegram automaticamente
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: enabled ? "var(--green)" : "var(--muted)" }}>
+              {enabled ? "Activo" : "Inactivo"}
+            </div>
+            <div style={{ width: 44, height: 24, borderRadius: 12, background: enabled ? "var(--green)" : "var(--border)", position: "relative", transition: "background .2s", cursor: "pointer" }}
+              onClick={() => setEnabled(e => !e)}>
+              <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: enabled ? 23 : 3, transition: "left .2s" }} />
+            </div>
+          </label>
+        </div>
+
+        {!tgOk && (
+          <div style={{ background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.3)", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "var(--amber)", marginBottom: "1rem" }}>
+            ⚠️ Configura el Token y Chat ID de Telegram primero en la tab ✈️ Telegram
+          </div>
+        )}
+
+        <div className="card">
+          <div className="card-title">Horario de envio</div>
+          <div className="form-row">
+            <div className="field">
+              <label>Hora de envio (Ecuador / Quito)</label>
+              <input type="time" value={hora} onChange={e => setHora(e.target.value)} />
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>UTC-5 · Zona horaria Quito</div>
+            </div>
+            <div className="field">
+              <label>Plantilla a enviar</label>
+              <select value={plantillaId} onChange={e => setPlantillaId(e.target.value)}>
+                {plantillas.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="field" style={{ marginBottom: "1rem" }}>
+            <label>Dias de envio</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              {DIAS_SEMANA.map(d => (
+                <div key={d.key}
+                  className={"fb-chip " + (dias.includes(d.key) ? "active" : "")}
+                  onClick={() => toggleDia(d.key)}>
+                  {d.label}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDias([1,2,3,4,5])}>Lun-Vie</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDias([0,1,2,3,4,5,6])}>Todos</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDias([])}>Ninguno</button>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="field">
+              <label>Fecha inicio (opcional)</label>
+              <input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} />
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Coincide con inicio del contrato</div>
+            </div>
+            <div className="field">
+              <label>Fecha fin (opcional)</label>
+              <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} />
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Coincide con fin del contrato</div>
+            </div>
+          </div>
+
+          {/* Llenar desde contrato activo */}
+          {(client.contratos || []).filter(c => c.fechaInicio).length > 0 && (
+            <div style={{ marginBottom: "1rem" }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Llenar fechas desde contrato:</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(client.contratos || []).filter(c => c.fechaInicio).map((c, i) => (
+                  <button key={i} className="btn btn-ghost btn-sm"
+                    onClick={() => { setFechaInicio(c.fechaInicio); setFechaFin(c.fechaFin || ""); }}>
+                    Contrato #{i+1} ({c.fechaInicio}{c.fechaFin ? " → " + c.fechaFin : ""})
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* PROXIMOS ENVIOS */}
+        {proximos.length > 0 && (
+          <div className="card">
+            <div className="card-title">Proximos envios programados</div>
+            {proximos.map((p, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: i < proximos.length-1 ? "1px solid var(--border)" : "none", fontSize: 13 }}>
+                <span style={{ color: "var(--green)", fontSize: 16 }}>●</span>
+                {p}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {enabled && !dias.length && (
+          <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 8 }}>Selecciona al menos un dia de envio.</div>
+        )}
+
+        {/* INSTRUCCION VERCEL CRON */}
+        <div style={{ background: "rgba(124,58,237,.07)", border: "1px solid rgba(124,58,237,.2)", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.7 }}>
+          <div style={{ fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>✦ Como funciona el envio automatico</div>
+          Un Cron Job en Vercel revisa todos los dias a la hora configurada si hay clientes
+          con envio programado activo. Si corresponde, sincroniza los datos de Facebook
+          y envia el reporte por Telegram. El archivo <b style={{ color: "var(--text)" }}>vercel.json</b> ya
+          esta configurado en tu proyecto para esto.
+        </div>
+
+        <button className="btn btn-primary" disabled={saving || (enabled && !dias.length) || !tgOk} onClick={save}>
+          {saving ? "Guardando..." : "💾 Guardar programacion"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 // ─── FACEBOOK ADS INTEGRATION ────────────────────────────────────────────────
 
 // Métricas disponibles de Facebook Ads API
@@ -2604,9 +2790,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "facebook", "telegram"].map(t2 => (
+          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
+              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
@@ -2659,6 +2845,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
               await handleUpdate({ ...client, tgConfig: cfg });
             }}
           />
+        )}
+        {tab === "programador" && (
+          <SchedulerPanel client={client} onUpdate={handleUpdate} />
         )}
       </div>
     </div>
@@ -2717,7 +2906,7 @@ function ClientDashboard({ client, onLogout, banners }) {
                     {rows.map((r, i) => (
                       <tr key={i}>
                         {visClient.map(c => {
-                          if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{r.date}</td>;
+                          if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmtDate(r.date)}</td>;
                           const v = r[c.key];
                           if (v === undefined || v === null || v === "") return <td key={c.key}>—</td>;
                           const n = parseFloat(v); if (isNaN(n)) return <td key={c.key}>{v}</td>;
