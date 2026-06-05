@@ -323,6 +323,41 @@ const css = `
   .health-ok{background:var(--green);box-shadow:0 0 6px var(--green)}
   .health-warn{background:var(--amber);box-shadow:0 0 6px var(--amber)}
   .health-err{background:var(--red);box-shadow:0 0 6px var(--red)}
+  /* HERMES PRODUCT */
+  .hermes-progress-wrap{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:1.25rem;margin-bottom:1.25rem;overflow:hidden}
+  .hermes-track{position:relative;height:48px;background:linear-gradient(90deg,#0a0f1e 0%,#0d1a3a 50%,#1a0a2e 100%);border-radius:10px;overflow:hidden;margin:1rem 0}
+  .hermes-stars{position:absolute;inset:0;background-image:radial-gradient(1px 1px at 20% 30%,rgba(255,222,89,.6) 0%,transparent 100%),radial-gradient(1px 1px at 60% 20%,rgba(255,255,255,.4) 0%,transparent 100%),radial-gradient(1px 1px at 80% 60%,rgba(255,222,89,.3) 0%,transparent 100%),radial-gradient(1px 1px at 40% 70%,rgba(255,255,255,.3) 0%,transparent 100%),radial-gradient(1px 1px at 90% 40%,rgba(255,222,89,.5) 0%,transparent 100%)}
+  .hermes-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(0,74,173,.3),rgba(255,222,89,.15));transition:width .8s ease;border-right:2px solid var(--accent2)}
+  .hermes-carriage{position:absolute;top:50%;transform:translateY(-50%);font-size:22px;transition:left .8s ease;filter:drop-shadow(0 0 8px rgba(255,222,89,.8))}
+  .hermes-temple{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:20px;filter:drop-shadow(0 0 6px rgba(255,222,89,.6))}
+  .hermes-checkpoints{display:flex;justify-content:space-between;padding:0 4px}
+  .hermes-cp{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;flex:1}
+  .hermes-cp-dot{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;border:2px solid var(--border);transition:all .2s}
+  .hermes-cp-dot.done{background:var(--accent2);border-color:var(--accent2);box-shadow:0 0 10px rgba(255,222,89,.5)}
+  .hermes-cp-dot.active{background:rgba(255,222,89,.2);border-color:var(--accent2);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,222,89,.4)}50%{box-shadow:0 0 0 6px rgba(255,222,89,0)}}
+  .hermes-cp-label{font-size:9px;color:var(--muted);text-align:center;max-width:70px;line-height:1.2}
+  /* KPI COMPARATIVO */
+  .kpi-compare-table{width:100%;border-collapse:collapse}
+  .kpi-compare-table th{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);text-align:left}
+  .kpi-compare-table td{padding:10px 12px;border-bottom:1px solid rgba(26,37,64,.6);font-size:13px}
+  .kpi-compare-table tr:last-child td{border-bottom:none}
+  .delta-up{color:var(--green);font-weight:600;font-size:12px}
+  .delta-down{color:var(--red);font-weight:600;font-size:12px}
+  .delta-neutral{color:var(--muted);font-size:12px}
+  /* BIBLIOTECA */
+  .biblioteca-row{display:grid;gap:.75rem;align-items:center;padding:10px 12px;border-bottom:1px solid rgba(26,37,64,.6);font-size:13px}
+  .biblioteca-row:hover{background:rgba(0,74,173,.04)}
+  .iv-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .iv-green{background:rgba(16,185,129,.15);color:var(--green);box-shadow:0 0 8px rgba(16,185,129,.2)}
+  .iv-amber{background:rgba(255,222,89,.12);color:#c9a800;box-shadow:0 0 8px rgba(255,222,89,.15)}
+  .iv-red{background:rgba(239,68,68,.12);color:var(--red)}
+  /* EMBUDO HERMES */
+  .hermes-funnel{display:flex;flex-direction:column;gap:6px;align-items:center;padding:1rem 0}
+  .hf-stage{display:flex;align-items:center;width:100%;max-width:500px;gap:12px}
+  .hf-bar{height:40px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:12px;font-weight:600;transition:width .5s ease;min-width:80px}
+  .hf-label{font-size:11px;color:var(--muted);width:90px;text-align:right;flex-shrink:0}
+  .hf-pct{font-size:11px;color:var(--muted);width:50px;flex-shrink:0}
   /* Ocultar flechas nativas de input number en todos los browsers */
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1908,6 +1943,621 @@ function getBannersForClient(banners, clientId) {
   }).map(b => ({ ...b, url: getDriveDirectUrl(b.url) }));
 }
 
+
+// ─── HERMES PRODUCT ───────────────────────────────────────────────────────────
+
+// Configuración del producto HERMES
+const HERMES_FASES = [
+  { id: "onboarding",     nombre: "Onboarding",      icono: "🔍", dias: "1-2",  tareas: ["Reunion estrategica 60min","Recopilar Avatar y producto","Recopilar objetivos y competencia","Auditar redes sociales","Auditar contenido anterior","Entregable: Documento de descubrimiento"] },
+  { id: "estrategia",     nombre: "Estrategia",       icono: "🧠", dias: "3",    tareas: ["Definir temas de contenido","Definir categorias y angulos","Identificar dolores y deseos","Calendario de contenido","9 piezas aprobadas"] },
+  { id: "produccion",     nombre: "Produccion",       icono: "🎬", dias: "4",    tareas: ["Grabacion videos de valor","Grabacion videos virales","Grabacion videos de venta","Material bruto listo"] },
+  { id: "postproduccion", nombre: "Postproduccion",   icono: "✂️", dias: "5-8",  tareas: ["Edicion y diseño","Subtitulos y miniaturas","Copys y CTA","9 piezas terminadas"] },
+  { id: "publicacion",    nombre: "Publicacion",      icono: "📱", dias: "9-15", tareas: ["Publicar contenido","Monitorear metricas","Registrar Likes Comentarios","Registrar Compartidos Guardados","Registrar Retencion y CTR"] },
+  { id: "validacion",     nombre: "Validacion",       icono: "✅", dias: "9-15", tareas: ["Clasificar contenido escalable","Clasificar contenido a observar","Descartar contenido bajo rendimiento","Identificar ganadores"] },
+  { id: "pauta",          nombre: "Activar Pauta",    icono: "🚀", dias: "12-15",tareas: ["Seleccionar contenido ganador","Crear campana en Facebook/TikTok","Optimizar campana","Medir oportunidades y CPA"] },
+  { id: "reporte",        nombre: "Reportes",         icono: "📊", dias: "7,15", tareas: ["Reporte dia 7 (enviar Telegram)","Reporte dia 15 (enviar Telegram)","Contenido ganador identificado","Oportunidades y ventas reportadas"] },
+];
+
+const HERMES_MOMENTOS_WOW = [
+  { id: "wow1", dia: 2,  label: "Wow #1",  icono: "🔍", descripcion: "Despues de la reunion", contenido: "Resumen del negocio, Avatar preliminar y Objetivos detectados" },
+  { id: "wow2", dia: 4,  label: "Wow #2",  icono: "🎬", descripcion: "Antes de grabar",        contenido: "Plan de grabacion, Temas, Objetivos y Guiones" },
+  { id: "wow3", dia: 9,  label: "Wow #3",  icono: "⚡", descripcion: "Durante la semana",      contenido: "Primer hito de la estrategia: video con mejor desarrollo identificado" },
+  { id: "wow4", dia: 15, label: "Wow #4",  icono: "🏆", descripcion: "En el reporte final",    contenido: "Que aprendimos, que funciono y que haremos despues" },
+];
+
+const HERMES_KPIS_DEFAULT = [
+  { id: "oportunidades", nombre: "Oportunidades de venta", unidad: "mensajes/registros/checkouts", historico: "", actual: "", meta: "" },
+  { id: "ventas",        nombre: "Ventas cerradas",         unidad: "ventas",                      historico: "", actual: "", meta: "" },
+  { id: "cpa",           nombre: "CPA positivo",            unidad: "$",                           historico: "", actual: "", meta: "", cpaPositivo: true },
+  { id: "calidad",       nombre: "Calidad de contenido",    unidad: "indice 0-100",                historico: "", actual: "", meta: "50" },
+];
+
+const HERMES_CATEGORIAS_CONTENIDO = ["Valor", "Viral", "Venta"];
+
+// Calcular Indice de Validacion (IV) de una pieza
+function calcIV(pieza) {
+  const compartidos = parseFloat(pieza.compartidos) || 0;
+  const guardados   = parseFloat(pieza.guardados)   || 0;
+  const comentarios = parseFloat(pieza.comentarios) || 0;
+  const ctr         = parseFloat(pieza.ctr_pza)     || 0;
+  const likes       = parseFloat(pieza.likes)       || 0;
+  const alcance     = parseFloat(pieza.alcance_pza) || 1;
+
+  // Normalizar sobre el alcance para que sea comparable entre videos
+  const norm = (v, max) => Math.min((v / Math.max(alcance, 1)) * 1000, max);
+
+  const score =
+    norm(compartidos, 30) * 0.30 +
+    norm(guardados,   25) * 0.25 +
+    norm(comentarios, 20) * 0.20 +
+    Math.min(ctr * 10,  15) * 0.15 +
+    norm(likes,       10) * 0.10;
+
+  return Math.min(Math.round(score), 100);
+}
+
+function getIVClass(iv) {
+  if (iv >= 70) return "iv-green";
+  if (iv >= 50) return "iv-amber";
+  return "iv-red";
+}
+
+function getIVLabel(iv) {
+  if (iv >= 70) return "🟢 A pauta";
+  if (iv >= 50) return "🟡 Probar";
+  return "🔴 Descartar";
+}
+
+// Calcular dias transcurridos desde inicio del contrato
+function getDiasTranscurridos(client) {
+  const contratos = client.contratos || [];
+  if (!contratos.length) return 0;
+  const ct = contratos[0];
+  if (!ct.fechaInicio) return 0;
+  const inicio = new Date(ct.fechaInicio + "T00:00:00");
+  const hoy = new Date();
+  return Math.max(0, Math.floor((hoy - inicio) / 86400000));
+}
+
+// ─── BARRA DE PROGRESO HERMES ─────────────────────────────────────────────────
+function HermesProgressBar({ client, onUpdate, readOnly }) {
+  const hermes = client.hermesData || {};
+  const momentos = hermes.momentos || {};
+  const dias = Math.min(getDiasTranscurridos(client), 15);
+  const pct = (dias / 15) * 100;
+  const { show, el: toastEl } = useToast();
+
+  async function toggleMomento(id) {
+    if (readOnly) return;
+    const newMomentos = { ...momentos, [id]: !momentos[id] };
+    const updated = { ...client, hermesData: { ...hermes, momentos: newMomentos } };
+    await onUpdate(updated);
+    const wow = HERMES_MOMENTOS_WOW.find(m => m.id === id);
+    if (wow && newMomentos[id]) {
+      show("✦ Momento WOW enviado: " + wow.label, "ok");
+      // Enviar notificacion a Telegram si esta configurado
+      if (client.tgConfig?.token && client.tgConfig?.chatId) {
+        try {
+          await fetch(`https://api.telegram.org/bot${client.tgConfig.token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: client.tgConfig.chatId,
+              text: `✨ *${wow.label} — ${client.name}*\n\n${wow.descripcion}\n\n${wow.contenido}\n\n_Tu equipo de Gavico Agency_`,
+              parse_mode: "Markdown"
+            })
+          });
+        } catch {}
+      }
+    }
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="hermes-progress-wrap">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--accent2)", letterSpacing: ".05em" }}>
+            ✦ HERMES — Dia {dias} de 15
+          </div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>{Math.round(pct)}% completado</div>
+        </div>
+        <div className="hermes-track">
+          <div className="hermes-stars" />
+          <div className="hermes-fill" style={{ width: `${pct}%` }} />
+          <div className="hermes-carriage" style={{ left: `calc(${Math.min(pct, 92)}% - 12px)` }}>🏺</div>
+          <div className="hermes-temple">🏛️</div>
+        </div>
+        <div className="hermes-checkpoints">
+          {HERMES_MOMENTOS_WOW.map(m => {
+            const done = !!momentos[m.id];
+            const reachable = dias >= m.dia;
+            return (
+              <div key={m.id} className="hermes-cp" onClick={() => !readOnly && reachable && toggleMomento(m.id)}
+                style={{ opacity: reachable ? 1 : 0.4, cursor: readOnly || !reachable ? "default" : "pointer" }}>
+                <div className={"hermes-cp-dot " + (done ? "done" : reachable ? "active" : "")}>
+                  {done ? "✓" : m.icono}
+                </div>
+                <div className="hermes-cp-label">{m.label}<br/><span style={{ color: "var(--muted)", fontSize: 8 }}>Dia {m.dia}</span></div>
+              </div>
+            );
+          })}
+        </div>
+        {!readOnly && (
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, textAlign: "center" }}>
+            Clic en un Momento WOW para marcarlo como enviado y notificar al cliente por Telegram
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── KPIs COMPARATIVOS HERMES ─────────────────────────────────────────────────
+function HermesKpisPanel({ client, onUpdate, readOnly }) {
+  const hermes = client.hermesData || {};
+  const kpis = hermes.kpisHermes || HERMES_KPIS_DEFAULT;
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(kpis);
+  const { show, el: toastEl } = useToast();
+
+  function upd(id, k, v) { setLocal(p => p.map(kpi => kpi.id === id ? { ...kpi, [k]: v } : kpi)); }
+
+  async function save() {
+    const updated = { ...client, hermesData: { ...hermes, kpisHermes: local } };
+    await onUpdate(updated);
+    show("✓ KPIs guardados", "ok");
+    setEditing(false);
+  }
+
+  function calcDelta(hist, act) {
+    const h = parseFloat(hist) || 0;
+    const a = parseFloat(act) || 0;
+    if (!h || !a) return null;
+    const delta = ((a - h) / h * 100).toFixed(1);
+    return { delta, up: a > h };
+  }
+
+  // Calcular actual desde datos de metricas diarias
+  function getActualFromRecords(kpiId) {
+    const records = client.records || [];
+    if (!records.length) return "";
+    if (kpiId === "oportunidades") {
+      const total = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+      return total > 0 ? String(total) : "";
+    }
+    if (kpiId === "ventas") {
+      const total = records.reduce((a, r) => a + (r.ventas || 0), 0);
+      return total > 0 ? String(total) : "";
+    }
+    if (kpiId === "cpa") {
+      const inv = records.reduce((a, r) => a + (r.inversion || 0), 0);
+      const res = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+      return inv > 0 && res > 0 ? (inv / res).toFixed(2) : "";
+    }
+    if (kpiId === "calidad") {
+      const piezas = hermes.biblioteca || [];
+      if (!piezas.length) return "";
+      const avg = piezas.reduce((a, p) => a + calcIV(p), 0) / piezas.length;
+      return avg.toFixed(0);
+    }
+    return "";
+  }
+
+  const displayKpis = editing ? local : kpis;
+
+  return (
+    <>
+      {toastEl}
+      <div className="card">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <div className="card-title" style={{ margin: 0 }}>KPIs — Antes vs. Ahora</div>
+          {!readOnly && (
+            editing
+              ? <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setLocal(kpis); setEditing(false); }}>Cancelar</button>
+                </div>
+              : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>
+          )}
+        </div>
+        <table className="kpi-compare-table" style={{ width: "100%" }}>
+          <thead>
+            <tr>
+              <th>KPI</th>
+              <th style={{ color: "var(--red)" }}>Antes</th>
+              <th style={{ color: "var(--accent2)" }}>Ahora</th>
+              <th>Meta</th>
+              <th>Cambio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayKpis.map(kpi => {
+              const actual = getActualFromRecords(kpi.id) || kpi.actual;
+              const delta = calcDelta(kpi.historico, actual);
+              return (
+                <tr key={kpi.id}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{kpi.nombre}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.unidad}</div>
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)" }}>
+                    {editing
+                      ? <input type="text" value={kpi.historico} onChange={e => upd(kpi.id, "historico", e.target.value)} style={{ width: 80 }} placeholder="0" />
+                      : <span style={{ color: "var(--red)" }}>{kpi.historico || "—"}</span>}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)" }}>
+                    <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{actual || "—"}</span>
+                    {actual && !kpi.actual && <div style={{ fontSize: 10, color: "var(--muted)" }}>auto</div>}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)" }}>
+                    {editing
+                      ? <input type="text" value={kpi.meta} onChange={e => upd(kpi.id, "meta", e.target.value)} style={{ width: 80 }} placeholder="meta" />
+                      : kpi.meta || "—"}
+                  </td>
+                  <td>
+                    {delta
+                      ? <span className={delta.up ? "delta-up" : "delta-down"}>
+                          {delta.up ? "▲" : "▼"} {Math.abs(delta.delta)}%
+                        </span>
+                      : <span className="delta-neutral">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ─── EMBUDO HERMES ────────────────────────────────────────────────────────────
+function HermesFunnel({ client, period, from, to }) {
+  const records = filterByPeriod(client.records || [], period, from, to);
+  const biblioteca = (client.hermesData?.biblioteca || []);
+
+  const alcance = records.reduce((a, r) => a + (r.alcance || 0), 0);
+  const interacciones = records.reduce((a, r) => a + (r.likes || 0) + (r.comentarios || 0) + (r.compartidos || 0) + (r.guardados || 0), 0);
+  const interesPct = alcance > 0 ? (interacciones / alcance * 100) : 0;
+  const validacion = biblioteca.length > 0
+    ? biblioteca.reduce((a, p) => a + calcIV(p), 0) / biblioteca.length
+    : 0;
+  const conversion = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+  const resultado = records.reduce((a, r) => a + (r.ventas || 0), 0);
+
+  const stages = [
+    { label: "Atraccion",   value: alcance,         display: alcance.toLocaleString("es-EC"),             color: "#004AAD", pct: 100 },
+    { label: "Interes",     value: interesPct,       display: interesPct.toFixed(1) + "% interaccion",    color: "#0057cc", pct: Math.min(interesPct * 5, 90) },
+    { label: "Validacion",  value: validacion,       display: validacion.toFixed(0) + " / 100 IV",        color: "#FFDE59", pct: validacion },
+    { label: "Conversion",  value: conversion,       display: conversion.toLocaleString("es-EC"),          color: "#FF914D", pct: alcance > 0 ? Math.min(conversion / alcance * 1000, 85) : 0 },
+    { label: "Resultado",   value: resultado,        display: resultado.toLocaleString("es-EC") + " ventas", color: "#10B981", pct: conversion > 0 ? Math.min(resultado / conversion * 100, 80) : 0 },
+  ];
+
+  return (
+    <div className="card">
+      <div className="card-title">Embudo de estrategia HERMES</div>
+      <div className="hermes-funnel">
+        {stages.map((s, i) => (
+          <div key={s.label} className="hf-stage">
+            <div className="hf-label">{s.label}</div>
+            <div className="hf-bar" style={{ width: `${Math.max(s.pct * 0.8 + 20, 25)}%`, background: s.color + "22", border: `1px solid ${s.color}66` }}>
+              <span style={{ color: s.color, fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>
+                {s.value > 0 ? s.display : "—"}
+              </span>
+              {i > 0 && stages[i-1].value > 0 && s.value > 0 && (
+                <span style={{ fontSize: 10, color: s.color, opacity: .7 }}>
+                  {(() => {
+                    const prev = stages[i-1].value;
+                    const curr = s.value;
+                    if (i === 1) return interesPct.toFixed(1) + "%";
+                    if (i === 2) return validacion.toFixed(0) + "pts";
+                    const pct = prev > 0 ? (curr / prev * 100).toFixed(1) : 0;
+                    return pct + "%";
+                  })()}
+                </span>
+              )}
+            </div>
+            <div className="hf-pct"></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── BIBLIOTECA DE CONTENIDO ──────────────────────────────────────────────────
+function BibliotecaPanel({ client, onUpdate, readOnly }) {
+  const hermes = client.hermesData || {};
+  const biblioteca = hermes.biblioteca || [];
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [filtroCategoria, setFiltroCategoria] = useState("todas");
+  const [sortCol, setSortCol] = useState("iv");
+  const [sortDir, setSortDir] = useState("desc");
+  const [period, setPeriod] = useState("all");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const [form, setForm] = useState({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" });
+  const { show, el: toastEl } = useToast();
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  function handleSort(col) { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } }
+
+  function filtered() {
+    let list = [...biblioteca];
+    if (filtroCategoria !== "todas") list = list.filter(p => p.categoria === filtroCategoria);
+    list.sort((a, b) => {
+      let va = sortCol === "iv" ? calcIV(a) : (a[sortCol] || "");
+      let vb = sortCol === "iv" ? calcIV(b) : (b[sortCol] || "");
+      const na = parseFloat(va), nb = parseFloat(vb);
+      const r = !isNaN(na) && !isNaN(nb) ? na - nb : String(va).localeCompare(String(vb));
+      return sortDir === "asc" ? r : -r;
+    });
+    return list;
+  }
+
+  async function savePieza() {
+    if (!form.nombre) return show("Ingresa el nombre del video", "err");
+    const pieza = { ...form, id: editingId || "pza" + Date.now() };
+    const newBib = editingId
+      ? biblioteca.map(p => p.id === editingId ? pieza : p)
+      : [...biblioteca, pieza];
+    const updated = { ...client, hermesData: { ...hermes, biblioteca: newBib } };
+    await onUpdate(updated);
+    show("✓ Pieza guardada", "ok");
+    setForm({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" });
+    setShowForm(false); setEditingId(null);
+  }
+
+  async function deletePieza(id) {
+    if (!window.confirm("¿Eliminar esta pieza?")) return;
+    const updated = { ...client, hermesData: { ...hermes, biblioteca: biblioteca.filter(p => p.id !== id) } };
+    await onUpdate(updated);
+  }
+
+  function startEdit(p) { setForm({ ...p }); setEditingId(p.id); setShowForm(true); }
+
+  function exportBiblioteca(formato) {
+    const list = filtered();
+    if (!list.length) return;
+    const headers = ["Nombre", "Categoria", "Fecha", "Alcance", "Likes", "Comentarios", "Compartidos", "Guardados", "CTR%", "Ret.3s%", "Ret.50%", "Ret.Final%", "IV", "Clasificacion"];
+    const rows = list.map(p => {
+      const iv = calcIV(p);
+      return [p.nombre, p.categoria, p.fechaGrabacion, p.alcance_pza, p.likes, p.comentarios, p.compartidos, p.guardados, p.ctr_pza, p.retencion3s, p.retencion50, p.retencionFinal, iv, getIVLabel(iv)];
+    });
+    const sep = formato === "csv" ? "," : "\t";
+    const content = [headers, ...rows].map(r => r.map(v => `"${v || ""}"`).join(sep)).join("\n");
+    const blob = new Blob(["\ufeff" + content], { type: formato === "csv" ? "text/csv" : "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `biblioteca_${client.name}.${formato}`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const SortTh = ({ col, label }) => (
+    <th style={{ cursor: "pointer", userSelect: "none", fontSize: 10, whiteSpace: "nowrap" }} onClick={() => handleSort(col)}>
+      {label} {sortCol === col ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+    </th>
+  );
+
+  const piezas = filtered();
+  const avgIV = piezas.length > 0 ? (piezas.reduce((a, p) => a + calcIV(p), 0) / piezas.length).toFixed(0) : 0;
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div>
+            <div className="sec-title">Biblioteca de contenido</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              {biblioteca.length} piezas · IV promedio: <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{avgIV}/100</span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => exportBiblioteca("csv")}>⬇ CSV</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => exportBiblioteca("xls")}>⬇ XLS</button>
+            {!readOnly && <button className="btn btn-primary btn-sm" onClick={() => { setShowForm(s => !s); setEditingId(null); setForm({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" }); }}>
+              {showForm ? "Cancelar" : "+ Añadir pieza"}
+            </button>}
+          </div>
+        </div>
+
+        {showForm && !readOnly && (
+          <div className="card" style={{ borderColor: "rgba(0,74,173,.4)" }}>
+            <div className="card-title">{editingId ? "Editar pieza" : "Nueva pieza de contenido"}</div>
+            <div className="form-row">
+              <div className="field"><label>Nombre del video *</label><input type="text" value={form.nombre} onChange={e => f("nombre", e.target.value)} placeholder="Ej: Video testimonial cliente 1" /></div>
+              <div className="field"><label>Categoria</label>
+                <select value={form.categoria} onChange={e => f("categoria", e.target.value)}>
+                  {HERMES_CATEGORIAS_CONTENIDO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Fecha de grabacion</label><input type="date" value={form.fechaGrabacion} onChange={e => f("fechaGrabacion", e.target.value)} /></div>
+              <div className="field"><label>Enlace Terabox</label><input type="text" value={form.enlaceTerabox} onChange={e => f("enlaceTerabox", e.target.value)} placeholder="https://terabox.com/..." /></div>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, marginTop: 4 }}>Metricas de rendimiento</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: ".75rem", marginBottom: "1rem" }}>
+              {[["Alcance","alcance_pza"],["Likes","likes"],["Comentarios","comentarios"],["Compartidos","compartidos"],["Guardados","guardados"],["CTR (%)","ctr_pza"],["Retencion 3s (%)","retencion3s"],["Retencion 50% (%)","retencion50"],["Retencion Final (%)","retencionFinal"]].map(([lbl, fk]) => (
+                <div key={fk} className="field" style={{ marginBottom: 0 }}>
+                  <label>{lbl}</label>
+                  <input type="number" step="any" value={form[fk] || ""} onChange={e => f(fk, e.target.value)} placeholder="0" />
+                </div>
+              ))}
+            </div>
+            {form.alcance_pza && (
+              <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "10px 14px", marginBottom: "1rem" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Preview Indice de Validacion</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className={"iv-badge " + getIVClass(calcIV(form))} style={{ fontSize: 16 }}>{calcIV(form)}</span>
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>{getIVLabel(calcIV(form))}</span>
+                </div>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={savePieza}>Guardar pieza</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancelar</button>
+            </div>
+          </div>
+        )}
+
+        {/* FILTROS */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="period-pills">
+            {["todas", ...HERMES_CATEGORIAS_CONTENIDO].map(c => (
+              <button key={c} className={"pill " + (filtroCategoria === c ? "active" : "")} onClick={() => setFiltroCategoria(c)}>{c}</button>
+            ))}
+          </div>
+        </div>
+
+        {piezas.length === 0 && (
+          <div className="empty"><div style={{ fontSize: 28, opacity: .3, marginBottom: 8 }}>🎬</div><div>Sin piezas. {!readOnly && "Añade la primera."}</div></div>
+        )}
+
+        {piezas.length > 0 && (
+          <div className="card scroll-x">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <SortTh col="nombre" label="Video" />
+                  <SortTh col="categoria" label="Tipo" />
+                  <SortTh col="fechaGrabacion" label="Fecha" />
+                  <SortTh col="alcance_pza" label="Alcance" />
+                  <SortTh col="likes" label="Likes" />
+                  <SortTh col="comentarios" label="Coment." />
+                  <SortTh col="compartidos" label="Compart." />
+                  <SortTh col="guardados" label="Guardados" />
+                  <SortTh col="ctr_pza" label="CTR%" />
+                  <SortTh col="retencion3s" label="Ret.3s" />
+                  <SortTh col="retencion50" label="Ret.50%" />
+                  <SortTh col="iv" label="IV" />
+                  <th>Estado</th>
+                  {!readOnly && <th>Acciones</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {piezas.map(p => {
+                  const iv = calcIV(p);
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 500, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.enlaceTerabox
+                          ? <a href={p.enlaceTerabox} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent2)", textDecoration: "none" }}>{p.nombre} 🔗</a>
+                          : p.nombre}
+                      </td>
+                      <td><span className="badge" style={{ fontSize: 11, background: p.categoria === "Valor" ? "rgba(0,74,173,.15)" : p.categoria === "Viral" ? "rgba(255,222,89,.1)" : "rgba(255,145,77,.1)", color: p.categoria === "Valor" ? "#4d9fff" : p.categoria === "Viral" ? "var(--accent2)" : "var(--orange)" }}>{p.categoria}</span></td>
+                      <td style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>{p.fechaGrabacion ? fmtDate(p.fechaGrabacion) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.alcance_pza ? fmtNum(parseFloat(p.alcance_pza), 0) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.likes || "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.comentarios || "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.compartidos || "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.guardados || "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.ctr_pza ? p.ctr_pza + "%" : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion3s ? p.retencion3s + "%" : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion50 ? p.retencion50 + "%" : "—"}</td>
+                      <td><span className={"iv-badge " + getIVClass(iv)}>{iv}</span></td>
+                      <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>{getIVLabel(iv)}</td>
+                      {!readOnly && <td>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button className="btn btn-ghost btn-sm" onClick={() => startEdit(p)}>✏️</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => deletePieza(p.id)}>×</button>
+                        </div>
+                      </td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── VISTA HERMES COMPLETA (admin) ────────────────────────────────────────────
+function HermesAdminView({ client, onUpdate }) {
+  const [subTab, setSubTab] = useState("overview");
+  const [period, setPeriod] = useState("all");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+
+  return (
+    <div>
+      <div className="tab-row" style={{ marginBottom: "1rem" }}>
+        {[["overview","✦ Overview"],["kpis","KPIs"],["biblioteca","🎬 Biblioteca"],["fases","📋 Fases"]].map(([id, lbl]) => (
+          <button key={id} className={"tab " + (subTab === id ? "active" : "")} onClick={() => setSubTab(id)}>{lbl}</button>
+        ))}
+      </div>
+
+      {subTab === "overview" && (
+        <div>
+          <HermesProgressBar client={client} onUpdate={onUpdate} readOnly={false} />
+          <div className="grid2">
+            <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />
+            <HermesFunnel client={client} period={period} from={from} to={to} />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          </div>
+        </div>
+      )}
+
+      {subTab === "kpis" && <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />}
+
+      {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={onUpdate} readOnly={false} />}
+
+      {subTab === "fases" && (
+        <div>
+          {HERMES_FASES.map(fase => {
+            const checklist = client.checklist || {};
+            const done = fase.tareas.filter(t => checklist[fase.id]?.[t]).length;
+            return (
+              <div key={fase.id} className="card" style={{ marginBottom: ".75rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 18 }}>{fase.icono}</span>
+                  <div style={{ fontWeight: 600 }}>{fase.nombre}</div>
+                  <span style={{ fontSize: 11, color: "var(--muted)", background: "var(--surface2)", padding: "2px 8px", borderRadius: 10 }}>Dias {fase.dias}</span>
+                  <span style={{ fontSize: 11, color: done === fase.tareas.length ? "var(--green)" : "var(--muted)", marginLeft: "auto" }}>{done}/{fase.tareas.length}</span>
+                </div>
+                {fase.tareas.map(tarea => {
+                  const checked = !!(checklist[fase.id]?.[tarea]);
+                  return (
+                    <div key={tarea} className={"check-item" + (checked ? " done" : "")}
+                      onClick={() => onUpdate({ ...client, checklist: { ...checklist, [fase.id]: { ...(checklist[fase.id]||{}), [tarea]: !checked } } })}>
+                      <input type="checkbox" checked={checked} readOnly />
+                      <span>{tarea}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── VISTA HERMES CLIENTE (solo lectura) ─────────────────────────────────────
+function HermesClientView({ client }) {
+  const [period, setPeriod] = useState("all");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+
+  return (
+    <div>
+      <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />
+      <div style={{ marginBottom: "1rem" }}>
+        <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+      </div>
+      <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} />
+      <HermesFunnel client={client} period={period} from={from} to={to} />
+      <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />
+    </div>
+  );
+}
+
+
 // ─── CLIENT FORM ──────────────────────────────────────────────────────────────
 function ClientForm({ initial, onSave, onCancel }) {
   const blank = { name: "", username: "", password: "", niche: "whatsapp", color: "#7C3AED", logo: "", producto: "", email: "", telefono: "", direccion: "", representante: "", serviciosContratados: [], checklist: {}, cuentas: [], contratos: [], antecedentes: [], records: [], kpis: [], funnel: [] };
@@ -2807,12 +3457,13 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
+        {tab === "hermes" && <HermesAdminView client={client} onUpdate={handleUpdate} />}
         {tab === "info" && (
           <div>
             <ProgressBar client={client} />
@@ -2888,7 +3539,7 @@ function ClientDashboard({ client, onLogout, banners }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "detalle", "proyecciones", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "detalle" ? "Detalle diario" : v === "proyecciones" ? "Proyecciones" : "Histórico"}</div>)}
+          {["resumen", "hermes", "detalle", "proyecciones", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "detalle" ? "Detalle diario" : v === "proyecciones" ? "Proyecciones" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -2898,7 +3549,8 @@ function ClientDashboard({ client, onLogout, banners }) {
       <div className="main">
         <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
         <div className="content">
-          <ProgressBar client={client} />
+          {tab !== "hermes" && <ProgressBar client={client} />}
+          {tab === "hermes" && <HermesClientView client={client} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
@@ -3359,14 +4011,33 @@ function OnboardingWizard({ onSave, onCancel }) {
 
   function finish() {
     if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña");
+    const isHermes = form.producto?.toLowerCase().includes("hermes") || form.serviciosContratados?.includes("hermes");
+    const hermesData = isHermes ? {
+      momentos: {},
+      kpisHermes: HERMES_KPIS_DEFAULT,
+      biblioteca: [],
+    } : undefined;
+    const hermesChecklist = isHermes
+      ? Object.fromEntries(HERMES_FASES.map(f => [f.id, {}]))
+      : {};
+    const hermesKpis = isHermes ? HERMES_FASES.flatMap(f => [{
+      id: "kpi_" + f.id, nombre: f.nombre, metrica: "resultados",
+      meta_valor: "", unidad: "", plazo: "15 dias", relevancia: "alto",
+      descripcion: f.descripcion || ""
+    }]).slice(0, 4) : [];
+
     const client = {
       name: form.name, username: form.username, password: form.password,
       niche: form.niche, color: form.color, logo: form.logo,
       producto: form.producto, telefono: form.telefono, email: form.email,
       representante: form.representante,
-      serviciosContratados: form.serviciosContratados,
-      checklist: {}, cuentas: [], contratos: [], antecedentes: [],
-      records: [], kpis: [], funnel: [],
+      serviciosContratados: isHermes
+        ? ["estrategia","contenido","pauta","ventas","analisis"]
+        : form.serviciosContratados,
+      checklist: hermesChecklist,
+      cuentas: [], contratos: [], antecedentes: [],
+      records: [], kpis: hermesKpis, funnel: [],
+      hermesData: hermesData,
       tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: PLANTILLAS_DEFAULT } : {},
       fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: FB_METRICAS_DISPONIBLES.slice(0, 7) } : {},
       schedConfig: { enabled: false, hora: "08:00", dias: [1,2,3,4,5], plantillaId: "p1" }
@@ -3403,6 +4074,19 @@ function OnboardingWizard({ onSave, onCancel }) {
                 <option value="web">Sitio web / E-commerce</option>
                 <option value="lanzamiento">Lanzamiento (Leads / Formularios)</option>
               </select>
+            </div>
+            <div className="field">
+              <label>Producto contratado</label>
+              <select value={form.producto} onChange={e => f("producto", e.target.value)}>
+                <option value="">-- Seleccionar producto --</option>
+                <option value="HERMES">✦ HERMES — Contenido + Pauta 15 dias</option>
+                <option value="personalizado">Personalizado</option>
+              </select>
+              {form.producto === "HERMES" && (
+                <div style={{ marginTop: 8, background: "rgba(255,222,89,.08)", border: "1px solid rgba(255,222,89,.2)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--accent2)" }}>
+                  ✦ Se configurara automaticamente: 8 fases, 4 KPIs, Biblioteca de contenido y Momentos WOW
+                </div>
+              )}
             </div>
             <div className="form-row">
               <div className="field"><label>Usuario de acceso *</label><input type="text" value={form.username} onChange={e => f("username", e.target.value.toLowerCase().replace(/\s/g,""))} placeholder="bellastetica" /></div>
