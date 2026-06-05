@@ -3457,8 +3457,167 @@ function OnboardingWizard({ onSave, onCancel }) {
   );
 }
 
+// ─── PANEL DE COMANDOS GLOBALES ──────────────────────────────────────────────
+const DEFAULT_COMMANDS_FRONT = [
+  { cmd: "/reporte",      label: "Reporte del dia",      descripcion: "Metricas de hoy desde Facebook Ads",              activo: true  },
+  { cmd: "/ayer",         label: "Reporte de ayer",      descripcion: "Metricas del dia anterior",                        activo: true  },
+  { cmd: "/semana",       label: "Resumen semanal",       descripcion: "Ultimos 7 dias acumulados",                        activo: true  },
+  { cmd: "/presupuesto",  label: "Presupuesto activo",    descripcion: "Campanas activas CBO/ABO y total programado",      activo: true  },
+  { cmd: "/contrato",     label: "Estado del contrato",   descripcion: "Cuotas y fechas de pago",                          activo: true  },
+  { cmd: "/kpis",         label: "Progreso de KPIs",      descripcion: "Avance de las metas del periodo",                  activo: true  },
+  { cmd: "/ayuda",        label: "Ayuda",                 descripcion: "Lista de todos los comandos disponibles",          activo: true  },
+];
+
+function ComandosPanel({ globalConfig, onSave }) {
+  const [commands, setCommands] = useState(globalConfig?.commands || DEFAULT_COMMANDS_FRONT);
+  const [saving, setSaving] = useState(false);
+  const [webhookToken, setWebhookToken] = useState(globalConfig?.webhookToken || "");
+  const [activating, setActivating] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState(null);
+  const { show, el: toastEl } = useToast();
+
+  function toggleCmd(cmd) {
+    setCommands(prev => prev.map(c => c.cmd === cmd ? { ...c, activo: !c.activo } : c));
+  }
+
+  function updCmd(cmd, k, v) {
+    setCommands(prev => prev.map(c => c.cmd === cmd ? { ...c, [k]: v } : c));
+  }
+
+  async function saveCommands() {
+    setSaving(true);
+    await onSave({ ...globalConfig, commands, webhookToken });
+    show("✓ Comandos guardados — se aplican a todos los clientes", "ok");
+    setSaving(false);
+  }
+
+  async function activateWebhook() {
+    if (!webhookToken) return show("Ingresa el Bot Token primero", "err");
+    setActivating(true);
+    const webhookUrl = `${window.location.origin}/api/telegram-webhook`;
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${webhookToken}/setWebhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: webhookUrl })
+      });
+      const data = await r.json();
+      if (data.ok) {
+        setWebhookStatus("ok");
+        show("✓ Webhook activado — el bot ya puede recibir comandos", "ok");
+        await onSave({ ...globalConfig, commands, webhookToken });
+      } else {
+        setWebhookStatus("err");
+        show("Error: " + data.description, "err");
+      }
+    } catch (e) {
+      setWebhookStatus("err");
+      show("Error de conexion: " + e.message, "err");
+    }
+    setActivating(false);
+  }
+
+  async function checkWebhook() {
+    if (!webhookToken) return;
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${webhookToken}/getWebhookInfo`);
+      const data = await r.json();
+      if (data.ok && data.result?.url) {
+        setWebhookStatus("ok");
+        show("Webhook activo en: " + data.result.url, "ok");
+      } else {
+        setWebhookStatus("err");
+        show("Webhook no configurado aun", "err");
+      }
+    } catch { show("Error al verificar", "err"); }
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div>
+            <div className="sec-title">Comandos del Bot</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              Activa o desactiva comandos globalmente para todos los clientes
+            </div>
+          </div>
+          <button className="btn btn-green btn-sm" disabled={saving} onClick={saveCommands}>
+            {saving ? "Guardando..." : "💾 Guardar cambios"}
+          </button>
+        </div>
+
+        {/* CONFIGURACION WEBHOOK */}
+        <div className="card" style={{ borderColor: "rgba(0,74,173,.3)", marginBottom: "1.25rem" }}>
+          <div className="card-title">Activar recepcion de comandos (Webhook)</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
+            Para que los clientes puedan escribirle comandos al bot, debes activar el webhook una sola vez.
+            Usa el token del bot principal (el mismo que usas en los clientes).
+          </div>
+          <div className="field">
+            <label>Bot Token</label>
+            <input type="text" value={webhookToken} onChange={e => setWebhookToken(e.target.value)} placeholder="1234567890:ABCdef..." />
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button className="btn btn-primary btn-sm" disabled={activating || !webhookToken} onClick={activateWebhook}
+              style={{ background: "var(--accent)" }}>
+              {activating ? "Activando..." : "⚡ Activar Webhook"}
+            </button>
+            <button className="btn btn-ghost btn-sm" disabled={!webhookToken} onClick={checkWebhook}>
+              Verificar estado
+            </button>
+            {webhookStatus && (
+              <span style={{ fontSize: 12, color: webhookStatus === "ok" ? "var(--green)" : "var(--red)", fontWeight: 600 }}>
+                {webhookStatus === "ok" ? "✓ Webhook activo" : "✕ Sin activar"}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 10, lineHeight: 1.5 }}>
+            URL del webhook: <span style={{ fontFamily: "var(--mono)", color: "var(--accent2)" }}>{typeof window !== "undefined" ? window.location.origin : "https://tu-app.vercel.app"}/api/telegram-webhook</span>
+          </div>
+        </div>
+
+        {/* LISTA DE COMANDOS */}
+        <div className="card">
+          <div className="card-title">Comandos disponibles</div>
+          {commands.map(c => (
+            <div key={c.cmd} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ width: 36, height: 20, borderRadius: 10, background: c.activo ? "var(--green)" : "var(--border)", position: "relative", flexShrink: 0, cursor: "pointer", marginTop: 2 }}
+                onClick={() => toggleCmd(c.cmd)}>
+                <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: c.activo ? 19 : 3, transition: "left .2s" }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--accent2)", fontWeight: 600 }}>{c.cmd}</span>
+                  <input type="text" value={c.label} onChange={e => updCmd(c.cmd, "label", e.target.value)}
+                    style={{ fontSize: 12, padding: "2px 8px", width: "auto", flex: 1 }} />
+                </div>
+                <input type="text" value={c.descripcion} onChange={e => updCmd(c.cmd, "descripcion", e.target.value)}
+                  style={{ fontSize: 11, padding: "2px 8px", color: "var(--muted)", width: "100%" }}
+                  placeholder="Descripcion del comando..." />
+              </div>
+              <div style={{ fontSize: 11, color: c.activo ? "var(--green)" : "var(--muted)", fontWeight: 600, flexShrink: 0, marginTop: 2 }}>
+                {c.activo ? "Activo" : "Inactivo"}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* INFO SOBRE COMANDOS */}
+        <div style={{ background: "rgba(0,74,173,.07)", border: "1px solid rgba(0,74,173,.2)", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: "var(--muted)", lineHeight: 1.7 }}>
+          <div style={{ fontWeight: 600, color: "var(--accent2)", marginBottom: 4 }}>💡 Como funciona</div>
+          Cuando un cliente escribe un comando al bot, el sistema lo identifica por su Chat ID,
+          consulta sus datos (Facebook Ads si esta conectado, o registros locales si no),
+          y responde automaticamente en segundos. Los cambios aqui aplican para todos los clientes de forma instantanea.
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
-function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners }) {
+function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners, globalConfig, onSaveGlobalConfig }) {
   const [view, setView] = useState("clientes");
   const [selectedId, setSelectedId] = useState(null);
   const [addingClient, setAddingClient] = useState(false);
@@ -3472,7 +3631,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "banner", "campanas"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "banner" ? "🖼️ Comunicaciones" : "📣 Campanas"}</div>)}
+        {["clientes", "resumen", "salud", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -3511,7 +3670,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "banner" ? "Comunicaciones / Banner" : "Campanas de mensajeria"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
@@ -3560,6 +3719,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             {view === "campanas" && (
               <CampanasPanel clients={clients} />
             )}
+            {view === "comandos" && (
+              <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
+            )}
           </div>
         </div>
       </div>
@@ -3593,6 +3755,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [clients, setClients] = useState([]);
   const [banners, setBanners] = useState([]);
+  const [globalConfig, setGlobalConfig] = useState({ commands: DEFAULT_COMMANDS_FRONT, webhookToken: "" });
   const [appLoading, setAppLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
@@ -3603,10 +3766,12 @@ export default function App() {
       if (result.ok) {
         // Separar banners de clientes reales
         const allItems = result.data;
-        const clientData = allItems.filter(item => item && item.id && !item.id.startsWith("__banners__"));
+        const clientData = allItems.filter(item => item && item.id && !item.id.startsWith("__"));
         const bannerItem = allItems.find(item => item && item.id === "__banners__");
+        const configItem = allItems.find(item => item && item.id === "__globalconfig__");
         setClients(clientData);
         setBanners(bannerItem?.data || []);
+        if (configItem?.data) setGlobalConfig(configItem.data);
         setDbError(null);
       } else {
         setDbError("No se pudo conectar a la base de datos. Verifica las variables de entorno en Vercel.");
@@ -3624,8 +3789,12 @@ export default function App() {
 
   async function saveBanners(newBanners) {
     setBanners(newBanners);
-    // Guardar banners como un registro especial en la misma tabla
     await db.upsert({ id: "__banners__", data: newBanners });
+  }
+
+  async function saveGlobalConfig(cfg) {
+    setGlobalConfig(cfg);
+    await db.upsert({ id: "__globalconfig__", data: cfg });
   }
 
   async function handleLogin(username, password) {
@@ -3692,6 +3861,8 @@ export default function App() {
           onDeleteClient={deleteClient}
           banners={banners}
           onSaveBanners={saveBanners}
+          globalConfig={globalConfig}
+          onSaveGlobalConfig={saveGlobalConfig}
         />
       )}
       {session?.role === "client" && clientSession && (
