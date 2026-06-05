@@ -352,7 +352,31 @@ const css = `
   .iv-green{background:rgba(16,185,129,.15);color:var(--green);box-shadow:0 0 8px rgba(16,185,129,.2)}
   .iv-amber{background:rgba(255,222,89,.12);color:#c9a800;box-shadow:0 0 8px rgba(255,222,89,.15)}
   .iv-red{background:rgba(239,68,68,.12);color:var(--red)}
-  /* EMBUDO HERMES */
+  /* EMBUDO HERMES - forma real de embudo */
+  .funnel-container{display:flex;flex-direction:column;align-items:center;gap:2px;padding:.75rem 0;width:100%}
+  .funnel-level{display:flex;flex-direction:column;align-items:center;width:100%}
+  .funnel-shape{display:flex;align-items:center;justify-content:space-between;padding:0 16px;color:#fff;font-weight:600;font-size:12px;transition:width .5s;clip-path:polygon(5% 0%,95% 0%,100% 100%,0% 100%);border-radius:2px}
+  .funnel-connector{width:2px;height:6px;background:var(--border)}
+  .funnel-label-row{display:flex;justify-content:space-between;width:100%;padding:2px 4px;margin-bottom:2px}
+  .funnel-stage-label{font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+  .funnel-stage-val{font-size:11px;font-family:var(--mono);font-weight:700}
+  .funnel-conv-badge{font-size:10px;color:var(--muted);background:var(--surface2);padding:1px 6px;border-radius:8px}
+  /* CALENDARIO */
+  .cal-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+  .cal-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border)}
+  .cal-cell{background:var(--surface);padding:6px 4px;min-height:64px;cursor:pointer;transition:background .15s;position:relative}
+  .cal-cell:hover{background:var(--surface2)}
+  .cal-cell.today{background:rgba(0,74,173,.1);border:1px solid rgba(0,74,173,.3)}
+  .cal-cell.disabled{opacity:.3;cursor:default;pointer-events:none}
+  .cal-cell.available{background:rgba(16,185,129,.06)}
+  .cal-day{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px}
+  .cal-day.today-num{color:var(--accent);font-weight:700}
+  .cal-event{font-size:10px;padding:1px 5px;border-radius:4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .cal-event-grabacion{background:rgba(0,74,173,.25);color:#4d9fff}
+  .cal-event-reunion{background:rgba(255,222,89,.2);color:#c9a800}
+  .cal-event-metricas{background:rgba(16,185,129,.2);color:var(--green)}
+  .cal-dow{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;text-align:center;padding:6px 0;background:var(--surface2)}
   .hermes-funnel{display:flex;flex-direction:column;gap:6px;align-items:center;padding:1rem 0}
   .hf-stage{display:flex;align-items:center;width:100%;max-width:500px;gap:12px}
   .hf-bar{height:40px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:12px;font-weight:600;transition:width .5s ease;min-width:80px}
@@ -1975,7 +1999,8 @@ const HERMES_KPIS_DEFAULT = [
 const HERMES_CATEGORIAS_CONTENIDO = ["Valor", "Viral", "Venta"];
 
 // Calcular Indice de Validacion (IV) de una pieza
-function calcIV(pieza) {
+// calcIV recibe la pieza y el conjunto completo para normalización relativa
+function calcIV(pieza, biblioteca) {
   const compartidos = parseFloat(pieza.compartidos) || 0;
   const guardados   = parseFloat(pieza.guardados)   || 0;
   const comentarios = parseFloat(pieza.comentarios) || 0;
@@ -1983,28 +2008,52 @@ function calcIV(pieza) {
   const likes       = parseFloat(pieza.likes)       || 0;
   const alcance     = parseFloat(pieza.alcance_pza) || 1;
 
-  // Normalizar sobre el alcance para que sea comparable entre videos
-  const norm = (v, max) => Math.min((v / Math.max(alcance, 1)) * 1000, max);
+  // Tasas relativas al alcance (engagement rate)
+  const rateComp  = alcance > 0 ? (compartidos / alcance) * 100 : 0;
+  const rateGuard = alcance > 0 ? (guardados   / alcance) * 100 : 0;
+  const rateComt  = alcance > 0 ? (comentarios / alcance) * 100 : 0;
+  const rateLikes = alcance > 0 ? (likes       / alcance) * 100 : 0;
 
+  // Si hay biblioteca para comparar, normalizar contra el máximo del conjunto
+  let maxComp = 1, maxGuard = 1, maxComt = 1, maxLikes = 1, maxCtr = 1;
+  if (biblioteca && biblioteca.length > 1) {
+    const getRate = (arr, field, alc) => arr.map(p => {
+      const a = parseFloat(p.alcance_pza) || 1;
+      return (parseFloat(p[field]) || 0) / a * 100;
+    });
+    const ratiosComp  = getRate(biblioteca, "compartidos");
+    const ratiosGuard = getRate(biblioteca, "guardados");
+    const ratiosComt  = getRate(biblioteca, "comentarios");
+    const ratiosLikes = getRate(biblioteca, "likes");
+    const ctrList     = biblioteca.map(p => parseFloat(p.ctr_pza) || 0);
+    maxComp  = Math.max(...ratiosComp,  0.001);
+    maxGuard = Math.max(...ratiosGuard, 0.001);
+    maxComt  = Math.max(...ratiosComt,  0.001);
+    maxLikes = Math.max(...ratiosLikes, 0.001);
+    maxCtr   = Math.max(...ctrList,     0.001);
+  }
+
+  // Score ponderado con normalización relativa (0-100)
   const score =
-    norm(compartidos, 30) * 0.30 +
-    norm(guardados,   25) * 0.25 +
-    norm(comentarios, 20) * 0.20 +
-    Math.min(ctr * 10,  15) * 0.15 +
-    norm(likes,       10) * 0.10;
+    Math.min(rateComp  / maxComp,  1) * 30 +
+    Math.min(rateGuard / maxGuard, 1) * 25 +
+    Math.min(rateComt  / maxComt,  1) * 20 +
+    Math.min(ctr       / maxCtr,   1) * 15 +
+    Math.min(rateLikes / maxLikes, 1) * 10;
 
   return Math.min(Math.round(score), 100);
 }
 
 function getIVClass(iv) {
   if (iv >= 70) return "iv-green";
-  if (iv >= 50) return "iv-amber";
+  if (iv >= 40) return "iv-amber";
   return "iv-red";
 }
 
 function getIVLabel(iv) {
-  if (iv >= 70) return "🟢 A pauta";
-  if (iv >= 50) return "🟡 Probar";
+  if (iv >= 70) return "🟢 A pauta fijo";
+  if (iv >= 50) return "🟢 Repetir / probar pauta";
+  if (iv >= 40) return "🟡 Observar";
   return "🔴 Descartar";
 }
 
@@ -2138,7 +2187,7 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
     if (kpiId === "calidad") {
       const piezas = hermes.biblioteca || [];
       if (!piezas.length) return "";
-      const avg = piezas.reduce((a, p) => a + calcIV(p), 0) / piezas.length;
+      const avg = piezas.reduce((a, p) => a + calcIV(p, piezas), 0) / piezas.length;
       return avg.toFixed(0);
     }
     return "";
@@ -2212,61 +2261,368 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
   );
 }
 
-// ─── EMBUDO HERMES ────────────────────────────────────────────────────────────
+// ─── EMBUDO HERMES - forma real ───────────────────────────────────────────────
 function HermesFunnel({ client, period, from, to }) {
   const records = filterByPeriod(client.records || [], period, from, to);
-  const biblioteca = (client.hermesData?.biblioteca || []);
+  const biblioteca = client.hermesData?.biblioteca || [];
 
-  const alcance = records.reduce((a, r) => a + (r.alcance || 0), 0);
-  const interacciones = records.reduce((a, r) => a + (r.likes || 0) + (r.comentarios || 0) + (r.compartidos || 0) + (r.guardados || 0), 0);
-  const interesPct = alcance > 0 ? (interacciones / alcance * 100) : 0;
-  const validacion = biblioteca.length > 0
-    ? biblioteca.reduce((a, p) => a + calcIV(p), 0) / biblioteca.length
-    : 0;
-  const conversion = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
-  const resultado = records.reduce((a, r) => a + (r.ventas || 0), 0);
+  const alcance     = records.reduce((a, r) => a + (r.alcance || 0), 0);
+  const likes       = records.reduce((a, r) => a + (r.likes || 0), 0);
+  const comentarios = records.reduce((a, r) => a + (r.comentarios || 0), 0);
+  const compartidos = records.reduce((a, r) => a + (r.compartidos || 0), 0);
+  const guardados   = records.reduce((a, r) => a + (r.guardados || 0), 0);
+  const interacciones = likes + comentarios + compartidos + guardados;
+  const interesPct    = alcance > 0 ? (interacciones / alcance * 100) : 0;
+  const validacion    = biblioteca.length > 0
+    ? biblioteca.reduce((a, p) => a + calcIV(p, biblioteca), 0) / biblioteca.length : 0;
+  const conversion    = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+  const resultado     = records.reduce((a, r) => a + (r.ventas || 0), 0);
 
   const stages = [
-    { label: "Atraccion",   value: alcance,         display: alcance.toLocaleString("es-EC"),             color: "#004AAD", pct: 100 },
-    { label: "Interes",     value: interesPct,       display: interesPct.toFixed(1) + "% interaccion",    color: "#0057cc", pct: Math.min(interesPct * 5, 90) },
-    { label: "Validacion",  value: validacion,       display: validacion.toFixed(0) + " / 100 IV",        color: "#FFDE59", pct: validacion },
-    { label: "Conversion",  value: conversion,       display: conversion.toLocaleString("es-EC"),          color: "#FF914D", pct: alcance > 0 ? Math.min(conversion / alcance * 1000, 85) : 0 },
-    { label: "Resultado",   value: resultado,        display: resultado.toLocaleString("es-EC") + " ventas", color: "#10B981", pct: conversion > 0 ? Math.min(resultado / conversion * 100, 80) : 0 },
+    { label: "Atraccion",  sub: "Personas que nos ven",      val: alcance,       display: alcance > 0 ? alcance.toLocaleString("es-EC") : "—",                color: "#004AAD", pctW: 100 },
+    { label: "Interes",    sub: "Tasa de interaccion",        val: interesPct,    display: alcance > 0 ? interesPct.toFixed(1) + "%" : "—",                    color: "#0057cc", pctW: alcance > 0 ? Math.max(interesPct * 4, 10) : 50 },
+    { label: "Validacion", sub: "Indice de contenido",        val: validacion,    display: biblioteca.length > 0 ? validacion.toFixed(0) + " / 100" : "—",    color: "#FFDE59", pctW: validacion > 0 ? Math.max(validacion, 10) : 40 },
+    { label: "Conversion", sub: "Leads / Registros",          val: conversion,    display: conversion > 0 ? conversion.toLocaleString("es-EC") : "—",          color: "#FF914D", pctW: alcance > 0 && conversion > 0 ? Math.max(conversion/alcance*2000, 8) : 30 },
+    { label: "Resultado",  sub: "Ventas cerradas",             val: resultado,     display: resultado > 0 ? resultado.toLocaleString("es-EC") : "—",            color: "#10B981", pctW: conversion > 0 && resultado > 0 ? Math.max(resultado/conversion*100, 6) : 20 },
   ];
 
   return (
     <div className="card">
-      <div className="card-title">Embudo de estrategia HERMES</div>
-      <div className="hermes-funnel">
-        {stages.map((s, i) => (
-          <div key={s.label} className="hf-stage">
-            <div className="hf-label">{s.label}</div>
-            <div className="hf-bar" style={{ width: `${Math.max(s.pct * 0.8 + 20, 25)}%`, background: s.color + "22", border: `1px solid ${s.color}66` }}>
-              <span style={{ color: s.color, fontFamily: "var(--mono)", fontSize: 12, fontWeight: 700 }}>
-                {s.value > 0 ? s.display : "—"}
-              </span>
-              {i > 0 && stages[i-1].value > 0 && s.value > 0 && (
-                <span style={{ fontSize: 10, color: s.color, opacity: .7 }}>
-                  {(() => {
-                    const prev = stages[i-1].value;
-                    const curr = s.value;
-                    if (i === 1) return interesPct.toFixed(1) + "%";
-                    if (i === 2) return validacion.toFixed(0) + "pts";
-                    const pct = prev > 0 ? (curr / prev * 100).toFixed(1) : 0;
-                    return pct + "%";
-                  })()}
-                </span>
-              )}
+      <div className="card-title">Embudo de estrategia</div>
+      <div className="funnel-container">
+        {stages.map((s, i) => {
+          const prevVal = i > 0 ? stages[i-1].val : 0;
+          const convPct = i > 0 && prevVal > 0 && s.val > 0
+            ? (s.val / prevVal * 100).toFixed(1) + "%" : null;
+          const w = Math.max(Math.min(s.pctW, 100), 6);
+          return (
+            <div key={s.label} className="funnel-level">
+              <div className="funnel-label-row" style={{ width: w + "%" }}>
+                <span className="funnel-stage-label">{s.label}</span>
+                <span className="funnel-stage-val" style={{ color: s.color }}>{s.display}</span>
+              </div>
+              <div className="funnel-shape"
+                style={{ width: w + "%", height: 36, background: s.color + "33", border: "1px solid " + s.color + "66" }}>
+                <span style={{ fontSize: 10, color: s.color, opacity: .7 }}>{s.sub}</span>
+                {convPct && <span className="funnel-conv-badge">{convPct}</span>}
+              </div>
+              {i < stages.length - 1 && <div className="funnel-connector" />}
             </div>
-            <div className="hf-pct"></div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ─── BIBLIOTECA DE CONTENIDO ──────────────────────────────────────────────────
+// ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
+const TIPO_AGENDA = [
+  { id: "grabacion",  label: "Grabacion",         cls: "cal-event-grabacion" },
+  { id: "reunion",    label: "Reunion",             cls: "cal-event-reunion"   },
+  { id: "metricas",   label: "Rev. Metricas",       cls: "cal-event-metricas"  },
+];
+
+function CalendarioPanel({ client, onUpdate, readOnly }) {
+  const hermes = client.hermesData || {};
+  const eventos = hermes.agenda || [];
+  const disponibilidad = hermes.disponibilidad || { dias: [1,2,3,4,5], horaInicio: "09:00", horaFin: "18:00" };
+  const [mes, setMes] = useState(() => { const h = new Date(); return new Date(h.getFullYear(), h.getMonth(), 1); });
+  const [showForm, setShowForm] = useState(false);
+  const [selectedDate, setSelectedDate] = useState("");
+  const [editDisp, setEditDisp] = useState(false);
+  const [localDisp, setLocalDisp] = useState(disponibilidad);
+  const [form, setForm] = useState({ tipo: "reunion", titulo: "", hora: "10:00", descripcion: "", tgRecordatorio: true });
+  const { show, el: toastEl } = useToast();
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const hoy = new Date();
+  const diasMes = new Date(mes.getFullYear(), mes.getMonth() + 1, 0).getDate();
+  const primerDia = new Date(mes.getFullYear(), mes.getMonth(), 1).getDay();
+  const mesNombre = mes.toLocaleDateString("es-EC", { month: "long", year: "numeric" });
+
+  function isDayAvailable(d) {
+    const fecha = new Date(mes.getFullYear(), mes.getMonth(), d);
+    return disponibilidad.dias.includes(fecha.getDay());
+  }
+
+  function getEventosDelDia(d) {
+    const key = `${mes.getFullYear()}-${String(mes.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    return eventos.filter(e => e.fecha === key);
+  }
+
+  async function saveEvento() {
+    if (!selectedDate || !form.titulo) return show("Completa fecha y titulo", "err");
+    const evento = { ...form, id: "ev" + Date.now(), fecha: selectedDate };
+    const updated = { ...client, hermesData: { ...hermes, agenda: [...eventos, evento] } };
+    await onUpdate(updated);
+
+    // Programar mensajes de Telegram si está configurado
+    if (form.tgRecordatorio && client.tgConfig?.token && client.tgConfig?.chatId) {
+      const tipoLabel = TIPO_AGENDA.find(t => t.id === form.tipo)?.label || form.tipo;
+      const msg1 = `📅 *${tipoLabel} agendada — ${client.name}*\n\nFecha: ${selectedDate}\nHora: ${form.hora}\n${form.descripcion ? "\n" + form.descripcion : ""}\n\n_Confirmacion de agenda · Trafficker Pro_`;
+      try {
+        await fetch(`https://api.telegram.org/bot${client.tgConfig.token}/sendMessage`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: client.tgConfig.chatId, text: msg1, parse_mode: "Markdown" })
+        });
+        show("✓ Evento guardado y confirmacion enviada por Telegram", "ok");
+      } catch { show("✓ Evento guardado (Telegram no disponible)", "ok"); }
+    } else {
+      show("✓ Evento agendado", "ok");
+    }
+    setShowForm(false);
+    setForm({ tipo: "reunion", titulo: "", hora: "10:00", descripcion: "", tgRecordatorio: true });
+  }
+
+  async function deleteEvento(id) {
+    const updated = { ...client, hermesData: { ...hermes, agenda: eventos.filter(e => e.id !== id) } };
+    await onUpdate(updated);
+  }
+
+  async function saveDisp() {
+    const updated = { ...client, hermesData: { ...hermes, disponibilidad: localDisp } };
+    await onUpdate(updated);
+    setEditDisp(false);
+    show("✓ Disponibilidad guardada", "ok");
+  }
+
+  const cells = [];
+  for (let i = 0; i < primerDia; i++) cells.push(null);
+  for (let d = 1; d <= diasMes; d++) cells.push(d);
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        {/* DISPONIBILIDAD - solo admin */}
+        {!readOnly && (
+          <div className="card" style={{ marginBottom: "1rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editDisp ? 12 : 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                Disponibilidad: {disponibilidad.dias.map(d => DIAS_SEMANA.find(x => x.key === d)?.label).join(", ")} · {disponibilidad.horaInicio} - {disponibilidad.horaFin}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {editDisp
+                  ? <><button className="btn btn-green btn-sm" onClick={saveDisp}>Guardar</button><button className="btn btn-ghost btn-sm" onClick={() => setEditDisp(false)}>Cancelar</button></>
+                  : <button className="btn btn-ghost btn-sm" onClick={() => setEditDisp(true)}>✏️ Editar</button>}
+              </div>
+            </div>
+            {editDisp && (
+              <div>
+                <div className="field" style={{ marginBottom: 8 }}>
+                  <label>Dias disponibles</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                    {DIAS_SEMANA.map(d => (
+                      <div key={d.key} className={"fb-chip " + (localDisp.dias.includes(d.key) ? "active" : "")}
+                        onClick={() => setLocalDisp(p => ({ ...p, dias: p.dias.includes(d.key) ? p.dias.filter(x => x !== d.key) : [...p.dias, d.key].sort() }))}>
+                        {d.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="field"><label>Hora inicio</label><input type="time" value={localDisp.horaInicio} onChange={e => setLocalDisp(p => ({ ...p, horaInicio: e.target.value }))} /></div>
+                  <div className="field"><label>Hora fin</label><input type="time" value={localDisp.horaFin} onChange={e => setLocalDisp(p => ({ ...p, horaFin: e.target.value }))} /></div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* CALENDARIO */}
+        <div className="cal-wrap">
+          <div className="cal-header">
+            <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()-1, 1))}>‹</button>
+            <div style={{ fontWeight: 600, fontSize: 14, textTransform: "capitalize" }}>{mesNombre}</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()+1, 1))}>›</button>
+          </div>
+          <div className="cal-grid">
+            {["Dom","Lun","Mar","Mie","Jue","Vie","Sab"].map(d => (
+              <div key={d} className="cal-dow">{d}</div>
+            ))}
+            {cells.map((d, i) => {
+              if (!d) return <div key={"empty-"+i} className="cal-cell disabled" />;
+              const fechaStr = `${mes.getFullYear()}-${String(mes.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+              const esHoy = d === hoy.getDate() && mes.getMonth() === hoy.getMonth() && mes.getFullYear() === hoy.getFullYear();
+              const disponible = isDayAvailable(d);
+              const evs = getEventosDelDia(d);
+              return (
+                <div key={d} className={"cal-cell " + (esHoy ? "today " : "") + (disponible ? "available " : "")}
+                  onClick={() => { if (!readOnly && disponible) { setSelectedDate(fechaStr); setShowForm(true); } }}>
+                  <div className={"cal-day " + (esHoy ? "today-num" : "")}>{d}</div>
+                  {evs.map(ev => {
+                    const tipo = TIPO_AGENDA.find(t => t.id === ev.tipo);
+                    return (
+                      <div key={ev.id} className={"cal-event " + (tipo?.cls || "")}
+                        title={ev.titulo + " " + ev.hora}
+                        onClick={e => { e.stopPropagation(); if (!readOnly) deleteEvento(ev.id); }}>
+                        {ev.hora} {ev.titulo}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* FORM NUEVO EVENTO */}
+        {showForm && !readOnly && (
+          <div className="card" style={{ marginTop: "1rem", borderColor: "rgba(0,74,173,.4)" }}>
+            <div className="card-title">Nueva cita — {selectedDate}</div>
+            <div className="form-row">
+              <div className="field"><label>Tipo</label>
+                <select value={form.tipo} onChange={e => f("tipo", e.target.value)}>
+                  {TIPO_AGENDA.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              </div>
+              <div className="field"><label>Hora</label>
+                <input type="time" value={form.hora} onChange={e => f("hora", e.target.value)}
+                  min={disponibilidad.horaInicio} max={disponibilidad.horaFin} />
+              </div>
+            </div>
+            <div className="field"><label>Titulo / Descripcion</label>
+              <input type="text" value={form.titulo} onChange={e => f("titulo", e.target.value)} placeholder="Ej: Reunion de onboarding" />
+            </div>
+            <div className="field"><label>Notas para el cliente (opcional)</label>
+              <textarea value={form.descripcion} onChange={e => f("descripcion", e.target.value)}
+                placeholder="Que debe tener a mano, donde sera, link de Meet..." style={{ minHeight: 60 }} />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginBottom: "1rem" }}>
+              <input type="checkbox" checked={form.tgRecordatorio} onChange={e => f("tgRecordatorio", e.target.checked)} style={{ width: 15, height: 15 }} />
+              Enviar confirmacion por Telegram al cliente
+            </label>
+            {client.tgConfig?.token && (
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.5 }}>
+                ✓ Telegram configurado · Se enviara: confirmacion inmediata + recordatorio 24h antes + 1h antes (via cron)
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={saveEvento}>Agendar</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>Cancelar</button>
+            </div>
+          </div>
+        )}
+
+        {/* LISTA DE EVENTOS */}
+        {eventos.length > 0 && (
+          <div className="card" style={{ marginTop: "1rem" }}>
+            <div className="card-title">Proximas citas</div>
+            {[...eventos].sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora)).filter(e => e.fecha >= hoy.toISOString().slice(0,10)).map(ev => {
+              const tipo = TIPO_AGENDA.find(t => t.id === ev.tipo);
+              return (
+                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span className={"cal-event " + (tipo?.cls || "")} style={{ padding: "2px 8px" }}>{tipo?.label}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>{ev.titulo}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{fmtDate(ev.fecha)} · {ev.hora}</div>
+                  </div>
+                  {!readOnly && <button className="btn btn-danger btn-sm" onClick={() => deleteEvento(ev.id)}>×</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── VISTA HERMES ADMIN ───────────────────────────────────────────────────────
+function HermesAdminView({ client, onUpdate }) {
+  const [subTab, setSubTab] = useState("dashboard");
+  const [period, setPeriod] = useState("all");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+
+  const subTabs = [["dashboard","✦ Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Calendario"],["fases","📋 Fases"]];
+
+  return (
+    <div>
+      {/* Barra de progreso siempre visible */}
+      <HermesProgressBar client={client} onUpdate={onUpdate} readOnly={false} />
+
+      <div className="tab-row" style={{ marginBottom: "1rem" }}>
+        {subTabs.map(([id, lbl]) => (
+          <button key={id} className={"tab " + (subTab === id ? "active" : "")} onClick={() => setSubTab(id)}>{lbl}</button>
+        ))}
+      </div>
+
+      {subTab === "dashboard" && (
+        <div>
+          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />
+          <HermesFunnel client={client} period={period} from={from} to={to} />
+        </div>
+      )}
+
+      {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={onUpdate} readOnly={false} />}
+      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={onUpdate} readOnly={false} />}
+
+      {subTab === "fases" && (
+        <div>
+          {HERMES_FASES.map(fase => {
+            const checklist = client.checklist || {};
+            const done = fase.tareas.filter(t => checklist[fase.id]?.[t]).length;
+            const [open, setOpen] = useState(false);
+            return (
+              <div key={fase.id} style={{ background: "var(--surface2)", borderRadius: 10, marginBottom: ".75rem", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
+                  <span style={{ fontSize: 16 }}>{fase.icono}</span>
+                  <div style={{ fontWeight: 600, flex: 1 }}>{fase.nombre}</div>
+                  <span style={{ fontSize: 11, color: "var(--muted)", background: "var(--bg)", padding: "2px 8px", borderRadius: 10 }}>Dias {fase.dias}</span>
+                  <span style={{ fontSize: 11, color: done === fase.tareas.length ? "var(--green)" : "var(--muted)" }}>{done}/{fase.tareas.length}</span>
+                  <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+                </div>
+                {open && (
+                  <div style={{ padding: "0 14px 12px" }}>
+                    {fase.tareas.map(tarea => {
+                      const checked = !!(checklist[fase.id]?.[tarea]);
+                      return (
+                        <div key={tarea} className={"check-item" + (checked ? " done" : "")}
+                          onClick={() => onUpdate({ ...client, checklist: { ...checklist, [fase.id]: { ...(checklist[fase.id]||{}), [tarea]: !checked } } })}>
+                          <input type="checkbox" checked={checked} readOnly />
+                          <span>{tarea}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
+function HermesClientView({ client }) {
+  const [subTab, setSubTab] = useState("dashboard");
+  const [period, setPeriod] = useState("all");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+
+  return (
+    <div>
+      <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />
+      <div className="tab-row" style={{ marginBottom: "1rem" }}>
+        {[["dashboard","✦ Dashboard"],["biblioteca","🎬 Contenido"],["calendario","📅 Agenda"]].map(([id, lbl]) => (
+          <button key={id} className={"tab " + (subTab === id ? "active" : "")} onClick={() => setSubTab(id)}>{lbl}</button>
+        ))}
+      </div>
+      {subTab === "dashboard" && (
+        <div>
+          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} />
+          <HermesFunnel client={client} period={period} from={from} to={to} />
+        </div>
+      )}
+      {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />}
+      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={() => {}} readOnly={true} />}
+    </div>
+  );
+}
+
 function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const hermes = client.hermesData || {};
   const biblioteca = hermes.biblioteca || [];
@@ -2287,8 +2643,8 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
     let list = [...biblioteca];
     if (filtroCategoria !== "todas") list = list.filter(p => p.categoria === filtroCategoria);
     list.sort((a, b) => {
-      let va = sortCol === "iv" ? calcIV(a) : (a[sortCol] || "");
-      let vb = sortCol === "iv" ? calcIV(b) : (b[sortCol] || "");
+      let va = sortCol === "iv" ? calcIV(a, biblioteca) : (a[sortCol] || "");
+      let vb = sortCol === "iv" ? calcIV(b, biblioteca) : (b[sortCol] || "");
       const na = parseFloat(va), nb = parseFloat(vb);
       const r = !isNaN(na) && !isNaN(nb) ? na - nb : String(va).localeCompare(String(vb));
       return sortDir === "asc" ? r : -r;
@@ -2322,7 +2678,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
     if (!list.length) return;
     const headers = ["Nombre", "Categoria", "Fecha", "Alcance", "Likes", "Comentarios", "Compartidos", "Guardados", "CTR%", "Ret.3s%", "Ret.50%", "Ret.Final%", "IV", "Clasificacion"];
     const rows = list.map(p => {
-      const iv = calcIV(p);
+      const iv = calcIV(p, biblioteca);
       return [p.nombre, p.categoria, p.fechaGrabacion, p.alcance_pza, p.likes, p.comentarios, p.compartidos, p.guardados, p.ctr_pza, p.retencion3s, p.retencion50, p.retencionFinal, iv, getIVLabel(iv)];
     });
     const sep = formato === "csv" ? "," : "\t";
@@ -2340,7 +2696,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   );
 
   const piezas = filtered();
-  const avgIV = piezas.length > 0 ? (piezas.reduce((a, p) => a + calcIV(p), 0) / piezas.length).toFixed(0) : 0;
+  const avgIV = piezas.length > 0 ? (piezas.reduce((a, p) => a + calcIV(p, biblioteca), 0) / piezas.length).toFixed(0) : 0;
 
   return (
     <>
@@ -2390,8 +2746,8 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
               <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "10px 14px", marginBottom: "1rem" }}>
                 <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Preview Indice de Validacion</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span className={"iv-badge " + getIVClass(calcIV(form))} style={{ fontSize: 16 }}>{calcIV(form)}</span>
-                  <span style={{ fontSize: 13, color: "var(--muted)" }}>{getIVLabel(calcIV(form))}</span>
+                  <span className={"iv-badge " + getIVClass(calcIV(form, biblioteca))} style={{ fontSize: 16 }}>{calcIV(form, biblioteca)}</span>
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>{getIVLabel(calcIV(form, biblioteca))}</span>
                 </div>
               </div>
             )}
@@ -2438,7 +2794,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
               </thead>
               <tbody>
                 {piezas.map(p => {
-                  const iv = calcIV(p);
+                  const iv = calcIV(p, biblioteca);
                   return (
                     <tr key={p.id}>
                       <td style={{ fontWeight: 500, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -3457,9 +3813,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "checklist", "cuentas", "contratos", "antecedentes", "proyecciones", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "checklist", "cuentas", "contratos", "antecedentes", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "proyecciones" ? "Proyecciones" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
@@ -3494,7 +3850,6 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
         {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
         {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
-        {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "metricas" && <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />}
         {tab === "reporte" && <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
@@ -3539,7 +3894,7 @@ function ClientDashboard({ client, onLogout, banners }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "hermes", "detalle", "proyecciones", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "detalle" ? "Detalle diario" : v === "proyecciones" ? "Proyecciones" : "Historico"}</div>)}
+          {["resumen", "hermes", "detalle", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "detalle" ? "Detalle diario" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -3599,7 +3954,6 @@ function ClientDashboard({ client, onLogout, banners }) {
               </div>
             </div>
           )}
-          {tab === "proyecciones" && <ProyeccionesPanel client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
         </div>
       </div>
