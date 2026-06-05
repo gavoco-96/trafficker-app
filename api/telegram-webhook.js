@@ -89,21 +89,49 @@ const DEFAULT_COMMANDS = [
 
 // ─── GENERADORES DE MENSAJES ──────────────────────────────────────────────────
 function buildInsightsMessage(row, label, clientName) {
-  if (!row) return `📊 *${label} — ${clientName}*\n\nSin datos disponibles para este período.`;
-  const leads = (row.actions || []).find(a => a.action_type === "lead")?.value || 0;
-  const compras = (row.actions || []).find(a => a.action_type === "purchase")?.value || 0;
-  const roas = row.purchase_roas?.[0]?.value || 0;
+  if (!row) return `📊 *${label} — ${clientName}*\n\nSin datos disponibles para este período.\n_Aggrega registros desde la app o sincroniza Facebook._`;
+
+  const spend = parseFloat(row.spend || row.inversion || 0);
+  const impressions = parseInt(row.impressions || row.impresiones || 0);
+  const reach = parseInt(row.reach || row.alcance || 0);
+  const clicks = parseInt(row.clicks || row.clics_enlace || 0);
+  const cpm = parseFloat(row.cpm || 0);
+  const cpc = parseFloat(row.cpc || 0);
+  const ctr = parseFloat(row.ctr || 0);
+  const leads = parseInt((row.actions || []).find(a => a.action_type === "lead")?.value || row.leads || row.formularios || 0);
+  const compras = parseInt((row.actions || []).find(a => a.action_type === "purchase")?.value || row.ventas || row.compras || 0);
+  const roas = parseFloat(row.purchase_roas?.[0]?.value || row.roas || 0);
+  const ingreso = parseFloat(row.ingreso || 0);
+  const resultados = parseInt(row.resultados || 0);
+  const cpa = resultados > 0 && spend > 0 ? spend / resultados : leads > 0 && spend > 0 ? spend / leads : 0;
 
   let msg = `📊 *${label} — ${clientName}*\n\n`;
-  msg += `💰 *Pauta*\n`;
-  msg += `Gasto: ${fmtMoney(row.spend)}\n`;
-  msg += `Alcance: ${parseInt(row.reach || 0).toLocaleString("es-EC")}\n`;
-  msg += `CPM: ${fmtMoney(row.cpm)} | CPC: ${fmtMoney(row.cpc)}\n`;
-  msg += `CTR: ${parseFloat(row.ctr || 0).toFixed(2)}%\n`;
-  msg += `Clics: ${parseInt(row.clicks || 0).toLocaleString("es-EC")}\n`;
-  if (leads > 0) msg += `\n🎯 Leads: ${leads}\n`;
-  if (compras > 0) msg += `\n🛒 Compras: ${compras}\n`;
-  if (roas > 0) msg += `ROAS: ${parseFloat(roas).toFixed(2)}x\n`;
+
+  if (spend > 0 || impressions > 0 || reach > 0) {
+    msg += `💰 *Pauta*\n`;
+    if (spend > 0) msg += `Gasto: ${fmtMoney(spend)}\n`;
+    if (reach > 0) msg += `Alcance: ${reach.toLocaleString("es-EC")}\n`;
+    if (impressions > 0) msg += `Impresiones: ${impressions.toLocaleString("es-EC")}\n`;
+    if (cpm > 0) msg += `CPM: ${fmtMoney(cpm)}\n`;
+    if (cpc > 0) msg += `CPC: ${fmtMoney(cpc)}\n`;
+    if (ctr > 0) msg += `CTR: ${ctr.toFixed(2)}%\n`;
+    if (clicks > 0) msg += `Clics: ${clicks.toLocaleString("es-EC")}\n`;
+  }
+
+  if (leads > 0 || resultados > 0) {
+    msg += `\n🎯 *Resultados*\n`;
+    if (leads > 0) msg += `Leads / Formularios: ${leads}\n`;
+    if (resultados > 0 && resultados !== leads) msg += `Resultados: ${resultados}\n`;
+    if (cpa > 0) msg += `CPA: ${fmtMoney(cpa)}\n`;
+  }
+
+  if (compras > 0 || ingreso > 0 || roas > 0) {
+    msg += `\n🛒 *Ventas*\n`;
+    if (compras > 0) msg += `Ventas / Compras: ${compras}\n`;
+    if (ingreso > 0) msg += `Ingresos: ${fmtMoney(ingreso)}\n`;
+    if (roas > 0) msg += `ROAS: ${roas.toFixed(2)}x\n`;
+  }
+
   msg += `\n_Trafficker Pro · ${new Date().toLocaleDateString("es-EC")}_`;
   return msg;
 }
@@ -323,43 +351,78 @@ export default async function handler(req, res) {
 
     if (text === "/reporte") {
       const today = new Date().toISOString().slice(0, 10);
-      if (!fbToken || !adAccountId) {
-        // Usar último registro local
-        const last = (client.records || []).slice(-1)[0];
-        respuesta = last ? buildInsightsMessage(last, "Reporte de hoy", client.name)
-          : `📊 Sin datos de hoy para ${client.name}.`;
-      } else {
-        const row = await getFbInsightsToday(fbToken, adAccountId);
-        respuesta = buildInsightsMessage(row, "Reporte de hoy", client.name);
+      let row = null;
+      // Intentar Facebook primero, fallback a datos locales
+      if (fbToken && adAccountId) {
+        row = await getFbInsightsToday(fbToken, adAccountId);
       }
+      if (!row) {
+        // Buscar registro de hoy en local, si no el más reciente
+        const records = client.records || [];
+        row = records.find(r => r.date === today) || records.slice(-1)[0] || null;
+        if (row) row = { ...row, spend: row.inversion, impressions: row.impresiones, reach: row.alcance, clicks: row.clics_enlace };
+      }
+      respuesta = buildInsightsMessage(row, "Reporte de hoy", client.name);
     }
 
     else if (text === "/ayer") {
       const ayer = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      if (!fbToken || !adAccountId) {
-        const rec = (client.records || []).find(r => r.date === ayer);
-        respuesta = rec ? buildInsightsMessage(rec, "Reporte de ayer", client.name)
-          : `📊 Sin datos del ${ayer}.`;
-      } else {
-        const row = await getFbInsightsRange(fbToken, adAccountId, ayer, ayer);
-        respuesta = buildInsightsMessage(row, "Reporte de ayer", client.name);
+      let row = null;
+      if (fbToken && adAccountId) {
+        row = await getFbInsightsRange(fbToken, adAccountId, ayer, ayer);
       }
+      if (!row) {
+        // Buscar en registros locales por fecha exacta, o el más cercano
+        const records = client.records || [];
+        const local = records.find(r => r.date === ayer) ||
+          records.filter(r => r.date <= ayer).slice(-1)[0] || null;
+        if (local) row = { ...local, spend: local.inversion, impressions: local.impresiones, reach: local.alcance, clicks: local.clics_enlace };
+      }
+      respuesta = buildInsightsMessage(row, `Reporte de ayer (${ayer})`, client.name);
     }
 
     else if (text === "/semana") {
       const hasta = new Date().toISOString().slice(0, 10);
       const desde = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-      if (!fbToken || !adAccountId) {
-        const recs = (client.records || []).filter(r => r.date >= desde && r.date <= hasta);
-        if (!recs.length) { respuesta = `📊 Sin datos de los últimos 7 días.`; }
-        else {
-          const total = { spend: recs.reduce((a,r) => a + (r.inversion||0), 0), impressions: recs.reduce((a,r) => a + (r.impresiones||0), 0), reach: Math.max(...recs.map(r => r.alcance||0)), clicks: recs.reduce((a,r) => a + (r.clics_enlace||0), 0) };
-          respuesta = buildInsightsMessage(total, "Resumen 7 días", client.name);
-        }
-      } else {
-        const row = await getFbInsightsRange(fbToken, adAccountId, desde, hasta);
-        respuesta = buildInsightsMessage(row, "Resumen 7 días", client.name);
+      let row = null;
+      if (fbToken && adAccountId) {
+        row = await getFbInsightsRange(fbToken, adAccountId, desde, hasta);
       }
+      if (!row) {
+        // Sumar registros locales del período
+        const recs = (client.records || []).filter(r => r.date >= desde && r.date <= hasta);
+        if (recs.length > 0) {
+          const inv = recs.reduce((a, r) => a + (r.inversion || 0), 0);
+          const leads = recs.reduce((a, r) => a + (r.leads || 0), 0);
+          const ventas = recs.reduce((a, r) => a + (r.ventas || 0), 0);
+          const formularios = recs.reduce((a, r) => a + (r.formularios || 0), 0);
+          const resultados = recs.reduce((a, r) => a + (r.resultados || 0), 0);
+          const ingreso = recs.reduce((a, r) => a + (r.ingreso || 0), 0);
+          const impresiones = recs.reduce((a, r) => a + (r.impresiones || 0), 0);
+          const alcance = recs.reduce((a, r) => a + (r.alcance || 0), 0);
+          const clics = recs.reduce((a, r) => a + (r.clics_enlace || 0), 0);
+          const cpm = inv > 0 && impresiones > 0 ? (inv / impresiones * 1000) : 0;
+          const cpc = inv > 0 && clics > 0 ? (inv / clics) : 0;
+          const ctr = impresiones > 0 && clics > 0 ? (clics / impresiones * 100) : 0;
+          const roas = inv > 0 && ingreso > 0 ? ingreso / inv : 0;
+          row = {
+            spend: inv, impressions: impresiones, reach: alcance,
+            cpm, cpc, ctr, clicks: clics,
+            actions: [
+              ...(leads > 0 ? [{ action_type: "lead", value: leads }] : []),
+              ...(ventas > 0 ? [{ action_type: "purchase", value: ventas }] : []),
+              ...(formularios > 0 && leads === 0 ? [{ action_type: "lead", value: formularios }] : []),
+              ...(resultados > 0 && leads === 0 && formularios === 0 ? [{ action_type: "lead", value: resultados }] : []),
+            ],
+            purchase_roas: roas > 0 ? [{ value: roas }] : [],
+            _diasConDatos: recs.length
+          };
+        }
+      }
+      const label = row?._diasConDatos
+        ? `Resumen 7 días (${row._diasConDatos} días con datos)`
+        : "Resumen 7 días";
+      respuesta = buildInsightsMessage(row, label, client.name);
     }
 
     else if (text === "/presupuesto") {
