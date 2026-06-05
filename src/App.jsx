@@ -2202,12 +2202,16 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
           <div className="card-title" style={{ margin: 0 }}>KPIs — Antes vs. Ahora</div>
           {!readOnly && (
-            editing
-              ? <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setLocal(kpis); setEditing(false); }}>Cancelar</button>
-                </div>
-              : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {!editing && <button className="btn btn-ghost btn-sm" onClick={() => {
+                const nuevo = { id: "kpi_" + Date.now(), nombre: "Nuevo KPI", unidad: "", historico: "", actual: "", meta: "" };
+                setLocal(p => [...p, nuevo]);
+                setEditing(true);
+              }}>+ KPI</button>}
+              {editing
+                ? <><button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button><button className="btn btn-ghost btn-sm" onClick={() => { setLocal(kpis); setEditing(false); }}>Cancelar</button></>
+                : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>}
+            </div>
           )}
         </div>
         <table className="kpi-compare-table" style={{ width: "100%" }}>
@@ -2529,6 +2533,38 @@ function CalendarioPanel({ client, onUpdate, readOnly }) {
 }
 
 // ─── VISTA HERMES ADMIN ───────────────────────────────────────────────────────
+// FaseItem — componente separado para evitar useState ilegal dentro de .map()
+function FaseItem({ fase, client, onUpdate }) {
+  const [open, setOpen] = useState(false);
+  const checklist = client.checklist || {};
+  const done = fase.tareas.filter(t => checklist[fase.id]?.[t]).length;
+  return (
+    <div style={{ background: "var(--surface2)", borderRadius: 10, marginBottom: ".75rem", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
+        <span style={{ fontSize: 16 }}>{fase.icono}</span>
+        <div style={{ fontWeight: 600, flex: 1 }}>{fase.nombre}</div>
+        <span style={{ fontSize: 11, color: "var(--muted)", background: "var(--bg)", padding: "2px 8px", borderRadius: 10 }}>Dias {fase.dias}</span>
+        <span style={{ fontSize: 11, color: done === fase.tareas.length ? "var(--green)" : "var(--muted)" }}>{done}/{fase.tareas.length}</span>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ padding: "0 14px 12px" }}>
+          {fase.tareas.map(tarea => {
+            const checked = !!(checklist[fase.id]?.[tarea]);
+            return (
+              <div key={tarea} className={"check-item" + (checked ? " done" : "")}
+                onClick={() => onUpdate({ ...client, checklist: { ...checklist, [fase.id]: { ...(checklist[fase.id]||{}), [tarea]: !checked } } })}>
+                <input type="checkbox" checked={checked} readOnly />
+                <span>{tarea}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HermesAdminView({ client, onUpdate }) {
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
@@ -2550,8 +2586,10 @@ function HermesAdminView({ client, onUpdate }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
-          <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />
-          <HermesFunnel client={client} period={period} from={from} to={to} />
+          <div className="grid2" style={{ alignItems: "start" }}>
+            <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />
+            <HermesFunnel client={client} period={period} from={from} to={to} />
+          </div>
         </div>
       )}
 
@@ -2560,36 +2598,9 @@ function HermesAdminView({ client, onUpdate }) {
 
       {subTab === "fases" && (
         <div>
-          {HERMES_FASES.map(fase => {
-            const checklist = client.checklist || {};
-            const done = fase.tareas.filter(t => checklist[fase.id]?.[t]).length;
-            const [open, setOpen] = useState(false);
-            return (
-              <div key={fase.id} style={{ background: "var(--surface2)", borderRadius: 10, marginBottom: ".75rem", overflow: "hidden" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
-                  <span style={{ fontSize: 16 }}>{fase.icono}</span>
-                  <div style={{ fontWeight: 600, flex: 1 }}>{fase.nombre}</div>
-                  <span style={{ fontSize: 11, color: "var(--muted)", background: "var(--bg)", padding: "2px 8px", borderRadius: 10 }}>Dias {fase.dias}</span>
-                  <span style={{ fontSize: 11, color: done === fase.tareas.length ? "var(--green)" : "var(--muted)" }}>{done}/{fase.tareas.length}</span>
-                  <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
-                </div>
-                {open && (
-                  <div style={{ padding: "0 14px 12px" }}>
-                    {fase.tareas.map(tarea => {
-                      const checked = !!(checklist[fase.id]?.[tarea]);
-                      return (
-                        <div key={tarea} className={"check-item" + (checked ? " done" : "")}
-                          onClick={() => onUpdate({ ...client, checklist: { ...checklist, [fase.id]: { ...(checklist[fase.id]||{}), [tarea]: !checked } } })}>
-                          <input type="checkbox" checked={checked} readOnly />
-                          <span>{tarea}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {HERMES_FASES.map(fase => (
+            <FaseItem key={fase.id} fase={fase} client={client} onUpdate={onUpdate} />
+          ))}
         </div>
       )}
     </div>
@@ -2613,8 +2624,45 @@ function HermesClientView({ client }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
-          <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} />
-          <HermesFunnel client={client} period={period} from={from} to={to} />
+          <div className="grid2" style={{ alignItems: "start" }}>
+            <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} />
+            <HermesFunnel client={client} period={period} from={from} to={to} />
+          </div>
+          {/* Datos diarios de campañas */}
+          {(client.records || []).length > 0 && (() => {
+            const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
+            const isWA = client.niche === "whatsapp";
+            const isWeb = client.niche === "web";
+            if (!rows.length) return null;
+            return (
+              <div className="card scroll-x" style={{ marginTop: "1rem" }}>
+                <div className="card-title">Metricas diarias de campañas</div>
+                <table className="tbl">
+                  <thead><tr>
+                    <th>Fecha</th><th>Inversion</th><th>Alcance</th><th>CPM</th><th>CPC</th><th>CTR</th>
+                    {isWA && <><th>Leads</th><th>Ventas</th><th>Ingresos</th></>}
+                    {isWeb && <><th>Sesiones</th><th>Compras</th><th>Ingresos</th></>}
+                    {!isWA && !isWeb && <><th>Potenciales</th><th>Formularios</th><th>Resultados</th></>}
+                  </tr></thead>
+                  <tbody>
+                    {rows.map((r,i) => (
+                      <tr key={i}>
+                        <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmtDate(r.date)}</td>
+                        <td>${fmtNum(r.inversion,2)}</td>
+                        <td>{fmtNum(r.alcance)}</td>
+                        <td>${fmtNum(r.cpm,2)}</td>
+                        <td>${fmtNum(r.cpc,2)}</td>
+                        <td>{fmtNum(r.ctr,2)}%</td>
+                        {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso,2)}</td></>}
+                        {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso,2)}</td></>}
+                        {!isWA && !isWeb && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td><td>{fmtNum(r.resultados)}</td></>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />}
@@ -3731,9 +3779,9 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "checklist", "cuentas", "contratos", "antecedentes", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "cuentas", "contratos", "antecedentes", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "checklist" ? "Checklist" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
@@ -3764,7 +3812,6 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
             </div>
           </div>
         )}
-        {tab === "checklist" && <ChecklistPanel client={client} onUpdate={handleUpdate} />}
         {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
         {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
@@ -3812,7 +3859,7 @@ function ClientDashboard({ client, onLogout, banners }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "hermes", "detalle", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "detalle" ? "Detalle diario" : "Historico"}</div>)}
+          {["resumen", "hermes", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -3847,31 +3894,6 @@ function ClientDashboard({ client, onLogout, banners }) {
             </div></>}
             {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
           </>}
-          {tab === "detalle" && (
-            <div>
-              <ColumnSelector cols={clientCols} onToggle={clientToggle} />
-              <div className="card scroll-x">
-                <table className="tbl">
-                  <thead><tr>{visClient.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
-                  <tbody>
-                    {rows.length === 0 && <tr><td colSpan={visClient.length} style={{ color: "var(--muted)", textAlign: "center", padding: "2rem" }}>Sin datos.</td></tr>}
-                    {rows.map((r, i) => (
-                      <tr key={i}>
-                        {visClient.map(c => {
-                          if (c.key === "date") return <td key="date" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmtDate(r.date)}</td>;
-                          const v = r[c.key];
-                          if (v === undefined || v === null || v === "") return <td key={c.key}>—</td>;
-                          const n = parseFloat(v); if (isNaN(n)) return <td key={c.key}>{v}</td>;
-                          const fmt2 = fmtNum(n, 2);
-                          return <td key={c.key}>{c.prefix ? c.prefix + fmt2 : c.suffix ? fmt2 + c.suffix : fmtNum(n, 0)}</td>;
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
           {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
         </div>
       </div>
