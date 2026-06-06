@@ -2231,8 +2231,17 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
               return (
                 <tr key={kpi.id}>
                   <td>
-                    <div style={{ fontWeight: 600 }}>{kpi.nombre}</div>
-                    <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.unidad}</div>
+                    {editing ? (
+                      <div>
+                        <input type="text" value={kpi.nombre} onChange={e => upd(kpi.id, "nombre", e.target.value)} style={{ marginBottom: 4, fontWeight: 600 }} placeholder="Nombre del KPI" />
+                        <input type="text" value={kpi.unidad} onChange={e => upd(kpi.id, "unidad", e.target.value)} style={{ fontSize: 11 }} placeholder="Unidad (%, $, ventas...)" />
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{kpi.nombre}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.unidad}</div>
+                      </div>
+                    )}
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>
                     {editing
@@ -2249,11 +2258,10 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
                       : kpi.meta || "—"}
                   </td>
                   <td>
-                    {delta
-                      ? <span className={delta.up ? "delta-up" : "delta-down"}>
-                          {delta.up ? "▲" : "▼"} {Math.abs(delta.delta)}%
-                        </span>
-                      : <span className="delta-neutral">—</span>}
+                    {editing && <button className="btn btn-danger btn-sm" style={{ padding: "2px 8px" }} onClick={() => setLocal(p => p.filter(k => k.id !== kpi.id))}>×</button>}
+                    {!editing && (delta
+                      ? <span className={delta.up ? "delta-up" : "delta-down"}>{delta.up ? "▲" : "▼"} {Math.abs(delta.delta)}%</span>
+                      : <span className="delta-neutral">—</span>)}
                   </td>
                 </tr>
               );
@@ -3788,7 +3796,7 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
         {tab === "hermes" && <HermesAdminView client={client} onUpdate={handleUpdate} />}
         {tab === "info" && (
           <div>
-            <ProgressBar client={client} />
+            <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
             <div className="card">
               <div className="card-title">Información del cliente</div>
               <div className="grid2">
@@ -3869,7 +3877,8 @@ function ClientDashboard({ client, onLogout, banners }) {
       <div className="main">
         <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
         <div className="content">
-          {tab !== "hermes" && <ProgressBar client={client} />}
+          {/* Carroza hacia el Olimpo visible en todas las tabs */}
+          <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />
           {tab === "hermes" && <HermesClientView client={client} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
