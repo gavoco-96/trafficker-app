@@ -2078,26 +2078,30 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
 
   async function toggleMomento(id) {
     if (readOnly) return;
-    const newMomentos = { ...momentos, [id]: !momentos[id] };
-    const updated = { ...client, hermesData: { ...hermes, momentos: newMomentos } };
-    await onUpdate(updated);
-    const wow = HERMES_MOMENTOS_WOW.find(m => m.id === id);
-    if (wow && newMomentos[id]) {
-      show("✦ Momento WOW enviado: " + wow.label, "ok");
-      // Enviar notificacion a Telegram si esta configurado
+    const ya = !!momentos[id];
+    if (!ya) {
+      // Marcar como enviado CON editor de mensaje
+      const wow = HERMES_MOMENTOS_WOW.find(m => m.id === id);
+      const def = wow ? ("✦ " + wow.label + " — " + client.name + "\n\n" + wow.descripcion + "\n\n" + wow.contenido + "\n\nGavico Agency") : "";
+      const editado = window.prompt("Editar mensaje del " + (wow?.label || "WOW") + " antes de enviar:", def);
+      if (editado === null) return; // canceló
+      const newMomentos = { ...momentos, [id]: true };
+      await onUpdate({ ...client, hermesData: { ...hermes, momentos: newMomentos } });
+      show("✦ " + (wow?.label || "WOW") + " marcado", "ok");
       if (client.tgConfig?.token && client.tgConfig?.chatId) {
         try {
-          await fetch(`https://api.telegram.org/bot${client.tgConfig.token}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: client.tgConfig.chatId,
-              text: `✨ *${wow.label} — ${client.name}*\n\n${wow.descripcion}\n\n${wow.contenido}\n\n_Tu equipo de Gavico Agency_`,
-              parse_mode: "Markdown"
-            })
+          const res = await fetch("https://api.telegram.org/bot" + client.tgConfig.token + "/sendMessage", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: client.tgConfig.chatId, text: editado })
           });
-        } catch {}
+          const d = await res.json();
+          if (d.ok) show("✦ Mensaje enviado por Telegram", "ok");
+          else show("Telegram error: " + d.description, "err");
+        } catch (e) { show("Error enviando: " + e.message, "err"); }
       }
+    } else {
+      // Desmarcar
+      await onUpdate({ ...client, hermesData: { ...hermes, momentos: { ...momentos, [id]: false } } });
     }
   }
 
@@ -2277,51 +2281,83 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
 function HermesFunnel({ client, period, from, to }) {
   const records = filterByPeriod(client.records || [], period, from, to);
   const biblioteca = client.hermesData?.biblioteca || [];
-
-  const alcance     = records.reduce((a, r) => a + (r.alcance || 0), 0);
-  const likes       = records.reduce((a, r) => a + (r.likes || 0), 0);
+  const alcance = records.reduce((a, r) => a + (r.alcance || 0), 0);
+  const likes = records.reduce((a, r) => a + (r.likes || 0), 0);
   const comentarios = records.reduce((a, r) => a + (r.comentarios || 0), 0);
   const compartidos = records.reduce((a, r) => a + (r.compartidos || 0), 0);
-  const guardados   = records.reduce((a, r) => a + (r.guardados || 0), 0);
+  const guardados = records.reduce((a, r) => a + (r.guardados || 0), 0);
   const interacciones = likes + comentarios + compartidos + guardados;
-  const interesPct    = alcance > 0 ? (interacciones / alcance * 100) : 0;
-  const validacion    = biblioteca.length > 0
-    ? biblioteca.reduce((a, p) => a + calcIV(p, biblioteca), 0) / biblioteca.length : 0;
-  const conversion    = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
-  const resultado     = records.reduce((a, r) => a + (r.ventas || 0), 0);
+  const interesPct = alcance > 0 ? (interacciones / alcance * 100) : 0;
+  const validacion = biblioteca.length > 0 ? biblioteca.reduce((a, p) => a + calcIV(p, biblioteca), 0) / biblioteca.length : 0;
+  const conversion = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+  const resultado = records.reduce((a, r) => a + (r.ventas || 0), 0);
 
+  // Tamaños FIJOS — solo los números cambian
   const stages = [
-    { label: "Atraccion",  sub: "Personas que nos ven",      val: alcance,       display: alcance > 0 ? alcance.toLocaleString("es-EC") : "—",                color: "#004AAD", pctW: 100 },
-    { label: "Interes",    sub: "Tasa de interaccion",        val: interesPct,    display: alcance > 0 ? interesPct.toFixed(1) + "%" : "—",                    color: "#0057cc", pctW: alcance > 0 ? Math.max(interesPct * 4, 10) : 50 },
-    { label: "Validacion", sub: "Indice de contenido",        val: validacion,    display: biblioteca.length > 0 ? validacion.toFixed(0) + " / 100" : "—",    color: "#FFDE59", pctW: validacion > 0 ? Math.max(validacion, 10) : 40 },
-    { label: "Conversion", sub: "Leads / Registros",          val: conversion,    display: conversion > 0 ? conversion.toLocaleString("es-EC") : "—",          color: "#FF914D", pctW: alcance > 0 && conversion > 0 ? Math.max(conversion/alcance*2000, 8) : 30 },
-    { label: "Resultado",  sub: "Ventas cerradas",             val: resultado,     display: resultado > 0 ? resultado.toLocaleString("es-EC") : "—",            color: "#10B981", pctW: conversion > 0 && resultado > 0 ? Math.max(resultado/conversion*100, 6) : 20 },
+    { label: "Atraccion",  sub: "Alcance total",         display: alcance > 0 ? alcance.toLocaleString("es-EC") : "—",              color: "#e84040", topW: 280, botW: 220, h: 54 },
+    { label: "Interes",    sub: "Tasa interaccion",       display: alcance > 0 ? interesPct.toFixed(1) + "%" : "—",                  color: "#e86020", topW: 220, botW: 168, h: 46 },
+    { label: "Validacion", sub: "IV promedio",            display: biblioteca.length > 0 ? validacion.toFixed(0) + "/100" : "—",     color: "#FFDE59", topW: 168, botW: 120, h: 40 },
+    { label: "Conversion", sub: "Leads / Registros",      display: conversion > 0 ? conversion.toLocaleString("es-EC") : "—",        color: "#c8a800", topW: 120, botW: 80,  h: 34 },
+    { label: "Resultado",  sub: "Ventas cerradas",         display: resultado > 0 ? resultado.toLocaleString("es-EC") : "—",          color: "#10B981", topW: 80,  botW: 56,  h: 28 },
   ];
+
+  const svgW = 300;
+  const gap = 2;
+  const totalH = stages.reduce((a, s) => a + s.h + gap, 0);
+  const cx = svgW / 2;
 
   return (
     <div className="card">
-      <div className="card-title">Embudo de estrategia</div>
-      <div className="funnel-container">
-        {stages.map((s, i) => {
-          const prevVal = i > 0 ? stages[i-1].val : 0;
-          const convPct = i > 0 && prevVal > 0 && s.val > 0
-            ? (s.val / prevVal * 100).toFixed(1) + "%" : null;
-          const w = Math.max(Math.min(s.pctW, 100), 6);
-          return (
-            <div key={s.label} className="funnel-level">
-              <div className="funnel-label-row" style={{ width: w + "%" }}>
-                <span className="funnel-stage-label">{s.label}</span>
-                <span className="funnel-stage-val" style={{ color: s.color }}>{s.display}</span>
+      <div className="card-title">Embudo de estrategia HERMES</div>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <svg width={svgW} height={totalH} viewBox={"0 0 " + svgW + " " + totalH} style={{ flexShrink: 0, display: "block" }}>
+          <defs>
+            {stages.map((s, i) => (
+              <linearGradient key={i} id={"fg" + i} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={s.color} stopOpacity="1" />
+                <stop offset="100%" stopColor={s.color} stopOpacity="0.65" />
+              </linearGradient>
+            ))}
+          </defs>
+          {stages.map((s, i) => {
+            const y = stages.slice(0, i).reduce((a, p) => a + p.h + gap, 0);
+            const tl = cx - s.topW / 2;
+            const tr = cx + s.topW / 2;
+            const bl = cx - s.botW / 2;
+            const br = cx + s.botW / 2;
+            const ey = s.h * 0.18; // profundidad elipse superior
+            return (
+              <g key={i}>
+                {/* Cuerpo trapezoidal */}
+                <path d={"M " + tl + " " + (y + ey) + " L " + bl + " " + (y + s.h - ey * 0.5) + " L " + br + " " + (y + s.h - ey * 0.5) + " L " + tr + " " + (y + ey) + " Z"}
+                  fill={"url(#fg" + i + ")"} />
+                {/* Elipse inferior (sombra interior) */}
+                <ellipse cx={cx} cy={y + s.h - ey * 0.5} rx={s.botW / 2} ry={ey * 0.6}
+                  fill={s.color} fillOpacity="0.5" />
+                {/* Elipse superior (borde) */}
+                <ellipse cx={cx} cy={y + ey} rx={s.topW / 2} ry={ey}
+                  fill={s.color} fillOpacity="0.25" stroke={s.color} strokeWidth="1.5" strokeOpacity="0.8" />
+                {/* Texto valor */}
+                <text x={cx} y={y + s.h * 0.55} textAnchor="middle" dominantBaseline="middle"
+                  fill="#fff" fontSize={Math.max(s.h * 0.3, 10)} fontWeight="800" fontFamily="var(--mono)">
+                  {s.display}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+        {/* Leyenda lateral */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 4 }}>
+          {stages.map((s, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: (stages[i].h + gap) + "px" }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color, boxShadow: "0 0 6px " + s.color, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 12, color: s.color }}>{s.label}</div>
+                <div style={{ fontSize: 10, color: "var(--muted)" }}>{s.sub}</div>
               </div>
-              <div className="funnel-shape"
-                style={{ width: w + "%", height: 36, background: s.color + "33", border: "1px solid " + s.color + "66" }}>
-                <span style={{ fontSize: 10, color: s.color, opacity: .7 }}>{s.sub}</span>
-                {convPct && <span className="funnel-conv-badge">{convPct}</span>}
-              </div>
-              {i < stages.length - 1 && <div className="funnel-connector" />}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2334,7 +2370,32 @@ const TIPO_AGENDA = [
   { id: "metricas",   label: "Rev. Metricas",       cls: "cal-event-metricas"  },
 ];
 
-function CalendarioPanel({ client, onUpdate, readOnly }) {
+// Obtener todos los eventos de todos los clientes para bloquear horas ocupadas
+function getHorasOcupadas(allClients, fecha, excludeClientId) {
+  const ocupadas = [];
+  (allClients || []).forEach(c => {
+    if (c.id === excludeClientId) return;
+    const agenda = c.hermesData?.agenda || [];
+    agenda.filter(e => e.fecha === fecha).forEach(e => ocupadas.push(e.hora));
+  });
+  return ocupadas;
+}
+
+// Generar slots de tiempo disponibles
+function generarSlots(horaInicio, horaFin, horasOcupadas) {
+  const slots = [];
+  const [hI, mI] = horaInicio.split(":").map(Number);
+  const [hF, mF] = horaFin.split(":").map(Number);
+  let h = hI, m = mI;
+  while (h < hF || (h === hF && m < mF)) {
+    const slot = String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+    slots.push({ hora: slot, ocupada: horasOcupadas.includes(slot) });
+    m += 60; if (m >= 60) { h += m / 60 | 0; m = m % 60; }
+  }
+  return slots;
+}
+
+function CalendarioPanel({ client, onUpdate, readOnly, allClients }) {
   const hermes = client.hermesData || {};
   const eventos = hermes.agenda || [];
   const disponibilidad = hermes.disponibilidad || { dias: [1,2,3,4,5], horaInicio: "09:00", horaFin: "18:00" };
@@ -2458,9 +2519,11 @@ function CalendarioPanel({ client, onUpdate, readOnly }) {
               const esHoy = d === hoy.getDate() && mes.getMonth() === hoy.getMonth() && mes.getFullYear() === hoy.getFullYear();
               const disponible = isDayAvailable(d);
               const evs = getEventosDelDia(d);
+              // Para el cliente: puede agendar en días disponibles
+              const puedeAgendar = disponible;
               return (
                 <div key={d} className={"cal-cell " + (esHoy ? "today " : "") + (disponible ? "available " : "")}
-                  onClick={() => { if (!readOnly && disponible) { setSelectedDate(fechaStr); setShowForm(true); } }}>
+                  onClick={() => { if (puedeAgendar) { setSelectedDate(fechaStr); setShowForm(true); } }}>
                   <div className={"cal-day " + (esHoy ? "today-num" : "")}>{d}</div>
                   {evs.map(ev => {
                     const tipo = TIPO_AGENDA.find(t => t.id === ev.tipo);
@@ -2478,41 +2541,76 @@ function CalendarioPanel({ client, onUpdate, readOnly }) {
           </div>
         </div>
 
-        {/* FORM NUEVO EVENTO */}
-        {showForm && !readOnly && (
+        {/* FORM NUEVO EVENTO - para admin Y cliente */}
+        {showForm && (
           <div className="card" style={{ marginTop: "1rem", borderColor: "rgba(0,74,173,.4)" }}>
-            <div className="card-title">Nueva cita — {selectedDate}</div>
-            <div className="form-row">
-              <div className="field"><label>Tipo</label>
-                <select value={form.tipo} onChange={e => f("tipo", e.target.value)}>
-                  {TIPO_AGENDA.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-                </select>
-              </div>
-              <div className="field"><label>Hora</label>
-                <input type="time" value={form.hora} onChange={e => f("hora", e.target.value)}
-                  min={disponibilidad.horaInicio} max={disponibilidad.horaFin} />
-              </div>
-            </div>
-            <div className="field"><label>Titulo / Descripcion</label>
-              <input type="text" value={form.titulo} onChange={e => f("titulo", e.target.value)} placeholder="Ej: Reunion de onboarding" />
-            </div>
-            <div className="field"><label>Notas para el cliente (opcional)</label>
-              <textarea value={form.descripcion} onChange={e => f("descripcion", e.target.value)}
-                placeholder="Que debe tener a mano, donde sera, link de Meet..." style={{ minHeight: 60 }} />
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginBottom: "1rem" }}>
-              <input type="checkbox" checked={form.tgRecordatorio} onChange={e => f("tgRecordatorio", e.target.checked)} style={{ width: 15, height: 15 }} />
-              Enviar confirmacion por Telegram al cliente
-            </label>
-            {client.tgConfig?.token && (
-              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.5 }}>
-                ✓ Telegram configurado · Se enviara: confirmacion inmediata + recordatorio 24h antes + 1h antes (via cron)
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={saveEvento}>Agendar</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>Cancelar</button>
-            </div>
+            <div className="card-title">{readOnly ? "Solicitar cita" : "Nueva cita"} — {selectedDate}</div>
+            {(() => {
+              const horasOcupadas = getHorasOcupadas(allClients, selectedDate, client.id);
+              const slots = generarSlots(disponibilidad.horaInicio, disponibilidad.horaFin, horasOcupadas);
+              return (
+                <div>
+                  {readOnly ? (
+                    // VISTA CLIENTE: selector visual de horarios
+                    <div className="field" style={{ marginBottom: "1rem" }}>
+                      <label>Selecciona un horario disponible</label>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                        {slots.map(s => (
+                          <button key={s.hora}
+                            className={"btn " + (s.ocupada ? "btn-danger" : form.hora === s.hora ? "btn-primary" : "btn-ghost") + " btn-sm"}
+                            disabled={s.ocupada}
+                            style={{ opacity: s.ocupada ? 0.5 : 1, cursor: s.ocupada ? "not-allowed" : "pointer" }}
+                            onClick={() => f("hora", s.hora)}>
+                            {s.ocupada ? "🔴 " : form.hora === s.hora ? "✓ " : ""}{s.hora}
+                          </button>
+                        ))}
+                      </div>
+                      {slots.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>No hay horarios disponibles para este dia.</div>}
+                    </div>
+                  ) : (
+                    // VISTA ADMIN: input de hora libre
+                    <div className="form-row">
+                      <div className="field"><label>Tipo</label>
+                        <select value={form.tipo} onChange={e => f("tipo", e.target.value)}>
+                          {TIPO_AGENDA.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="field"><label>Hora</label>
+                        <input type="time" value={form.hora} onChange={e => f("hora", e.target.value)}
+                          min={disponibilidad.horaInicio} max={disponibilidad.horaFin} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="field"><label>{readOnly ? "Motivo de la reunion" : "Titulo / Descripcion"}</label>
+                    <input type="text" value={form.titulo} onChange={e => f("titulo", e.target.value)}
+                      placeholder={readOnly ? "Ej: Reunion de seguimiento" : "Ej: Reunion de onboarding"} />
+                  </div>
+                  {!readOnly && (
+                    <>
+                      <div className="field"><label>Notas para el cliente (opcional)</label>
+                        <textarea value={form.descripcion} onChange={e => f("descripcion", e.target.value)}
+                          placeholder="Que debe tener a mano, donde sera, link de Meet..." style={{ minHeight: 60 }} />
+                      </div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", marginBottom: "1rem" }}>
+                        <input type="checkbox" checked={form.tgRecordatorio} onChange={e => f("tgRecordatorio", e.target.checked)} style={{ width: 15, height: 15 }} />
+                        Enviar confirmacion por Telegram al cliente
+                      </label>
+                    </>
+                  )}
+                  {readOnly && (
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", background: "var(--surface2)", padding: "8px 12px", borderRadius: 8 }}>
+                      📲 Se enviara confirmacion por Telegram cuando tu solicitud sea procesada.
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn btn-primary btn-sm" disabled={!form.hora || !form.titulo} onClick={saveEvento}>
+                      {readOnly ? "Solicitar cita" : "Agendar"}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>Cancelar</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2573,7 +2671,7 @@ function FaseItem({ fase, client, onUpdate }) {
   );
 }
 
-function HermesAdminView({ client, onUpdate }) {
+function HermesAdminView({ client, allClients, onUpdate }) {
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -2602,7 +2700,7 @@ function HermesAdminView({ client, onUpdate }) {
       )}
 
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={onUpdate} readOnly={false} />}
-      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={onUpdate} readOnly={false} />}
+      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={onUpdate} readOnly={false} allClients={allClients} />}
 
       {subTab === "fases" && (
         <div>
@@ -2616,7 +2714,7 @@ function HermesAdminView({ client, onUpdate }) {
 }
 
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
-function HermesClientView({ client }) {
+function HermesClientView({ client, allClients }) {
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -2674,7 +2772,7 @@ function HermesClientView({ client }) {
         </div>
       )}
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />}
-      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={() => {}} readOnly={true} />}
+      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={() => {}} readOnly={true} allClients={allClients} />}
     </div>
   );
 }
@@ -3751,7 +3849,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
 }
 
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
-function AdminClientDetail({ client, onBack, onUpdate }) {
+function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
   const [tab, setTab] = useState("info");
   const [adding, setAdding] = useState(false);
   const [period, setPeriod] = useState("all");
@@ -3793,7 +3891,7 @@ function AdminClientDetail({ client, onBack, onUpdate }) {
             </button>
           ))}
         </div>
-        {tab === "hermes" && <HermesAdminView client={client} onUpdate={handleUpdate} />}
+        {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
@@ -3877,9 +3975,9 @@ function ClientDashboard({ client, onLogout, banners }) {
       <div className="main">
         <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
         <div className="content">
-          {/* Carroza hacia el Olimpo visible en todas las tabs */}
-          <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />
-          {tab === "hermes" && <HermesClientView client={client} />}
+          {/* Carroza visible en todas las tabs EXCEPTO hermes (que ya la tiene dentro) */}
+          {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
+          {tab === "hermes" && <HermesClientView client={client} allClients={[]} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
@@ -4090,6 +4188,81 @@ function CampanasPanel({ clients }) {
   );
 }
 
+
+
+// ─── AGENDA CONSOLIDADA ADMIN ────────────────────────────────────────────────
+function AgendaConsolidadaPanel({ clients }) {
+  const [filtro, setFiltro] = useState("proximas"); // proximas | todas
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // Recopilar todos los eventos de todos los clientes
+  const todos = [];
+  (clients || []).forEach(c => {
+    const agenda = c.hermesData?.agenda || [];
+    agenda.forEach(e => todos.push({ ...e, clientName: c.name, clientColor: c.color, clientId: c.id }));
+  });
+
+  const filtrados = todos
+    .filter(e => filtro === "proximas" ? e.fecha >= hoy : true)
+    .filter(e => filtroTipo === "todos" ? true : e.tipo === filtroTipo)
+    .sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+
+  return (
+    <div>
+      <div className="sec-header">
+        <div>
+          <div className="sec-title">Agenda consolidada</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Todas las citas de todos los clientes</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: "1rem", flexWrap: "wrap" }}>
+        <div className="period-pills">
+          <button className={"pill " + (filtro === "proximas" ? "active" : "")} onClick={() => setFiltro("proximas")}>Proximas</button>
+          <button className={"pill " + (filtro === "todas" ? "active" : "")} onClick={() => setFiltro("todas")}>Todas</button>
+        </div>
+        <div className="period-pills">
+          <button className={"pill " + (filtroTipo === "todos" ? "active" : "")} onClick={() => setFiltroTipo("todos")}>Todos</button>
+          {TIPO_AGENDA.map(t => (
+            <button key={t.id} className={"pill " + (filtroTipo === t.id ? "active" : "")} onClick={() => setFiltroTipo(t.id)}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {filtrados.length === 0 && (
+        <div className="empty"><div style={{ fontSize: 28, opacity: .3, marginBottom: 8 }}>📅</div><div>Sin citas {filtro === "proximas" ? "proximas" : "registradas"}.</div></div>
+      )}
+
+      {filtrados.map((e, i) => {
+        const tipo = TIPO_AGENDA.find(t => t.id === e.tipo);
+        const esPasada = e.fecha < hoy;
+        return (
+          <div key={e.id || i} className="card" style={{ marginBottom: ".75rem", opacity: esPasada ? 0.6 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: (e.clientColor || "#004AAD") + "22", color: e.clientColor || "#004AAD", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>
+                {e.clientName?.slice(0, 2).toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{e.titulo}</span>
+                  <span className={"cal-event " + (tipo?.cls || "")} style={{ fontSize: 10, padding: "1px 6px" }}>{tipo?.label}</span>
+                  {esPasada && <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--surface2)", padding: "1px 6px", borderRadius: 8 }}>Pasada</span>}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  <span style={{ color: e.clientColor || "var(--accent)" }}>{e.clientName}</span>
+                  <span style={{ margin: "0 6px" }}>·</span>
+                  {fmtDate(e.fecha)} a las {e.hora}
+                  {e.descripcion && <span style={{ marginLeft: 8, color: "var(--muted)", fontStyle: "italic" }}>— {e.descripcion}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ─── NOTIFICACIONES ───────────────────────────────────────────────────────────
 function getNotificaciones(clients) {
@@ -4618,7 +4791,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "salud", "agenda", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -4639,7 +4812,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
     );
   }
 
-  if (selectedId && selected) return <><div className="app"><Sidebar /><AdminClientDetail client={selected} onBack={() => setSelectedId(null)} onUpdate={onUpdate} /></div>{renderModal()}{toastEl}</>;
+  if (selectedId && selected) return <><div className="app"><Sidebar /><AdminClientDetail client={selected} allClients={clients} onBack={() => setSelectedId(null)} onUpdate={onUpdate} /></div>{renderModal()}{toastEl}</>;
   if (addingClient) return (
     <>
       <div className="app"><Sidebar /><div className="main"><div className="topbar"><div className="topbar-title">Clientes</div></div><div className="content" /></div></div>
@@ -4657,7 +4830,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : "Comandos del Bot"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
@@ -4700,6 +4873,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
               </div>
             </div>}
             {view === "salud" && <HealthDashboard clients={clients} />}
+            {view === "agenda" && <AgendaConsolidadaPanel clients={clients} />}
             {view === "banner" && (
               <BannerAdmin clients={clients} banners={banners} onSave={onSaveBanners} />
             )}
