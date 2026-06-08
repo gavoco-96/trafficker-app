@@ -3518,6 +3518,62 @@ function FacebookPanel({ client, onUpdate }) {
   );
 }
 
+
+// ─── DETECTAR CHAT ID AUTOMATICAMENTE ────────────────────────────────────────
+async function detectarChatId(token) {
+  if (!token || token.length < 20) return { ok: false, error: "Token invalido o muy corto" };
+  try {
+    // 1. Intentar deleteWebhook para liberar getUpdates
+    await fetch("https://api.telegram.org/bot" + token + "/deleteWebhook");
+
+    // 2. Consultar getUpdates
+    const r = await fetch("https://api.telegram.org/bot" + token + "/getUpdates?limit=20&offset=-20");
+    const data = await r.json();
+
+    if (!data.ok) {
+      // Si sigue fallando, intentar getWebhookInfo como fallback
+      return { ok: false, error: "Error de Telegram: " + (data.description || "desconocido") };
+    }
+
+    if (!data.result || data.result.length === 0) {
+      return { ok: false, error: "No hay mensajes recientes. Pide al cliente que escriba /start al bot primero." };
+    }
+
+    // Extraer todos los chats únicos
+    const chats = [];
+    const seen = new Set();
+    data.result.forEach(upd => {
+      const msg = upd.message || upd.edited_message || upd.callback_query?.message;
+      if (msg?.chat?.id && !seen.has(msg.chat.id)) {
+        seen.add(msg.chat.id);
+        chats.push({
+          id: String(msg.chat.id),
+          nombre: [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(" ") || msg.chat.username || "Sin nombre",
+          username: msg.chat.username || "",
+          tipo: msg.chat.type
+        });
+      }
+    });
+
+    if (chats.length === 0) return { ok: false, error: "No se encontraron chats. Pide al cliente que escriba /start." };
+
+    return { ok: true, chats };
+
+  } catch (e) {
+    return { ok: false, error: "Error de conexion: " + e.message };
+  } finally {
+    // 3. Reactivar webhook automáticamente
+    try {
+      const webhookUrl = window.location.origin + "/api/telegram-webhook";
+      await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: webhookUrl })
+      });
+    } catch {}
+  }
+}
+
 // ─── TELEGRAM INTEGRATION ────────────────────────────────────────────────────
 // Para activar: crear bot en @BotFather en Telegram, obtener token
 // El cliente debe iniciar conversacion con el bot una vez para obtener chat_id
@@ -3627,7 +3683,27 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     if (tgConfig?.plantillas) setPlantillas(tgConfig.plantillas);
   }, [client.id]);
 
-  const [editingMensaje, setEditingMensaje] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [chatsEncontrados, setChatsEncontrados] = useState([]);
+
+  async function handleDetectarChatId() {
+    if (!token) return show("Ingresa el Bot Token primero", "err");
+    setDetecting(true);
+    setChatsEncontrados([]);
+    const result = await detectarChatId(token);
+    if (result.ok) {
+      if (result.chats.length === 1) {
+        setChatId(result.chats[0].id);
+        show("✓ Chat ID detectado: " + result.chats[0].id + " (" + result.chats[0].nombre + ")", "ok");
+      } else {
+        setChatsEncontrados(result.chats);
+        show("Se encontraron " + result.chats.length + " chats — selecciona el correcto", "ok");
+      }
+    } else {
+      show("No se pudo detectar: " + result.error, "err");
+    }
+    setDetecting(false);
+  }
   const [mensajeEditado, setMensajeEditado] = useState("");
 
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
@@ -3689,20 +3765,62 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
           <b style={{ color: "var(--text)" }}>Configuracion (una sola vez):</b><br/>
           1. Busca <b>@BotFather</b> en Telegram, escribe /newbot, copia el Token<br/>
-          2. El cliente busca tu bot y le da /start<br/>
-          3. Visita api.telegram.org/bot[TOKEN]/getUpdates para obtener el Chat ID
+          2. El cliente busca tu bot y le da <b>/start</b><br/>
+          3. Clic en <b>"Detectar Chat ID"</b> — lo encuentra automaticamente ✓
         </div>
 
         <div className="form-row">
           <div className="field">
             <label>Bot Token</label>
-            <input type="text" value={token} onChange={e => setToken(e.target.value)} placeholder="1234567890:ABCdef..." />
+            <input type="text" value={token} onChange={e => { setToken(e.target.value); setChatsEncontrados([]); }} placeholder="1234567890:ABCdef..." />
           </div>
           <div className="field">
             <label>Chat ID del destinatario</label>
-            <input type="text" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="Ej: 123456789" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="text" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="Ej: 123456789" style={{ flex: 1 }} />
+              <button className="btn btn-primary btn-sm" disabled={detecting || !token}
+                onClick={handleDetectarChatId}
+                style={{ whiteSpace: "nowrap", background: "var(--accent)" }}
+                title="Detecta el Chat ID automaticamente">
+                {detecting ? "⏳" : "🔍 Detectar"}
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Selector cuando hay múltiples chats */}
+        {chatsEncontrados.length > 1 && (
+          <div style={{ background: "var(--surface2)", borderRadius: 10, padding: 12, marginBottom: "1rem" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent2)", marginBottom: 8 }}>
+              Se encontraron {chatsEncontrados.length} conversaciones — selecciona la del cliente:
+            </div>
+            {chatsEncontrados.map(c => (
+              <div key={c.id}
+                onClick={() => { setChatId(c.id); setChatsEncontrados([]); show("✓ Chat ID seleccionado: " + c.id, "ok"); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 4, background: chatId === c.id ? "rgba(0,74,173,.2)" : "var(--bg)", border: "1px solid " + (chatId === c.id ? "var(--accent)" : "var(--border)"), transition: "all .15s" }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(0,74,173,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "var(--accent2)" }}>
+                  {c.nombre.slice(0,2).toUpperCase()}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{c.nombre}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {c.username ? "@" + c.username + " · " : ""} ID: {c.id}
+                  </div>
+                </div>
+                {chatId === c.id && <span style={{ marginLeft: "auto", color: "var(--green)", fontWeight: 700 }}>✓</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Estado de validación */}
+        {chatId && token && (
+          <div style={{ fontSize: 12, marginBottom: "1rem", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "var(--green)", fontWeight: 700 }}>●</span>
+            <span style={{ color: "var(--muted)" }}>Configurado — Chat ID: <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{chatId}</span></span>
+          </div>
+        )}
+
         <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig} style={{ marginBottom: "1.5rem" }}>
           {saving ? "Guardando..." : "💾 Guardar configuracion"}
         </button>
@@ -4585,10 +4703,42 @@ function OnboardingWizard({ onSave, onCancel }) {
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
               Configura Telegram para enviar reportes automaticos. Si no tienes los datos ahora, puedes configurarlo despues desde la tab ✈️ Telegram del cliente.
             </div>
-            <div className="field"><label>Bot Token de Telegram</label><input type="text" value={form.tgToken} onChange={e => f("tgToken", e.target.value)} placeholder="1234567890:ABCdef... (opcional)" /></div>
-            <div className="field"><label>Chat ID del cliente</label><input type="text" value={form.tgChatId} onChange={e => f("tgChatId", e.target.value)} placeholder="Ej: 123456789 (opcional)" /></div>
+            <div className="field">
+              <label>Bot Token de Telegram</label>
+              <input type="text" value={form.tgToken} onChange={e => { f("tgToken", e.target.value); }} placeholder="1234567890:ABCdef... (opcional)" />
+            </div>
+            <div className="field">
+              <label>Chat ID del cliente</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input type="text" value={form.tgChatId} onChange={e => f("tgChatId", e.target.value)} placeholder="Ej: 123456789 (opcional)" style={{ flex: 1 }} />
+                <button type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={!form.tgToken}
+                  style={{ whiteSpace: "nowrap", background: "var(--accent)" }}
+                  onClick={async () => {
+                    if (!form.tgToken) return;
+                    const r = await detectarChatId(form.tgToken);
+                    if (r.ok) {
+                      if (r.chats.length === 1) {
+                        f("tgChatId", r.chats[0].id);
+                        alert("✓ Chat ID detectado: " + r.chats[0].id + " (" + r.chats[0].nombre + ")");
+                      } else {
+                        const opciones = r.chats.map((c, i) => (i+1) + ". " + c.nombre + (c.username ? " (@"+c.username+")" : "") + " — ID: " + c.id).join("\n");
+                        const sel = window.prompt("Se encontraron varios chats. Copia el ID del cliente:\n\n" + opciones);
+                        if (sel) f("tgChatId", sel.trim());
+                      }
+                    } else {
+                      alert("No se pudo detectar: " + r.error);
+                    }
+                  }}>
+                  🔍 Detectar
+                </button>
+              </div>
+              {!form.tgToken && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Ingresa el Bot Token primero para detectar automaticamente</div>}
+              {form.tgChatId && <div style={{ fontSize: 11, color: "var(--green)", marginTop: 4 }}>● Chat ID configurado: {form.tgChatId}</div>}
+            </div>
             <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.6, marginTop: 8 }}>
-              El programador automatico quedara configurado en Lun-Vie a las 8:00am. Podras ajustarlo desde la tab ⏰ Programador.
+              El cliente debe haber escrito <b>/start</b> al bot antes de detectar. El programador automatico quedara Lun-Vie 8:00am.
             </div>
           </div>
         )}
