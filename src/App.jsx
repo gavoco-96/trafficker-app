@@ -3681,6 +3681,8 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const [chatsEncontrados, setChatsEncontrados] = useState([]);
   const [editingMensaje, setEditingMensaje] = useState(false);
   const [mensajeEditado, setMensajeEditado] = useState("");
+
+  async function handleDetectarChatId() {
     if (!token) return show("Ingresa el Bot Token primero", "err");
     setDetecting(true);
     setChatsEncontrados([]);
