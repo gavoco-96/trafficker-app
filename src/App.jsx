@@ -1962,7 +1962,8 @@ function BannerAdmin({ clients, banners, onSave }) {
 function getBannersForClient(banners, clientId) {
   return (banners || []).filter(b => {
     if (!b.url || !b.url.trim()) return false;
-    if (b.destinatarios === "todos") return true;
+    // "todos" = siempre visible, incluso para clientes nuevos
+    if (!b.destinatarios || b.destinatarios === "todos") return true;
     return (b.clientesSeleccionados || []).includes(clientId);
   }).map(b => ({ ...b, url: getDriveDirectUrl(b.url) }));
 }
@@ -3964,7 +3965,9 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
 // Cambio de contraseña inline desde el perfil admin
 function ChangePasswordInline({ client, onUpdate }) {
   const [open, setOpen] = useState(false);
+  const [showCurrent, setShowCurrent] = useState(false);
   const [newPass, setNewPass] = useState("");
+  const [showNew, setShowNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const { show, el: toastEl } = useToast();
 
@@ -3975,24 +3978,47 @@ function ChangePasswordInline({ client, onUpdate }) {
     show("✓ Contraseña actualizada", "ok");
     setNewPass("");
     setOpen(false);
+    setShowCurrent(false);
     setSaving(false);
   }
 
   return (
     <>
       {toastEl}
-      <div className="info-row" style={{ alignItems: "flex-start", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: "1px solid var(--border)", marginTop: 8 }}>
+      <div className="info-row" style={{ alignItems: "flex-start", flexDirection: "column", gap: 8, paddingTop: 8, borderTop: "1px solid var(--border)", marginTop: 8 }}>
         <span className="info-label">Contraseña</span>
-        {!open ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "var(--muted)", fontFamily: "var(--mono)", letterSpacing: 2 }}>••••••••</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => setOpen(true)}>🔑 Cambiar</button>
+        {/* Contraseña actual - siempre visible con ojo */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+          <div className="input-wrap" style={{ flex: 1, pointerEvents: "none", opacity: .85 }}>
+            <input readOnly type={showCurrent ? "text" : "password"} value={client.password || ""} style={{ background: "var(--surface2)", cursor: "default" }} />
           </div>
-        ) : (
+          <button type="button" className="eye-btn" style={{ position: "static", padding: "6px 8px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface2)" }}
+            onClick={() => setShowCurrent(s => !s)}>
+            {showCurrent
+              ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setOpen(o => !o)}>
+            🔑 {open ? "Cancelar" : "Cambiar"}
+          </button>
+        </div>
+        {/* Campo nueva contraseña - solo visible al expandir */}
+        {open && (
           <div style={{ display: "flex", gap: 6, width: "100%" }}>
-            <PasswordInput value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="Nueva contraseña" style={{ flex: 1 }} />
-            <button className="btn btn-green btn-sm" disabled={saving} onClick={save}>{saving ? "..." : "✓"}</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); setNewPass(""); }}>×</button>
+            <div className="input-wrap" style={{ flex: 1 }}>
+              <input type={showNew ? "text" : "password"} value={newPass}
+                onChange={e => setNewPass(e.target.value)}
+                placeholder="Nueva contraseña (min. 4 caracteres)"
+                onKeyDown={e => e.key === "Enter" && save()} />
+              <button type="button" className="eye-btn" onClick={() => setShowNew(s => !s)}>
+                {showNew
+                  ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>}
+              </button>
+            </div>
+            <button className="btn btn-green btn-sm" disabled={saving || !newPass} onClick={save}>
+              {saving ? "..." : "✓ Guardar"}
+            </button>
           </div>
         )}
       </div>
