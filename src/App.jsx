@@ -2714,7 +2714,7 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 }
 
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
-function HermesClientView({ client, allClients }) {
+function HermesClientView({ client, allClients, onUpdate }) {
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -2772,7 +2772,7 @@ function HermesClientView({ client, allClients }) {
         </div>
       )}
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />}
-      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={() => {}} readOnly={true} allClients={allClients} />}
+      {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={onUpdate} readOnly={true} allClients={allClients} />}
     </div>
   );
 }
@@ -3015,13 +3015,7 @@ function ClientForm({ initial, onSave, onCancel }) {
       </div>
       <div className="form-row"><div className="field"><label>Usuario</label><input type="text" value={form.username} onChange={e => f("username", e.target.value.toLowerCase().replace(/\s/g, ""))} /></div><div className="field"><label>Contraseña</label><PasswordInput value={form.password} onChange={e => f("password", e.target.value)} /></div></div>
       <div className="field"><label>Nicho</label><select value={form.niche} onChange={e => f("niche", e.target.value)}><option value="whatsapp">Venta por WhatsApp</option><option value="web">Sitio web / E-commerce</option><option value="lanzamiento">Lanzamiento (Leads / Formularios)</option></select></div>
-      <div className="section-label">Servicios contratados</div>
-      <div className="chips-wrap">{todos.map(svc => <div key={svc.id} className={`servicio-chip ${form.serviciosContratados.includes(svc.id) ? "selected" : ""}`} onClick={() => toggleSvc(svc.id)}>{form.serviciosContratados.includes(svc.id) ? "✓ " : ""}{svc.nombre}</div>)}</div>
-      <div style={{ marginTop: 12, background: "var(--surface2)", borderRadius: 10, padding: 12 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 600 }}>+ Servicio personalizado</div>
-        <div className="form-row" style={{ marginBottom: 8 }}><input type="text" value={nuevoSvc.nombre} onChange={e => setNuevoSvc(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre del servicio" /><input type="text" value={nuevoSvc.subetapas} onChange={e => setNuevoSvc(p => ({ ...p, subetapas: e.target.value }))} placeholder="Subetapas separadas por coma" /></div>
-        <button className="btn btn-ghost btn-sm" onClick={addCustomSvc}>Añadir servicio</button>
-      </div>
+
       <div style={{ display: "flex", gap: 10, marginTop: "1.5rem" }}>
         <button className="btn btn-primary" onClick={() => { if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña."); onSave(form); }}>{initial ? "Guardar cambios" : "Crear cliente"}</button>
         <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
@@ -3685,8 +3679,8 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
 
   const [detecting, setDetecting] = useState(false);
   const [chatsEncontrados, setChatsEncontrados] = useState([]);
-
-  async function handleDetectarChatId() {
+  const [editingMensaje, setEditingMensaje] = useState(false);
+  const [mensajeEditado, setMensajeEditado] = useState("");
     if (!token) return show("Ingresa el Bot Token primero", "err");
     setDetecting(true);
     setChatsEncontrados([]);
@@ -3704,8 +3698,6 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     }
     setDetecting(false);
   }
-  const [mensajeEditado, setMensajeEditado] = useState("");
-
   const lastRecord = records && records.length > 0 ? [records[records.length - 1]] : [];
 
   function getMensaje() {
@@ -3967,6 +3959,45 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
 }
 
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
+// Cambio de contraseña inline desde el perfil admin
+function ChangePasswordInline({ client, onUpdate }) {
+  const [open, setOpen] = useState(false);
+  const [newPass, setNewPass] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  async function save() {
+    if (!newPass || newPass.length < 4) return show("La contraseña debe tener al menos 4 caracteres", "err");
+    setSaving(true);
+    await onUpdate({ ...client, password: newPass });
+    show("✓ Contraseña actualizada", "ok");
+    setNewPass("");
+    setOpen(false);
+    setSaving(false);
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="info-row" style={{ alignItems: "flex-start", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: "1px solid var(--border)", marginTop: 8 }}>
+        <span className="info-label">Contraseña</span>
+        {!open ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "var(--muted)", fontFamily: "var(--mono)", letterSpacing: 2 }}>••••••••</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setOpen(true)}>🔑 Cambiar</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 6, width: "100%" }}>
+            <PasswordInput value={newPass} onChange={e => setNewPass(e.target.value)} placeholder="Nueva contraseña" style={{ flex: 1 }} />
+            <button className="btn btn-green btn-sm" disabled={saving} onClick={save}>{saving ? "..." : "✓"}</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setOpen(false); setNewPass(""); }}>×</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
   const [tab, setTab] = useState("info");
   const [adding, setAdding] = useState(false);
@@ -4003,9 +4034,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "cuentas", "contratos", "antecedentes", "metricas", "reporte", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "reporte" ? "Reporte IA" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
@@ -4025,12 +4056,14 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                   ))}
                 </div>
                 <div>
-                  {[["Usuario", client.username], ["Nicho", nicheLabel], ["Servicios", (client.serviciosContratados || []).map(id => SERVICIOS_DEFAULT.find(s => s.id === id)?.nombre || id).join(", ") || "—"]].map(([l, v]) => (
+                  {[["Usuario", client.username], ["Nicho", nicheLabel]].map(([l, v]) => (
                     <div key={l} className="info-row">
                       <span className="info-label">{l}</span>
                       <span>{v}</span>
                     </div>
                   ))}
+                  {/* Cambio de contraseña */}
+                  <ChangePasswordInline client={client} onUpdate={handleUpdate} />
                 </div>
               </div>
             </div>
@@ -4040,11 +4073,6 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
         {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "metricas" && <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />}
-        {tab === "reporte" && <div>
-          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
-          <button className="btn btn-primary" disabled={loadingReport || rows.length === 0} onClick={() => generateReport(client, rows, setReport, setLoadingReport)} style={{ marginBottom: "1rem" }}>{loadingReport ? "Generando..." : "Generar reporte IA"}</button>
-          {(report || loadingReport) && <div className="ai-report"><div className="ai-report-header"><span>✦</span> Reporte · {client.name}</div><div className={`ai-report-body ${loadingReport && !report ? "streaming-cursor" : ""}`}>{report || " "}{loadingReport && report && <span className="streaming-cursor" />}</div></div>}
-        </div>}
         {tab === "facebook" && (
           <FacebookPanel client={client} onUpdate={handleUpdate} />
         )}
@@ -4067,7 +4095,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 }
 
 // ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
-function ClientDashboard({ client, onLogout, banners }) {
+function ClientDashboard({ client, onLogout, banners, onUpdate }) {
   const [tab, setTab] = useState("resumen");
   const [period, setPeriod] = useState("mtd");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -4095,7 +4123,7 @@ function ClientDashboard({ client, onLogout, banners }) {
         <div className="content">
           {/* Carroza visible en todas las tabs EXCEPTO hermes (que ya la tiene dentro) */}
           {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
-          {tab === "hermes" && <HermesClientView client={client} allClients={[]} />}
+          {tab === "hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate || (() => {})} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
@@ -4440,6 +4468,21 @@ function getNotificaciones(clients) {
           clientId: client.id });
       }
     }
+
+    // 5. Eventos de agenda hoy o mañana
+    const hoyStr = hoy.toISOString().slice(0, 10);
+    const manana = new Date(hoy.getTime() + 86400000).toISOString().slice(0, 10);
+    (client.hermesData?.agenda || []).forEach(ev => {
+      if (ev.fecha === hoyStr) {
+        notifs.push({ id: `${client.id}-ev-${ev.id}`, tipo: "blue", icon: "📅",
+          texto: `${client.name} — ${ev.titulo || "Cita"} HOY a las ${ev.hora}`,
+          clientId: client.id });
+      } else if (ev.fecha === manana) {
+        notifs.push({ id: `${client.id}-ev-man-${ev.id}`, tipo: "amber", icon: "📅",
+          texto: `${client.name} — ${ev.titulo || "Cita"} mañana a las ${ev.hora}`,
+          clientId: client.id });
+      }
+    });
   });
 
   return notifs.slice(0, 20);
@@ -4472,7 +4515,7 @@ function NotificationBell({ clients, onGoToClient }) {
             {notifs.map(n => (
               <div key={n.id} className="notif-item" style={{ opacity: vistas.includes(n.id) ? 0.5 : 1 }}
                 onClick={() => { setVistas(p => [...p, n.id]); onGoToClient(n.clientId); setOpen(false); }}>
-                <div className={"notif-dot " + (n.tipo === "err" ? "notif-dot-red" : n.tipo === "amber" ? "notif-dot-amber" : "notif-dot-blue")} />
+                <div className={"notif-dot " + (n.tipo === "err" ? "notif-dot-red" : n.tipo === "blue" ? "notif-dot-blue" : "notif-dot-amber")} />
                 <div>
                   <div style={{ fontSize: 12, lineHeight: 1.4 }}>{n.icon} {n.texto}</div>
                 </div>
@@ -5177,7 +5220,7 @@ export default function App() {
         />
       )}
       {session?.role === "client" && clientSession && (
-        <ClientDashboard client={clientSession} onLogout={() => setSession(null)} banners={clientBanners} />
+        <ClientDashboard client={clientSession} onLogout={() => setSession(null)} banners={clientBanners} onUpdate={updateClient} />
       )}
       {session?.role === "client" && !clientSession && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
     </>
