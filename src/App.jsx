@@ -382,6 +382,29 @@ const css = `
   .hf-bar{height:40px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:12px;font-weight:600;transition:width .5s ease;min-width:80px}
   .hf-label{font-size:11px;color:var(--muted);width:90px;text-align:right;flex-shrink:0}
   .hf-pct{font-size:11px;color:var(--muted);width:50px;flex-shrink:0}
+  /* FILMMAKER */
+  .fm-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;background:rgba(255,145,77,.15);color:var(--orange);border:1px solid rgba(255,145,77,.3)}
+  .fm-avail-chip{padding:4px 10px;border-radius:20px;font-size:11px;cursor:pointer;border:1px solid var(--border);transition:all .15s;user-select:none}
+  .fm-avail-chip.available{background:rgba(16,185,129,.15);border-color:var(--green);color:var(--green)}
+  .fm-avail-chip.unavailable{background:rgba(239,68,68,.1);border-color:var(--red);color:var(--red)}
+  /* ESTUDIO */
+  .ficha-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:.75rem;transition:border-color .15s}
+  .ficha-wrap:hover{border-color:rgba(0,74,173,.3)}
+  .ficha-header{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;background:var(--surface2)}
+  .ficha-estado{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700}
+  .estado-borrador{background:rgba(107,117,153,.15);color:var(--muted)}
+  .estado-revision{background:rgba(255,222,89,.12);color:#c9a800}
+  .estado-aprobado{background:rgba(16,185,129,.15);color:var(--green)}
+  .estado-grabado{background:rgba(0,74,173,.15);color:#4d9fff}
+  .estado-edicion{background:rgba(255,145,77,.12);color:var(--orange)}
+  .ficha-field{margin-bottom:.75rem}
+  .ficha-field label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px}
+  .ficha-field .ficha-value{font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap;background:var(--surface2);border-radius:8px;padding:8px 12px;min-height:32px}
+  .ficha-field textarea{min-height:80px;resize:vertical;font-size:13px;line-height:1.6}
+  .stars-wrap{display:flex;gap:4px}
+  .star{font-size:20px;cursor:pointer;transition:transform .1s;user-select:none}
+  .star:hover{transform:scale(1.2)}
+  .nota-cliente{background:rgba(255,222,89,.06);border:1px solid rgba(255,222,89,.2);border-radius:8px;padding:10px 12px;font-size:12px;margin-top:4px}
   /* Ocultar flechas nativas de input number en todos los browsers */
   input[type=number]::-webkit-inner-spin-button,
   input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -2987,6 +3010,522 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   );
 }
 
+
+// ─── FILMMAKER MODULE ─────────────────────────────────────────────────────────
+
+// Panel principal del Filmmaker
+function FilmakerDashboard({ filmmaker, allClients, onLogout, onUpdate }) {
+  const [view, setView] = useState("agenda"); // agenda | disponibilidad
+  const misClientes = allClients.filter(c => c.filmakerAsignado === filmmaker.id);
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  // Recopilar todas las grabaciones de sus clientes
+  const grabaciones = [];
+  misClientes.forEach(c => {
+    (c.hermesData?.agenda || []).forEach(e => {
+      if (e.tipo === "grabacion") grabaciones.push({ ...e, clientName: c.name, clientColor: c.color, clientId: c.id });
+    });
+  });
+  const proximas = grabaciones.filter(g => g.fecha >= hoy).sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-badge" style={{ background: "rgba(255,145,77,.2)", color: "var(--orange)" }}>FILMMAKER</div>
+          <div className="sidebar-logo-name">{filmmaker.nombre}</div>
+          <div className="sidebar-logo-role">Camarografo / Editor</div>
+        </div>
+        <div className="nav">
+          <div className="nav-label">Vistas</div>
+          {[["agenda","📅 Mi Agenda"],["disponibilidad","🗓️ Disponibilidad"]].map(([v, lbl]) => (
+            <div key={v} className={`nav-item ${view === v ? "active" : ""}`} onClick={() => setView(v)}>
+              <div className="nav-dot" style={{ background: view === v ? "var(--orange)" : "var(--border)" }} />
+              {lbl}
+            </div>
+          ))}
+          <div className="nav-label" style={{ marginTop: 16 }}>Clientes asignados</div>
+          {misClientes.map(c => (
+            <div key={c.id} className="nav-item" style={{ opacity: .8 }}>
+              <div className="nav-dot" style={{ background: c.color || "var(--border)" }} />{c.name}
+            </div>
+          ))}
+        </div>
+        <div className="sidebar-footer">
+          <button className="btn btn-ghost btn-sm btn-full" onClick={onLogout}>Cerrar sesión</button>
+        </div>
+      </div>
+      <div className="main">
+        <div className="topbar">
+          <div className="topbar-title">{view === "agenda" ? "Mi Agenda de grabaciones" : "Mi Disponibilidad"}</div>
+        </div>
+        <div className="content">
+          {view === "agenda" && (
+            <div>
+              <div style={{ marginBottom: "1.25rem" }}>
+                <div className="sec-title">Proximas grabaciones</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{proximas.length} sesiones programadas</div>
+              </div>
+              {proximas.length === 0 && <div className="empty"><div style={{ fontSize: 28, opacity: .3 }}>🎬</div><div style={{ marginTop: 8 }}>Sin grabaciones proximas.</div></div>}
+              {proximas.map((g, i) => (
+                <div key={i} className="card" style={{ marginBottom: ".75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 42, height: 42, borderRadius: "50%", background: (g.clientColor || "#004AAD") + "22", color: g.clientColor || "#004AAD", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                      {g.clientName?.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{g.titulo || "Sesion de grabacion"}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                        <span style={{ color: g.clientColor || "var(--accent)" }}>{g.clientName}</span>
+                        {" · "}{fmtDate(g.fecha)} a las {g.hora}
+                      </div>
+                      {g.descripcion && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, fontStyle: "italic" }}>{g.descripcion}</div>}
+                    </div>
+                    <div style={{ fontSize: 11, color: g.fecha === hoy ? "var(--green)" : "var(--muted)", fontWeight: g.fecha === hoy ? 700 : 400 }}>
+                      {g.fecha === hoy ? "HOY" : fmtDate(g.fecha)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {/* Calendario visual consolidado */}
+              <div style={{ marginTop: "1.5rem" }}>
+                <div className="card-title">Calendario de grabaciones</div>
+                <FilmakerCalendario grabaciones={grabaciones} />
+              </div>
+            </div>
+          )}
+          {view === "disponibilidad" && (
+            <FilmakerDisponibilidad filmmaker={filmmaker} onUpdate={onUpdate} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilmakerCalendario({ grabaciones }) {
+  const [mes, setMes] = useState(() => { const h = new Date(); return new Date(h.getFullYear(), h.getMonth(), 1); });
+  const diasMes = new Date(mes.getFullYear(), mes.getMonth() + 1, 0).getDate();
+  const primerDia = new Date(mes.getFullYear(), mes.getMonth(), 1).getDay();
+  const hoy = new Date();
+  const mesNombre = mes.toLocaleDateString("es-EC", { month: "long", year: "numeric" });
+
+  function getGrabacionesDia(d) {
+    const key = `${mes.getFullYear()}-${String(mes.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    return grabaciones.filter(g => g.fecha === key);
+  }
+
+  const cells = [];
+  for (let i = 0; i < primerDia; i++) cells.push(null);
+  for (let d = 1; d <= diasMes; d++) cells.push(d);
+
+  return (
+    <div className="cal-wrap">
+      <div className="cal-header">
+        <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()-1, 1))}>‹</button>
+        <div style={{ fontWeight: 600, fontSize: 14, textTransform: "capitalize" }}>{mesNombre}</div>
+        <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()+1, 1))}>›</button>
+      </div>
+      <div className="cal-grid">
+        {["Dom","Lun","Mar","Mie","Jue","Vie","Sab"].map(d => <div key={d} className="cal-dow">{d}</div>)}
+        {cells.map((d, i) => {
+          if (!d) return <div key={"e"+i} className="cal-cell disabled" />;
+          const esHoy = d === hoy.getDate() && mes.getMonth() === hoy.getMonth() && mes.getFullYear() === hoy.getFullYear();
+          const gs = getGrabacionesDia(d);
+          return (
+            <div key={d} className={"cal-cell " + (esHoy ? "today " : "") + (gs.length > 0 ? "available " : "")}>
+              <div className={"cal-day " + (esHoy ? "today-num" : "")}>{d}</div>
+              {gs.map((g, gi) => (
+                <div key={gi} className="cal-event cal-event-grabacion" title={g.clientName + " · " + g.hora}>
+                  🎬 {g.hora} {g.clientName}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FilmakerDisponibilidad({ filmmaker, onUpdate }) {
+  const disp = filmmaker.disponibilidad || { diasDisponibles: [], diasOcupados: [] };
+  const [mes, setMes] = useState(() => { const h = new Date(); return new Date(h.getFullYear(), h.getMonth(), 1); });
+  const [local, setLocal] = useState(disp);
+  const { show, el: toastEl } = useToast();
+  const diasMes = new Date(mes.getFullYear(), mes.getMonth() + 1, 0).getDate();
+  const primerDia = new Date(mes.getFullYear(), mes.getMonth(), 1).getDay();
+  const mesNombre = mes.toLocaleDateString("es-EC", { month: "long", year: "numeric" });
+
+  function toggleDia(fechaStr) {
+    setLocal(prev => {
+      const disponibles = prev.diasDisponibles || [];
+      const ocupados = prev.diasOcupados || [];
+      if (disponibles.includes(fechaStr)) return { ...prev, diasDisponibles: disponibles.filter(d => d !== fechaStr), diasOcupados: [...ocupados, fechaStr] };
+      if (ocupados.includes(fechaStr)) return { ...prev, diasOcupados: ocupados.filter(d => d !== fechaStr) };
+      return { ...prev, diasDisponibles: [...disponibles, fechaStr] };
+    });
+  }
+
+  async function save() {
+    await onUpdate({ ...filmmaker, disponibilidad: local });
+    show("✓ Disponibilidad actualizada", "ok");
+  }
+
+  const cells = [];
+  for (let i = 0; i < primerDia; i++) cells.push(null);
+  for (let d = 1; d <= diasMes; d++) cells.push(d);
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div style={{ background: "var(--surface2)", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Toca un dia para marcarlo como disponible (🟢) o no disponible (🔴). Sin marcar = sin definir.
+        </div>
+        <div className="cal-wrap" style={{ marginBottom: "1rem" }}>
+          <div className="cal-header">
+            <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()-1, 1))}>‹</button>
+            <div style={{ fontWeight: 600, fontSize: 14, textTransform: "capitalize" }}>{mesNombre}</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setMes(m => new Date(m.getFullYear(), m.getMonth()+1, 1))}>›</button>
+          </div>
+          <div className="cal-grid">
+            {["Dom","Lun","Mar","Mie","Jue","Vie","Sab"].map(d => <div key={d} className="cal-dow">{d}</div>)}
+            {cells.map((d, i) => {
+              if (!d) return <div key={"e"+i} className="cal-cell disabled" />;
+              const fechaStr = `${mes.getFullYear()}-${String(mes.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+              const disponible = (local.diasDisponibles || []).includes(fechaStr);
+              const ocupado = (local.diasOcupados || []).includes(fechaStr);
+              return (
+                <div key={d} className="cal-cell" style={{ cursor: "pointer", background: disponible ? "rgba(16,185,129,.1)" : ocupado ? "rgba(239,68,68,.08)" : "" }}
+                  onClick={() => toggleDia(fechaStr)}>
+                  <div className="cal-day">{d}</div>
+                  {disponible && <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 700, textAlign: "center" }}>✓ Disp.</div>}
+                  {ocupado && <div style={{ fontSize: 10, color: "var(--red)", fontWeight: 700, textAlign: "center" }}>✗ Ocup.</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={save}>💾 Guardar disponibilidad</button>
+      </div>
+    </>
+  );
+}
+
+// ─── ESTUDIO (FICHAS TÉCNICAS) ────────────────────────────────────────────────
+
+const ESTADOS_FICHA = ["Borrador", "En revisión", "Aprobado", "Grabado", "En edición"];
+const CATEGORIAS_FICHA = ["Valor", "Viral", "Venta"];
+const OBJETIVOS_FICHA = ["Educar", "Alcance", "Conversión"];
+
+function estadoClass(estado) {
+  const map = { "Borrador": "estado-borrador", "En revisión": "estado-revision", "Aprobado": "estado-aprobado", "Grabado": "estado-grabado", "En edición": "estado-edicion" };
+  return map[estado] || "estado-borrador";
+}
+
+function FichaItem({ ficha, onUpdate, onDelete, canEdit, canReview, clientNombre }) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [local, setLocal] = useState(ficha);
+  const [notaCliente, setNotaCliente] = useState("");
+  const [calificacion, setCalificacion] = useState(ficha.calificacion || 0);
+  const { show, el: toastEl } = useToast();
+  const f = (k, v) => setLocal(p => ({ ...p, [k]: v }));
+
+  async function saveEdit() {
+    await onUpdate({ ...local });
+    setEditing(false);
+    show("✓ Ficha actualizada", "ok");
+  }
+
+  async function saveNota() {
+    if (!notaCliente.trim()) return;
+    const notas = [...(ficha.notas || []), { texto: notaCliente, fecha: new Date().toLocaleString("es-EC"), autor: clientNombre || "Cliente", calificacion }];
+    await onUpdate({ ...ficha, notas, calificacion });
+    setNotaCliente("");
+    show("✓ Nota enviada", "ok");
+  }
+
+  async function cambiarEstado(estado) {
+    await onUpdate({ ...ficha, estado });
+    show("Estado actualizado: " + estado, "ok");
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="ficha-wrap">
+        {/* HEADER colapsable */}
+        <div className="ficha-header" onClick={() => setOpen(o => !o)}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--muted)" }}>{ficha.codigo || "—"}</span>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{ficha.nombre}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span className={"ficha-estado " + estadoClass(ficha.estado)}>{ficha.estado || "Borrador"}</span>
+              {ficha.categoria && <span className="badge" style={{ fontSize: 10, background: "var(--surface)", border: "1px solid var(--border)" }}>{ficha.categoria}</span>}
+              {ficha.objetivo && <span className="badge" style={{ fontSize: 10, background: "var(--surface)", border: "1px solid var(--border)" }}>{ficha.objetivo}</span>}
+              {(ficha.notas || []).length > 0 && <span style={{ fontSize: 10, color: "var(--accent2)", background: "rgba(255,222,89,.1)", padding: "2px 6px", borderRadius: 8 }}>💬 {ficha.notas.length} nota(s)</span>}
+              {ficha.calificacion > 0 && <span style={{ fontSize: 11 }}>{"★".repeat(ficha.calificacion)}{"☆".repeat(5 - ficha.calificacion)}</span>}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {canEdit && !editing && <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditing(true); setOpen(true); }}>✏️</button>}
+            {canEdit && <button className="btn btn-danger btn-sm" onClick={e => { e.stopPropagation(); onDelete(ficha.id); }}>×</button>}
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+          </div>
+        </div>
+
+        {/* BODY */}
+        {open && (
+          <div style={{ padding: "1rem" }}>
+            {/* Selector de estado */}
+            {canEdit && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: "1rem" }}>
+                {ESTADOS_FICHA.map(e => (
+                  <button key={e} className={"btn btn-ghost btn-sm " + (ficha.estado === e ? "active" : "")}
+                    style={{ fontSize: 11, borderColor: ficha.estado === e ? "var(--accent)" : "var(--border)" }}
+                    onClick={() => cambiarEstado(e)}>{e}</button>
+                ))}
+              </div>
+            )}
+
+            {editing && canEdit ? (
+              /* MODO EDICIÓN */
+              <div>
+                <div className="form-row">
+                  <div className="field"><label>Código</label><input type="text" value={local.codigo || ""} onChange={e => f("codigo", e.target.value)} placeholder="COD-001" /></div>
+                  <div className="field"><label>Nombre del video</label><input type="text" value={local.nombre || ""} onChange={e => f("nombre", e.target.value)} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="field"><label>Categoría</label>
+                    <select value={local.categoria || ""} onChange={e => f("categoria", e.target.value)}>
+                      <option value="">Seleccionar...</option>
+                      {CATEGORIAS_FICHA.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Objetivo</label>
+                    <select value={local.objetivo || ""} onChange={e => f("objetivo", e.target.value)}>
+                      <option value="">Seleccionar...</option>
+                      {OBJETIVOS_FICHA.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div className="field"><label>Estado</label>
+                    <select value={local.estado || "Borrador"} onChange={e => f("estado", e.target.value)}>
+                      {ESTADOS_FICHA.map(e => <option key={e} value={e}>{e}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {[["hook","Hook (apertura del video)"],["guion","Guión completo"],["cta","Call to Action (CTA)"],["locacion","Locación"],["planoPrincipal","Plano principal"],["tomasApoyo","Tomas de apoyo (separadas por coma)"],["copy","Copy para publicación"]].map(([fk, lbl]) => (
+                  <div key={fk} className="field">
+                    <label>{lbl}</label>
+                    {["guion","copy","tomasApoyo"].includes(fk)
+                      ? <textarea value={local[fk] || ""} onChange={e => f(fk, e.target.value)} style={{ minHeight: fk === "guion" ? 180 : 80 }} />
+                      : <input type="text" value={local[fk] || ""} onChange={e => f(fk, e.target.value)} />}
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-green btn-sm" onClick={saveEdit}>💾 Guardar</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setLocal(ficha); setEditing(false); }}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              /* MODO LECTURA */
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".75rem", marginBottom: ".75rem" }}>
+                  {[["Hook", ficha.hook],["CTA", ficha.cta],["Locación", ficha.locacion],["Plano principal", ficha.planoPrincipal],["Tomas de apoyo", ficha.tomasApoyo]].map(([lbl, val]) => val ? (
+                    <div key={lbl} className="ficha-field">
+                      <label>{lbl}</label>
+                      <div className="ficha-value" style={{ fontSize: 12 }}>{val}</div>
+                    </div>
+                  ) : null)}
+                </div>
+                {ficha.guion && <div className="ficha-field"><label>Guión</label><div className="ficha-value" style={{ maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>{ficha.guion}</div></div>}
+                {ficha.copy && <div className="ficha-field"><label>Copy de publicación</label><div className="ficha-value" style={{ maxHeight: 120, overflow: "auto" }}>{ficha.copy}</div></div>}
+
+                {/* NOTAS DEL CLIENTE */}
+                {(ficha.notas || []).length > 0 && (
+                  <div style={{ marginTop: ".75rem" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--accent2)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Notas y correcciones</div>
+                    {(ficha.notas || []).map((n, ni) => (
+                      <div key={ni} className="nota-cliente">
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600, fontSize: 11, color: "var(--accent2)" }}>{n.autor}</span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {n.calificacion > 0 && <span style={{ fontSize: 12 }}>{"★".repeat(n.calificacion)}{"☆".repeat(5-n.calificacion)}</span>}
+                            <span style={{ fontSize: 10, color: "var(--muted)" }}>{n.fecha}</span>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text)", lineHeight: 1.5 }}>{n.texto}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* FORMULARIO REVISIÓN CLIENTE / FILMMAKER */}
+                {canReview && (
+                  <div style={{ marginTop: "1rem", background: "var(--surface2)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Agregar nota o corrección</div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Calificación del contenido:</div>
+                      <div className="stars-wrap">
+                        {[1,2,3,4,5].map(s => (
+                          <span key={s} className="star" style={{ color: s <= calificacion ? "var(--accent2)" : "var(--border)" }}
+                            onClick={() => setCalificacion(s)}>★</span>
+                        ))}
+                        {calificacion > 0 && <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 6 }}>{["","Necesita trabajo","Regular","Bueno","Muy bueno","Excelente"][calificacion]}</span>}
+                      </div>
+                    </div>
+                    <textarea value={notaCliente} onChange={e => setNotaCliente(e.target.value)}
+                      placeholder="Escribe tu corrección o sugerencia..." style={{ minHeight: 70, marginBottom: 8 }} />
+                    <button className="btn btn-primary btn-sm" disabled={!notaCliente.trim()} onClick={saveNota}
+                      style={{ background: "var(--accent2)", color: "#000" }}>
+                      Enviar nota
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function EstudioPanel({ client, onUpdate, role }) {
+  const fichas = client.hermesData?.fichas || [];
+  const [showForm, setShowForm] = useState(false);
+  const [filtroEstado, setFiltroEstado] = useState("todos");
+  const [filtroCategoria, setFiltroCategoria] = useState("todas");
+  const canEdit = role === "admin";
+  const canReview = role === "client" || role === "filmmaker";
+  const { show, el: toastEl } = useToast();
+
+  const blank = { id: "", codigo: "", nombre: "", categoria: "Valor", objetivo: "Educar", hook: "", guion: "", cta: "", locacion: "", planoPrincipal: "", tomasApoyo: "", copy: "", estado: "Borrador", notas: [], calificacion: 0 };
+  const [form, setForm] = useState({ ...blank });
+  const ff = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  async function saveFicha() {
+    if (!form.nombre) return show("Ingresa el nombre del video", "err");
+    const nueva = { ...form, id: form.id || "ficha" + Date.now() };
+    const newFichas = form.id ? fichas.map(f => f.id === form.id ? nueva : f) : [...fichas, nueva];
+    await onUpdate({ ...client, hermesData: { ...(client.hermesData || {}), fichas: newFichas } });
+    setForm({ ...blank }); setShowForm(false);
+    show("✓ Ficha guardada", "ok");
+  }
+
+  async function updateFicha(updated) {
+    const newFichas = fichas.map(f => f.id === updated.id ? updated : f);
+    await onUpdate({ ...client, hermesData: { ...(client.hermesData || {}), fichas: newFichas } });
+  }
+
+  async function deleteFicha(id) {
+    if (!window.confirm("¿Eliminar esta ficha?")) return;
+    const newFichas = fichas.filter(f => f.id !== id);
+    await onUpdate({ ...client, hermesData: { ...(client.hermesData || {}), fichas: newFichas } });
+  }
+
+  function exportDocx() {
+    // Generar HTML para impresión
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Fichas - ${client.name}</title><style>body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#111}.ficha{border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:24px;page-break-inside:avoid}.header{background:#004AAD;color:#fff;padding:12px 16px;border-radius:6px;margin-bottom:12px}.field{margin-bottom:10px}.field label{font-size:10px;font-weight:700;text-transform:uppercase;color:#666;display:block;margin-bottom:2px}.field .val{font-size:13px;line-height:1.6;border:1px solid #eee;padding:6px 10px;border-radius:4px;white-space:pre-wrap}.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;margin:0 4px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media print{.ficha{page-break-after:always}}</style></head><body>
+    <h1>Fichas Técnicas de Grabación</h1><h2>${client.name}</h2><p>Generado: ${new Date().toLocaleDateString("es-EC")}</p>
+    ${fichas.map(f => `<div class="ficha"><div class="header"><strong>${f.codigo || ""} — ${f.nombre}</strong> <span class="badge" style="background:rgba(255,255,255,.2)">${f.estado || "Borrador"}</span> <span class="badge" style="background:rgba(255,255,255,.2)">${f.categoria || ""}</span></div>
+    <div class="grid">${[["Categoría",f.categoria],["Objetivo",f.objetivo],["Locación",f.locacion],["Plano principal",f.planoPrincipal]].filter(x=>x[1]).map(([l,v])=>`<div class="field"><label>${l}</label><div class="val">${v}</div></div>`).join("")}</div>
+    ${f.hook ? `<div class="field"><label>Hook</label><div class="val">${f.hook}</div></div>` : ""}
+    ${f.guion ? `<div class="field"><label>Guión</label><div class="val">${f.guion}</div></div>` : ""}
+    ${f.cta ? `<div class="field"><label>CTA</label><div class="val">${f.cta}</div></div>` : ""}
+    ${f.copy ? `<div class="field"><label>Copy</label><div class="val">${f.copy}</div></div>` : ""}
+    </div>`).join("")}
+    </body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `fichas_${client.name}.html`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const filtered = fichas
+    .filter(f => filtroEstado === "todos" ? true : f.estado === filtroEstado)
+    .filter(f => filtroCategoria === "todas" ? true : f.categoria === filtroCategoria);
+
+  const fichasConNotas = fichas.filter(f => (f.notas || []).some(n => !n.vista)).length;
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div>
+            <div className="sec-title">Fichas Técnicas de Grabación</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              {fichas.length} fichas · {fichas.filter(f => f.estado === "Aprobado").length} aprobadas
+              {fichasConNotas > 0 && <span style={{ color: "var(--accent2)", marginLeft: 8 }}>· {fichasConNotas} con notas nuevas</span>}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={exportDocx}>📄 Exportar HTML</button>
+            {canEdit && <button className="btn btn-primary btn-sm" onClick={() => setShowForm(s => !s)}>
+              {showForm ? "Cancelar" : "+ Nueva ficha"}
+            </button>}
+          </div>
+        </div>
+
+        {/* FORM NUEVA FICHA */}
+        {showForm && canEdit && (
+          <div className="card" style={{ borderColor: "rgba(0,74,173,.4)", marginBottom: "1rem" }}>
+            <div className="card-title">Nueva ficha técnica</div>
+            <div className="form-row">
+              <div className="field"><label>Código</label><input type="text" value={form.codigo} onChange={e => ff("codigo", e.target.value)} placeholder="COD-001" /></div>
+              <div className="field"><label>Nombre del video *</label><input type="text" value={form.nombre} onChange={e => ff("nombre", e.target.value)} /></div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Categoría</label>
+                <select value={form.categoria} onChange={e => ff("categoria", e.target.value)}>
+                  {CATEGORIAS_FICHA.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="field"><label>Objetivo</label>
+                <select value={form.objetivo} onChange={e => ff("objetivo", e.target.value)}>
+                  {OBJETIVOS_FICHA.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+            </div>
+            {[["hook","Hook"],["cta","CTA"],["locacion","Locación"],["planoPrincipal","Plano principal"]].map(([fk,lbl]) => (
+              <div key={fk} className="field"><label>{lbl}</label><input type="text" value={form[fk]} onChange={e => ff(fk, e.target.value)} /></div>
+            ))}
+            <div className="field"><label>Guión</label><textarea value={form.guion} onChange={e => ff("guion", e.target.value)} style={{ minHeight: 150 }} /></div>
+            <div className="field"><label>Tomas de apoyo</label><textarea value={form.tomasApoyo} onChange={e => ff("tomasApoyo", e.target.value)} style={{ minHeight: 60 }} /></div>
+            <div className="field"><label>Copy de publicación</label><textarea value={form.copy} onChange={e => ff("copy", e.target.value)} style={{ minHeight: 80 }} /></div>
+            <button className="btn btn-primary btn-sm" onClick={saveFicha}>Guardar ficha</button>
+          </div>
+        )}
+
+        {/* FILTROS */}
+        <div style={{ display: "flex", gap: 8, marginBottom: "1rem", flexWrap: "wrap" }}>
+          <div className="period-pills">
+            <button className={"pill " + (filtroEstado === "todos" ? "active" : "")} onClick={() => setFiltroEstado("todos")}>Todos</button>
+            {ESTADOS_FICHA.map(e => <button key={e} className={"pill " + (filtroEstado === e ? "active" : "")} onClick={() => setFiltroEstado(e)}>{e}</button>)}
+          </div>
+          <div className="period-pills">
+            <button className={"pill " + (filtroCategoria === "todas" ? "active" : "")} onClick={() => setFiltroCategoria("todas")}>Todas</button>
+            {CATEGORIAS_FICHA.map(c => <button key={c} className={"pill " + (filtroCategoria === c ? "active" : "")} onClick={() => setFiltroCategoria(c)}>{c}</button>)}
+          </div>
+        </div>
+
+        {filtered.length === 0 && <div className="empty"><div style={{ fontSize: 28, opacity: .3 }}>🎬</div><div style={{ marginTop: 8 }}>{canEdit ? "Sin fichas. Crea la primera." : "Sin fichas disponibles aún."}</div></div>}
+
+        {filtered.map(f => (
+          <FichaItem key={f.id} ficha={f} onUpdate={updateFicha} onDelete={deleteFicha}
+            canEdit={canEdit} canReview={canReview} clientNombre={client.name} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+
 // ─── CLIENT FORM ──────────────────────────────────────────────────────────────
 function ClientForm({ initial, onSave, onCancel }) {
   const blank = { name: "", username: "", password: "", niche: "whatsapp", color: "#7C3AED", logo: "", producto: "", email: "", telefono: "", direccion: "", representante: "", serviciosContratados: [], checklist: {}, cuentas: [], contratos: [], antecedentes: [], records: [], kpis: [], funnel: [] };
@@ -4062,13 +4601,14 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
         {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
+        {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
@@ -4139,7 +4679,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "hermes", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : "Historico"}</div>)}
+          {["resumen", "hermes", "estudio", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "estudio" ? "🎬 Estudio" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -4152,6 +4692,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
           {/* Carroza visible en todas las tabs EXCEPTO hermes (que ya la tiene dentro) */}
           {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate || (() => {})} />}
+          {tab === "estudio" && <EstudioPanel client={client} onUpdate={onUpdate || (() => {})} role="client" />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
@@ -4364,6 +4905,130 @@ function CampanasPanel({ clients }) {
 
 
 
+
+// ─── GESTIÓN DE FILMMAKERS (Admin) ────────────────────────────────────────────
+function FilmakersAdminPanel({ filmmakers, clients, onSave }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const { show, el: toastEl } = useToast();
+  const blank = { id: "", nombre: "", username: "", password: "", telefono: "", email: "", tgToken: "", tgChatId: "", disponibilidad: { diasDisponibles: [], diasOcupados: [] } };
+  const [form, setForm] = useState({ ...blank });
+  const ff = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  function startEdit(fm) { setForm({ ...fm }); setEditing(fm.id); setShowForm(true); }
+  function startNew() { setForm({ ...blank, id: "fm" + Date.now() }); setEditing(null); setShowForm(true); }
+
+  async function save() {
+    if (!form.nombre || !form.username || !form.password) return show("Completa nombre, usuario y contraseña", "err");
+    const list = editing ? filmmakers.map(f => f.id === editing ? form : f) : [...filmmakers, form];
+    await onSave(list);
+    setShowForm(false); setEditing(null);
+    show("✓ Filmmaker guardado", "ok");
+  }
+
+  async function del(id) {
+    if (!window.confirm("¿Eliminar este Filmmaker?")) return;
+    await onSave(filmmakers.filter(f => f.id !== id));
+    show("Filmmaker eliminado", "ok");
+  }
+
+  // Clientes asignados a cada filmmaker
+  function misClientes(fmId) { return clients.filter(c => c.filmakerAsignado === fmId).map(c => c.name).join(", ") || "Sin asignar"; }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div><div className="sec-title">Filmmakers</div><div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{filmmakers.length} registrados</div></div>
+          <button className="btn btn-primary btn-sm" onClick={startNew}>+ Nuevo Filmmaker</button>
+        </div>
+
+        {showForm && (
+          <div className="card" style={{ borderColor: "rgba(255,145,77,.4)", marginBottom: "1rem" }}>
+            <div className="card-title">{editing ? "Editar Filmmaker" : "Nuevo Filmmaker"}</div>
+            <div className="form-row">
+              <div className="field"><label>Nombre completo *</label><input type="text" value={form.nombre} onChange={e => ff("nombre", e.target.value)} /></div>
+              <div className="field"><label>Teléfono</label><input type="text" value={form.telefono || ""} onChange={e => ff("telefono", e.target.value)} /></div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Usuario de acceso *</label><input type="text" value={form.username} onChange={e => ff("username", e.target.value.toLowerCase().replace(/\s/g,""))} /></div>
+              <div className="field"><label>Contraseña *</label><PasswordInput value={form.password} onChange={e => ff("password", e.target.value)} /></div>
+            </div>
+            <div className="form-row">
+              <div className="field"><label>Bot Token Telegram (para alertas)</label><input type="text" value={form.tgToken || ""} onChange={e => ff("tgToken", e.target.value)} placeholder="Token del bot" /></div>
+              <div className="field">
+                <label>Chat ID Telegram</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input type="text" value={form.tgChatId || ""} onChange={e => ff("tgChatId", e.target.value)} style={{ flex: 1 }} placeholder="123456789" />
+                  <button className="btn btn-primary btn-sm" disabled={!form.tgToken}
+                    style={{ background: "var(--accent)" }}
+                    onClick={async () => {
+                      const r = await detectarChatId(form.tgToken);
+                      if (r.ok) { if (r.chats.length === 1) ff("tgChatId", r.chats[0].id); else { const opciones = r.chats.map((c,i) => (i+1)+". "+c.nombre+" — "+c.id).join("\n"); const sel = window.prompt("Selecciona:\n" + opciones); if (sel) ff("tgChatId", sel.trim()); } }
+                      else alert("Error: " + r.error);
+                    }}>🔍</button>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={save}>💾 Guardar</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setEditing(null); }}>Cancelar</button>
+            </div>
+          </div>
+        )}
+
+        {filmmakers.length === 0 && !showForm && <div className="empty"><div style={{ fontSize: 28, opacity: .3 }}>🎬</div><div style={{ marginTop: 8 }}>Sin filmmakers registrados.</div></div>}
+
+        {filmmakers.map(fm => (
+          <div key={fm.id} className="card" style={{ marginBottom: ".75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 42, height: 42, borderRadius: "50%", background: "rgba(255,145,77,.2)", color: "var(--orange)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+                {fm.nombre?.slice(0,2).toUpperCase()}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{fm.nombre} <span className="fm-badge">Filmmaker</span></div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                  @{fm.username} {fm.telefono ? "· " + fm.telefono : ""}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  Clientes: {misClientes(fm.id)}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => startEdit(fm)}>✏️</button>
+                <button className="btn btn-danger btn-sm" onClick={() => del(fm.id)}>×</button>
+              </div>
+            </div>
+
+            {/* Asignar clientes */}
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Clientes asignados</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {clients.map(c => {
+                  const asignado = c.filmakerAsignado === fm.id;
+                  return (
+                    <div key={c.id} className={"fb-chip " + (asignado ? "active" : "")}
+                      style={{ cursor: "pointer" }}
+                      onClick={async () => {
+                        const updated = { ...c, filmakerAsignado: asignado ? undefined : fm.id };
+                        // Actualizar en clients — necesitamos onUpdate del AdminPanel
+                        // Por ahora guardamos via window.dispatchEvent
+                        window.dispatchEvent(new CustomEvent("updateClient", { detail: updated }));
+                      }}>
+                      {asignado ? "✓ " : ""}{c.name}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ─── AGENDA CONSOLIDADA ADMIN ────────────────────────────────────────────────
 function AgendaConsolidadaPanel({ clients }) {
   const [filtro, setFiltro] = useState("proximas"); // proximas | todas
@@ -4486,6 +5151,14 @@ function getNotificaciones(clients) {
       }
     });
 
+    // 3b. Notas pendientes en fichas de estudio
+    const fichas = client.hermesData?.fichas || [];
+    const fichasConNotas = fichas.filter(f => (f.notas || []).length > 0);
+    if (fichasConNotas.length > 0) {
+      notifs.push({ id: `${client.id}-fichas`, tipo: "amber", icon: "🎬",
+        texto: `${client.name} — ${fichasConNotas.length} ficha(s) con notas del cliente`,
+        clientId: client.id });
+    }
     // 4. Sincronización de Facebook fallida (token viejo)
     if (client.fbConfig?.token && client.fbConfig?.lastSync) {
       const lastSync = new Date(client.fbConfig.lastSync);
@@ -4998,7 +5671,13 @@ function ComandosPanel({ globalConfig, onSave }) {
 }
 
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
-function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners, globalConfig, onSaveGlobalConfig }) {
+function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners, globalConfig, onSaveGlobalConfig, filmmakers, saveFilmmakers }) {
+  // Listener para actualización de cliente desde el panel de filmmakers
+  useEffect(() => {
+    const handler = (e) => onUpdate(e.detail);
+    window.addEventListener("updateClient", handler);
+    return () => window.removeEventListener("updateClient", handler);
+  }, [onUpdate]);
   const [view, setView] = useState("clientes");
   const [selectedId, setSelectedId] = useState(null);
   const [addingClient, setAddingClient] = useState(false);
@@ -5012,7 +5691,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "agenda", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -5095,6 +5774,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             </div>}
             {view === "salud" && <HealthDashboard clients={clients} />}
             {view === "agenda" && <AgendaConsolidadaPanel clients={clients} />}
+            {view === "filmmakers" && <FilmakersAdminPanel filmmakers={filmmakers} clients={clients} onSave={saveFilmmakers} />}
             {view === "banner" && (
               <BannerAdmin clients={clients} banners={banners} onSave={onSaveBanners} />
             )}
@@ -5138,6 +5818,7 @@ export default function App() {
   const [clients, setClients] = useState([]);
   const [banners, setBanners] = useState([]);
   const [globalConfig, setGlobalConfig] = useState({ commands: DEFAULT_COMMANDS_FRONT, webhookToken: "" });
+  const [filmmakers, setFilmmakers] = useState([]);
   const [appLoading, setAppLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [dbError, setDbError] = useState(null);
@@ -5151,9 +5832,11 @@ export default function App() {
         const clientData = allItems.filter(item => item && item.id && !item.id.startsWith("__"));
         const bannerItem = allItems.find(item => item && item.id === "__banners__");
         const configItem = allItems.find(item => item && item.id === "__globalconfig__");
+        const fmItem = allItems.find(item => item && item.id === "__filmmakers__");
         setClients(clientData);
         setBanners(bannerItem?.data || []);
         if (configItem?.data) setGlobalConfig(configItem.data);
+        if (fmItem?.data) setFilmmakers(fmItem.data);
         setDbError(null);
       } else {
         setDbError("No se pudo conectar a la base de datos. Verifica las variables de entorno en Vercel.");
@@ -5177,6 +5860,16 @@ export default function App() {
   async function saveGlobalConfig(cfg) {
     setGlobalConfig(cfg);
     await db.upsert({ id: "__globalconfig__", data: cfg });
+  }
+
+  async function saveFilmmakers(list) {
+    setFilmmakers(list);
+    await db.upsert({ id: "__filmmakers__", data: list });
+  }
+
+  async function updateFilmmaker(updated) {
+    const list = filmmakers.map(f => f.id === updated.id ? updated : f);
+    await saveFilmmakers(list);
   }
 
   async function handleLogin(username, password) {
@@ -5245,8 +5938,15 @@ export default function App() {
           onSaveBanners={saveBanners}
           globalConfig={globalConfig}
           onSaveGlobalConfig={saveGlobalConfig}
+          filmmakers={filmmakers}
+          saveFilmmakers={saveFilmmakers}
         />
       )}
+      {session?.role === "filmmaker" && (() => {
+        const fm = filmmakers.find(f => f.id === session.filmmakerId);
+        if (!fm) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
+        return <FilmakerDashboard filmmaker={fm} allClients={clients} onLogout={() => setSession(null)} onUpdate={updateFilmmaker} />;
+      })()}
       {session?.role === "client" && clientSession && (
         <ClientDashboard client={clientSession} onLogout={() => setSession(null)} banners={clientBanners} onUpdate={updateClient} />
       )}
