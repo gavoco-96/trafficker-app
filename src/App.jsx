@@ -527,13 +527,30 @@ function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight })
 
 function filterByPeriod(records, period, from, to) {
   const now = new Date();
+  const ago = (days) => { const d = new Date(now); d.setDate(d.getDate() - days); return d; };
   return (records || []).filter(r => {
     const d = new Date(r.date + "T12:00:00");
     if (period === "custom") return (!from || d >= new Date(from + "T00:00:00")) && (!to || d <= new Date(to + "T23:59:59"));
-    if (period === "7d") { const l = new Date(now); l.setDate(l.getDate() - 7); return d >= l; }
-    if (period === "30d") { const l = new Date(now); l.setDate(l.getDate() - 30); return d >= l; }
-    if (period === "mtd") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    return true;
+    if (period === "hoy")   { const h = new Date(now.toISOString().slice(0,10) + "T00:00:00"); return d >= h; }
+    if (period === "ayer")  { const a = ago(1); a.setHours(0,0,0,0); const b = new Date(a); b.setHours(23,59,59,999); return d >= a && d <= b; }
+    if (period === "2d")    return d >= ago(2);
+    if (period === "7d")    return d >= ago(7);
+    if (period === "15d")   return d >= ago(15);
+    if (period === "30d")   return d >= ago(30);
+    if (period === "mtd")   return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    if (period === "mes_ant") { const mp = new Date(now.getFullYear(), now.getMonth()-1, 1); const mf = new Date(now.getFullYear(), now.getMonth(), 0); return d >= mp && d <= mf; }
+    if (period === "90d")   return d >= ago(90);
+    return true; // "all"
+  });
+}
+
+// Filtrar registros por búsqueda de nomenclatura de campañas
+function filterByNomenclatura(records, busqueda) {
+  if (!busqueda || !busqueda.trim()) return records;
+  const q = busqueda.toLowerCase().trim();
+  return records.filter(r => {
+    const campos = [r.campanas, r.conjuntos, r.anuncios, r.etiquetas, r.notas_dia].filter(Boolean).join(" ").toLowerCase();
+    return campos.includes(q);
   });
 }
 
@@ -1171,6 +1188,7 @@ const ALL_COLUMNS = [
   { key: "clientesPotenciales", label: "Potenciales"     },
   { key: "formularios", label: "Formularios"             },
   { key: "resultados", label: "Resultados"               },
+  { key: "personas_wp", label: "Personas WP"             },
   { key: "cpa",      label: "Costo x Resultado", prefix: "$" },
   { key: "ticket_promedio", label: "Ticket prom.", prefix: "$" },
 ];
@@ -1255,15 +1273,20 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
   const [editForm, setEditForm] = useState({});
   const [sortCol, setSortCol] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
+  const [busqueda, setBusqueda] = useState("");
+  const [vistaTab, setVistaTab] = useState("diario"); // diario | campanas
   const { cols, toggle: toggleCol } = useColPrefs(client, isWA, isWeb);
   const visibleCols = ALL_COLUMNS.filter(c => cols.includes(c.key));
+
+  // Aplicar filtro de nomenclatura
+  const rowsFiltrados = filterByNomenclatura(rows, busqueda);
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(col); setSortDir("asc"); }
   }
 
-  const sortedRows = [...rows].sort((a, b) => {
+  const sortedRows = [...rowsFiltrados].sort((a, b) => {
     const va = a[sortCol] ?? ""; const vb = b[sortCol] ?? "";
     const na = parseFloat(va); const nb = parseFloat(vb);
     const numSort = !isNaN(na) && !isNaN(nb) ? na - nb : String(va).localeCompare(String(vb));
@@ -1338,6 +1361,30 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <MetricCard label="Ventas" value={t.ventas} />
         <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
       </div></>}
+      {/* TABS vista diario / por campaña */}
+      <div style={{ display: "flex", gap: 8, marginBottom: "1rem", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
+        <div className="period-pills">
+          <button className={"pill " + (vistaTab === "diario" ? "active" : "")} onClick={() => setVistaTab("diario")}>📅 Por día</button>
+          <button className={"pill " + (vistaTab === "campanas" ? "active" : "")} onClick={() => setVistaTab("campanas")}>📡 Por campaña</button>
+        </div>
+        {/* BARRA DE BÚSQUEDA NOMENCLATURA */}
+        <div style={{ display: "flex", gap: 8, flex: 1, maxWidth: 400, minWidth: 220 }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar por campaña, conjunto, anuncio..."
+              style={{ width: "100%", paddingLeft: 32, fontSize: 12 }} />
+            <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 14 }}>🔍</span>
+          </div>
+          {busqueda && <button className="btn btn-ghost btn-sm" onClick={() => setBusqueda("")}>×</button>}
+        </div>
+      </div>
+      {busqueda && <div style={{ fontSize: 12, color: "var(--accent2)", marginBottom: 8 }}>
+        Mostrando {rowsFiltrados.length} de {rows.length} registros con "{busqueda}"
+      </div>}
+
+      {vistaTab === "campanas" ? (
+        <VistaPorCampana rows={sortedRows} busqueda={busqueda} />
+      ) : (<>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
         <div style={{ display: "flex", gap: 8 }}>
@@ -1423,7 +1470,113 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
           )}
         </table>
       </div>
+      </>)}
     </>
+  );
+}
+
+
+// ─── VISTA POR CAMPAÑA ────────────────────────────────────────────────────────
+function VistaPorCampana({ rows, busqueda }) {
+  // Agrupa todos los registros por campaña/conjunto/anuncio
+  const campanaMap = {};
+  rows.forEach(r => {
+    const campanas = (r.campanas || "").split(",").map(c => c.trim()).filter(Boolean);
+    const conjuntos = (r.conjuntos || "").split(",").map(c => c.trim()).filter(Boolean);
+    const anuncios  = (r.anuncios  || "").split(",").map(c => c.trim()).filter(Boolean);
+    const allKeys = campanas.length ? campanas : conjuntos.length ? conjuntos : anuncios.length ? anuncios : ["Sin nomenclatura"];
+    allKeys.forEach(key => {
+      if (!campanaMap[key]) campanaMap[key] = { nombre: key, dias: 0, inversion: 0, alcance: 0, leads: 0, ventas: 0, cpm_sum: 0, cpc_sum: 0, ctr_sum: 0, n: 0 };
+      const c = campanaMap[key];
+      c.dias++;
+      c.inversion += parseFloat(r.inversion) || 0;
+      c.alcance   += parseFloat(r.alcance)   || 0;
+      c.leads     += parseFloat(r.leads || r.formularios || r.resultados) || 0;
+      c.ventas    += parseFloat(r.ventas)    || 0;
+      c.cpm_sum   += parseFloat(r.cpm)       || 0;
+      c.cpc_sum   += parseFloat(r.cpc)       || 0;
+      c.ctr_sum   += parseFloat(r.ctr)       || 0;
+      c.n++;
+    });
+  });
+
+  const lista = Object.values(campanaMap).map(c => ({
+    ...c,
+    cpm: c.n ? c.cpm_sum / c.n : 0,
+    cpc: c.n ? c.cpc_sum / c.n : 0,
+    ctr: c.n ? c.ctr_sum / c.n : 0,
+    cpl: c.leads > 0 ? c.inversion / c.leads : 0,
+  })).sort((a, b) => b.inversion - a.inversion);
+
+  if (lista.length === 0) return (
+    <div className="empty"><div style={{ fontSize: 28, opacity: .3 }}>📡</div><div style={{ marginTop: 8 }}>Sin campañas registradas.{!busqueda ? " Agrega nombres de campaña en los registros diarios." : ""}</div></div>
+  );
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem" }}>
+        {lista.length} campañas/conjuntos encontrados{busqueda ? ` con "${busqueda}"` : ""}
+      </div>
+      <div className="card scroll-x">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Campaña / Conjunto / Anuncio</th>
+              <th>Días activa</th>
+              <th>Inversión</th>
+              <th>Alcance</th>
+              <th>CPM</th>
+              <th>CPC</th>
+              <th>CTR</th>
+              <th>Leads</th>
+              <th>CPL</th>
+              <th>Ventas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista.map((c, i) => {
+              // Highlight si hay búsqueda activa
+              const match = busqueda && c.nombre.toLowerCase().includes(busqueda.toLowerCase());
+              return (
+                <tr key={i} style={{ background: match ? "rgba(255,222,89,.06)" : "" }}>
+                  <td style={{ fontWeight: 500, maxWidth: 280, wordBreak: "break-word" }}>
+                    {match && <span style={{ color: "var(--accent2)", marginRight: 4 }}>●</span>}
+                    {c.nombre}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)", textAlign: "center" }}>{c.dias}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.inversion, 2)}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.alcance)}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.cpm, 2)}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.cpc, 2)}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.ctr, 2)}%</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.leads)}</td>
+                  <td style={{ fontFamily: "var(--mono)", color: c.cpl < 5 ? "var(--green)" : c.cpl < 15 ? "var(--amber)" : "var(--red)" }}>
+                    {c.cpl > 0 ? "$" + fmtNum(c.cpl, 2) : "—"}
+                  </td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{c.ventas > 0 ? fmtNum(c.ventas) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {lista.length > 1 && (
+            <tfoot>
+              <tr style={{ background: "rgba(0,74,173,.08)", fontWeight: 600 }}>
+                <td>TOTAL ({lista.length} campañas)</td>
+                <td>—</td>
+                <td>${fmtNum(lista.reduce((a,c) => a+c.inversion, 0), 2)}</td>
+                <td>{fmtNum(lista.reduce((a,c) => a+c.alcance, 0))}</td>
+                <td>${fmtNum(lista.reduce((a,c) => a+c.cpm, 0) / lista.length, 2)}</td>
+                <td>${fmtNum(lista.reduce((a,c) => a+c.cpc, 0) / lista.length, 2)}</td>
+                <td>{fmtNum(lista.reduce((a,c) => a+c.ctr, 0) / lista.length, 2)}%</td>
+                <td>{fmtNum(lista.reduce((a,c) => a+c.leads, 0))}</td>
+                <td>—</td>
+                <td>{fmtNum(lista.reduce((a,c) => a+c.ventas, 0))}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -3597,9 +3750,10 @@ function AddRecordForm({ client, onSave, onCancel }) {
   // formRef guarda referencias directas a cada input por nombre
   const formRef = useRef({});
 
-  function handleSave() {
-    const rec = { date: dateRef.current?.value || today };
+  function handleSave(extraData) {
+    const rec = { date: dateRef.current?.value || today, ...(extraData || {}) };
     Object.entries(formRef.current).forEach(([k, el]) => {
+      if (k.startsWith("_")) return; // los campos de texto ya están en extraData
       if (el && el.value !== "" && el.value !== null) {
         const n = parseFloat(el.value);
         if (!isNaN(n)) rec[k] = n;
@@ -3682,8 +3836,46 @@ function AddRecordForm({ client, onSave, onCancel }) {
         </div>
       </>}
 
+      {/* NOMENCLATURA DE CAMPAÑAS */}
+      <div className="section-label" style={{ marginTop: "1rem" }}>Nomenclatura de campañas (opcional)</div>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>
+        Escribe los nombres separados por coma. Permite filtrar y agrupar métricas por campaña.
+      </div>
+      <div className="field">
+        <label>Campañas activas este día</label>
+        <input type="text" ref={el => { formRef.current["_campanas"] = el; }}
+          placeholder="Ej: L1_JORGE_CAP_FB_FORM1_COL_FRIO_01042026, L1_JORGE_CAP_FB_LP2_MEX_TEMP_01042026"
+          onChange={() => {}} style={{ fontSize: 12 }} />
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label>Conjuntos de anuncios</label>
+          <input type="text" ref={el => { formRef.current["_conjuntos"] = el; }}
+            placeholder="Ej: CJ_INTERES_25-45_COL, CJ_LOOKALIKE_MEX" onChange={() => {}} style={{ fontSize: 12 }} />
+        </div>
+        <div className="field">
+          <label>Anuncios</label>
+          <input type="text" ref={el => { formRef.current["_anuncios"] = el; }}
+            placeholder="Ej: AD_VIDEO1_HOOK_DOLOR, AD_IMG2_OFERTA" onChange={() => {}} style={{ fontSize: 12 }} />
+        </div>
+      </div>
+      <div className="field">
+        <label>Notas del día (contexto adicional)</label>
+        <input type="text" ref={el => { formRef.current["_notas_dia"] = el; }}
+          placeholder="Ej: subimos presupuesto congelado, pausamos anuncio bajo rendimiento" onChange={() => {}} style={{ fontSize: 12 }} />
+      </div>
+
       <div style={{ display: "flex", gap: 10, marginTop: "1.25rem" }}>
-        <button className="btn btn-primary" onClick={handleSave}>Guardar</button>
+        <button className="btn btn-primary" onClick={() => {
+          // Capturar campos de texto de nomenclatura antes de guardar
+          const txtFields = ["_campanas","_conjuntos","_anuncios","_notas_dia"];
+          const extraData = {};
+          txtFields.forEach(k => {
+            const el = formRef.current[k];
+            if (el && el.value.trim()) extraData[k.replace("_","")] = el.value.trim();
+          });
+          handleSave(extraData);
+        }}>Guardar</button>
         <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
       </div>
     </div>
@@ -3869,6 +4061,17 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
         record[m.campo] = parseFloat(row[m.key]) || 0;
       }
     });
+
+    // Jalar nombres de campañas activas ese día
+    try {
+      const campUrl = `https://graph.facebook.com/v19.0/act_${adAccountId}/campaigns?fields=name,status&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]&access_token=${token}`;
+      const campRes = await fetch(campUrl);
+      const campData = await campRes.json();
+      if (campData.data?.length) {
+        record.campanas = campData.data.map(c => c.name).join(", ");
+      }
+    } catch {} // no es crítico si falla
+
     return { ok: true, record };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -4147,6 +4350,40 @@ function buildReportMessage(client, records) {
   return msg;
 }
 
+// Reporte APOLLO — formato gasto diario exacto para lanzamientos
+function buildReportApollo(client, records) {
+  if (!records || !records.length) return null;
+  const r = records[records.length - 1]; // último registro
+  const fecha = r.date ? new Date(r.date + "T12:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+
+  const gasto = parseFloat(r.inversion) || 0;
+  const personasFB = parseFloat(r.formularios || r.leads || r.clientesPotenciales) || 0;
+  const personasWP = parseFloat(r.personas_wp || r.contactados) || 0;
+  const costoFB = personasFB > 0 ? gasto / personasFB : 0;
+  const costoWP = personasWP > 0 ? gasto / personasWP : 0;
+  const captura = personasFB > 0 && personasWP > 0 ? ((personasWP / personasFB) * 100) : 0;
+
+  // Campañas activas ese día
+  const campanas = r.campanas ? `\n📡 *Campañas activas:*\n${r.campanas.split(",").map(c => `• ${c.trim()}`).join("\n")}` : "";
+  const notas = r.notas_dia ? `\n📝 ${r.notas_dia}` : "";
+
+  let msg = `🚀 *GASTO DIARIO — ${client.name}*\n`;
+  msg += `━━━━━━━━━━━━━━━━━━\n`;
+  msg += `📅 Fecha: ${fecha}\n`;
+  msg += `💵 Gasto: $${fmtNum(gasto, 2)}\n`;
+  msg += `👥 Personas en FB/LP: ${fmtNum(personasFB)}\n`;
+  msg += `📱 Personas en WP: ${fmtNum(personasWP)}\n`;
+  msg += `💰 Costo en FB/LP: $${fmtNum(costoFB, 2)}\n`;
+  msg += `💰 Costo en WP: $${fmtNum(costoWP, 2)}\n`;
+  msg += `📊 % de Captura: ${fmtNum(captura, 2)}\n`;
+  if (r.cpm) msg += `🎯 CPM: $${fmtNum(r.cpm, 2)} | CPC: $${fmtNum(r.cpc || 0, 2)} | CTR: ${fmtNum(r.ctr || 0, 2)}%\n`;
+  msg += campanas;
+  msg += notas;
+  msg += `\n━━━━━━━━━━━━━━━━━━\n_Trafficker Pro · Centro de Control APOLLO_`;
+  return msg;
+}
+
+
 async function sendTelegram(token, chatId, text) {
   try {
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
@@ -4198,8 +4435,9 @@ function buildCobroMessage(client) {
 
 const PLANTILLAS_DEFAULT = [
   { id: "p1", nombre: "Reporte diario", tipo: "reporte", texto: "" },
-  { id: "p2", nombre: "Recordatorio de cobro", tipo: "cobro", texto: "" },
-  { id: "p3", nombre: "Mensaje personalizado", tipo: "custom", texto: "" },
+  { id: "p2", nombre: "🚀 Gasto diario APOLLO", tipo: "apollo", texto: "" },
+  { id: "p3", nombre: "Recordatorio de cobro", tipo: "cobro", texto: "" },
+  { id: "p4", nombre: "Mensaje personalizado", tipo: "custom", texto: "" },
 ];
 
 function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
@@ -4247,6 +4485,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
       const p = plantillas.find(x => x.id === selectedPlantilla);
       if (!p) return "";
       if (p.tipo === "reporte") return lastRecord.length ? buildReportMessage(client, lastRecord) : "";
+      if (p.tipo === "apollo") return lastRecord.length ? (buildReportApollo(client, lastRecord) || buildReportMessage(client, lastRecord)) : "";
       if (p.tipo === "cobro") return buildCobroMessage(client) || "No hay cuotas pendientes para este cliente.";
       return p.texto || "";
     } catch (e) { return ""; }
@@ -4395,6 +4634,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
                         <label>Tipo</label>
                         <select value={p.tipo} onChange={e => updPlantilla(p.id, "tipo", e.target.value)}>
                           <option value="reporte">Reporte diario (automatico)</option>
+                          <option value="apollo">🚀 Gasto diario APOLLO (lanzamientos)</option>
                           <option value="cobro">Recordatorio de cobro (contrato)</option>
                           <option value="custom">Mensaje personalizado</option>
                         </select>
