@@ -2187,12 +2187,14 @@ function getBannersForClient(banners, clientId) {
 // ─── APOLLO PRODUCT ───────────────────────────────────────────────────────────
 
 const APOLLO_KPIS_DEFAULT = [
-  { id: "registros",  nombre: "Registros",              unidad: "personas",  historico: "", actual: "", meta: "" },
-  { id: "asistentes", nombre: "Asistentes al evento",   unidad: "personas",  historico: "", actual: "", meta: "" },
-  { id: "oportunidades", nombre: "Oportunidades",        unidad: "personas",  historico: "", actual: "", meta: "" },
-  { id: "ventas",     nombre: "Ventas cerradas",         unidad: "ventas",    historico: "", actual: "", meta: "" },
-  { id: "cpa",        nombre: "CPA (Costo por venta)",   unidad: "$",         historico: "", actual: "", meta: "" },
-  { id: "roas",       nombre: "ROAS",                    unidad: "x",         historico: "", actual: "", meta: "4" },
+  { id: "reg_fb",     nombre: "Registros en Facebook",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "formularios",  hint: "¿Cuántas personas se registraron en el formulario/landing?" },
+  { id: "reg_wp",     nombre: "Registros en WhatsApp",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "personas_wp",  hint: "¿Cuántas personas ingresaron al grupo de WhatsApp?" },
+  { id: "pct_cap",    nombre: "% de Captura",             unidad: "%",        historico: "", actual: "", meta: "70", metrica: "pct_captura_wp", hint: "¿Qué % pasó de Facebook a WhatsApp?" },
+  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "resultados",  hint: "¿Cuántas personas asistieron a la clase en vivo?" },
+  { id: "oportunidades", nombre: "Oportunidades",         unidad: "personas", historico: "", actual: "", meta: "", metrica: "leads",        hint: "¿Cuántas personas mostraron intención real de compra?" },
+  { id: "ventas",     nombre: "Ventas cerradas",           unidad: "ventas",   historico: "", actual: "", meta: "", metrica: "ventas",       hint: "¿Cuántas ventas se generaron?" },
+  { id: "cpa",        nombre: "CPA",                       unidad: "$",        historico: "", actual: "", meta: "", metrica: "cpa",          hint: "¿Cuánto costó conseguir una venta?" },
+  { id: "roas",       nombre: "ROAS",                      unidad: "x",        historico: "", actual: "", meta: "4", metrica: "roas",        hint: "¿Cuánto dinero regresó por cada dólar invertido?" },
 ];
 
 const APOLLO_FASES = [
@@ -2408,9 +2410,12 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
 }
 
 // ─── KPIs COMPARATIVOS HERMES ─────────────────────────────────────────────────
-function HermesKpisPanel({ client, onUpdate, readOnly }) {
+function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
   const hermes = client.hermesData || {};
-  const kpis = hermes.kpisHermes || HERMES_KPIS_DEFAULT;
+  const defaultKpis = isApollo ? APOLLO_KPIS_DEFAULT : HERMES_KPIS_DEFAULT;
+  const kpis = isApollo
+    ? (client.apolloData?.kpisApollo || defaultKpis)
+    : (hermes.kpisHermes || defaultKpis);
   const [editing, setEditing] = useState(false);
   const [local, setLocal] = useState(kpis);
   const { show, el: toastEl } = useToast();
@@ -2418,7 +2423,9 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
   function upd(id, k, v) { setLocal(p => p.map(kpi => kpi.id === id ? { ...kpi, [k]: v } : kpi)); }
 
   async function save() {
-    const updated = { ...client, hermesData: { ...hermes, kpisHermes: local } };
+    const updated = isApollo
+      ? { ...client, apolloData: { ...(client.apolloData || {}), kpisApollo: local } }
+      : { ...client, hermesData: { ...hermes, kpisHermes: local } };
     await onUpdate(updated);
     show("✓ KPIs guardados", "ok");
     setEditing(false);
@@ -2436,24 +2443,48 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
   function getActualFromRecords(kpiId) {
     const records = client.records || [];
     if (!records.length) return "";
+    // KPIs APOLLO
+    if (kpiId === "reg_fb") {
+      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      return total > 0 ? String(total) : "";
+    }
+    if (kpiId === "reg_wp") {
+      const total = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+      return total > 0 ? String(total) : "";
+    }
+    if (kpiId === "pct_cap") {
+      const fb = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+      return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
+    }
+    if (kpiId === "asistentes") {
+      const total = records.reduce((a, r) => a + (parseFloat(r.resultados) || 0), 0);
+      return total > 0 ? String(total) : "";
+    }
     if (kpiId === "oportunidades") {
-      const total = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+      const total = records.reduce((a, r) => a + (parseFloat(r.leads) || parseFloat(r.formularios) || parseFloat(r.resultados) || 0), 0);
       return total > 0 ? String(total) : "";
     }
     if (kpiId === "ventas") {
-      const total = records.reduce((a, r) => a + (r.ventas || 0), 0);
+      const total = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
       return total > 0 ? String(total) : "";
     }
     if (kpiId === "cpa") {
-      const inv = records.reduce((a, r) => a + (r.inversion || 0), 0);
-      const res = records.reduce((a, r) => a + (r.leads || r.formularios || r.resultados || 0), 0);
+      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+      const res = records.reduce((a, r) => a + (parseFloat(r.ventas) || parseFloat(r.leads) || parseFloat(r.resultados) || 0), 0);
       return inv > 0 && res > 0 ? (inv / res).toFixed(2) : "";
     }
+    if (kpiId === "roas") {
+      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+      const ing = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
+      return inv > 0 && ing > 0 ? (ing / inv).toFixed(2) : "";
+    }
+    // KPIs HERMES
     if (kpiId === "calidad") {
       const piezas = hermes.biblioteca || [];
       if (!piezas.length) return "";
-      const avg = piezas.reduce((a, p) => a + calcIV(p, piezas), 0) / piezas.length;
-      return avg.toFixed(0);
+      const avgIV = piezas.reduce((a, p) => a + calcIV(p, piezas), 0) / piezas.length;
+      return avgIV.toFixed(0);
     }
     return "";
   }
@@ -2504,7 +2535,7 @@ function HermesKpisPanel({ client, onUpdate, readOnly }) {
                     ) : (
                       <div>
                         <div style={{ fontWeight: 600 }}>{kpi.nombre}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.unidad}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.hint || kpi.unidad}</div>
                       </div>
                     )}
                   </td>
@@ -2618,6 +2649,89 @@ function HermesFunnel({ client, period, from, to }) {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── EMBUDO APOLLO ────────────────────────────────────────────────────────────
+function ApolloFunnel({ client, period, from, to }) {
+  const records = filterByPeriod(client.records || [], period, from, to);
+
+  const personasFB  = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+  const personasWP  = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+  const asistentes  = records.reduce((a, r) => a + (parseFloat(r.resultados) || 0), 0);
+  const ventas      = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
+  const gasto       = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+
+  const pctCaptura  = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100).toFixed(1) : null;
+  const pctAsist    = personasWP > 0 && asistentes > 0 ? (asistentes / personasWP * 100).toFixed(1) : null;
+  const pctVentas   = asistentes > 0 && ventas > 0 ? (ventas / asistentes * 100).toFixed(1) : null;
+  const cpa         = ventas > 0 && gasto > 0 ? (gasto / ventas).toFixed(2) : null;
+  const roas        = gasto > 0 && ventas > 0 ? (ventas / gasto).toFixed(2) : null;
+
+  const stages = [
+    { label: "Personas en Facebook",  sub: "Registros en formulario/LP",  val: personasFB,  color: "#004AAD", topW: 300, botW: 240, h: 56 },
+    { label: "Personas en WhatsApp",  sub: pctCaptura ? pctCaptura + "% captura" : "Tasa de captura",  val: personasWP,  color: "#0066cc", topW: 240, botW: 180, h: 48 },
+    { label: "Asistentes a la clase", sub: pctAsist ? pctAsist + "% asistencia" : "Tasa de asistencia", val: asistentes, color: "#FF914D", topW: 180, botW: 120, h: 40 },
+    { label: "Ventas",                sub: pctVentas ? pctVentas + "% conversión" : "Tasa de conversión", val: ventas,    color: "#10B981", topW: 120, botW: 70,  h: 32 },
+  ];
+
+  const svgW = 320;
+  const gap = 4;
+  const totalH = stages.reduce((a, s) => a + s.h + gap, 0);
+  const cx = svgW / 2;
+
+  return (
+    <div className="card">
+      <div className="card-title">Embudo de la Misión</div>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <svg width={svgW} height={totalH} viewBox={"0 0 " + svgW + " " + totalH} style={{ flexShrink: 0, display: "block" }}>
+          <defs>
+            {stages.map((s, i) => (
+              <linearGradient key={i} id={"afg" + i} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={s.color} stopOpacity="1" />
+                <stop offset="100%" stopColor={s.color} stopOpacity="0.55" />
+              </linearGradient>
+            ))}
+          </defs>
+          {stages.map((s, i) => {
+            const y = stages.slice(0, i).reduce((a, p) => a + p.h + gap, 0);
+            const tl = cx - s.topW / 2, tr = cx + s.topW / 2;
+            const bl = cx - s.botW / 2, br = cx + s.botW / 2;
+            const ey = s.h * 0.18;
+            return (
+              <g key={i}>
+                <path d={"M " + tl + " " + (y + ey) + " L " + bl + " " + (y + s.h - ey * 0.5) + " L " + br + " " + (y + s.h - ey * 0.5) + " L " + tr + " " + (y + ey) + " Z"}
+                  fill={"url(#afg" + i + ")"} />
+                <ellipse cx={cx} cy={y + s.h - ey * 0.5} rx={s.botW / 2} ry={ey * 0.6} fill={s.color} fillOpacity="0.5" />
+                <ellipse cx={cx} cy={y + ey} rx={s.topW / 2} ry={ey} fill={s.color} fillOpacity="0.2" stroke={s.color} strokeWidth="1.5" strokeOpacity="0.7" />
+                <text x={cx} y={y + s.h * 0.52} textAnchor="middle" dominantBaseline="middle"
+                  fill="#fff" fontSize={Math.max(s.h * 0.28, 11)} fontWeight="800" fontFamily="var(--mono)">
+                  {s.val > 0 ? s.val.toLocaleString("es-EC") : "—"}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 4 }}>
+          {stages.map((s, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: (stages[i].h + gap) + "px" }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color, boxShadow: "0 0 6px " + s.color, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 12, color: s.color }}>{s.label}</div>
+                <div style={{ fontSize: 10, color: "var(--muted)" }}>{s.sub}</div>
+              </div>
+            </div>
+          ))}
+          {/* Métricas resumen */}
+          <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+            {cpa && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpa}</span></div>}
+            {roas && <div style={{ fontSize: 11, color: "var(--muted)" }}>ROAS: <span style={{ color: "var(--green)", fontWeight: 700 }}>{roas}x</span></div>}
+            {gasto > 0 && <div style={{ fontSize: 11, color: "var(--muted)" }}>Gasto: <span style={{ fontFamily: "var(--mono)" }}>${gasto.toLocaleString("es-EC")}</span></div>}
+          </div>
         </div>
       </div>
     </div>
@@ -2972,17 +3086,20 @@ function FaseItem({ fase, client, onUpdate }) {
 }
 
 function HermesAdminView({ client, allClients, onUpdate }) {
+  const isApollo = client.producto?.startsWith("APOLLO");
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
 
-  const subTabs = [["dashboard","✦ Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Calendario"],["fases","📋 Fases"]];
+  const subTabs = isApollo
+    ? [["dashboard","🚀 Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Mision"],["fases","📋 Fases"]]
+    : [["dashboard","✦ Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Calendario"],["fases","📋 Fases"]];
+
+  const fases = isApollo ? APOLLO_FASES : HERMES_FASES;
 
   return (
     <div>
-      {/* Barra de progreso siempre visible */}
       <HermesProgressBar client={client} onUpdate={onUpdate} readOnly={false} />
-
       <div className="tab-row" style={{ marginBottom: "1rem" }}>
         {subTabs.map(([id, lbl]) => (
           <button key={id} className={"tab " + (subTab === id ? "active" : "")} onClick={() => setSubTab(id)}>{lbl}</button>
@@ -2993,8 +3110,10 @@ function HermesAdminView({ client, allClients, onUpdate }) {
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
           <div className="grid2" style={{ alignItems: "start" }}>
-            <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} />
-            <HermesFunnel client={client} period={period} from={from} to={to} />
+            <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} isApollo={isApollo} />
+            {isApollo
+              ? <ApolloFunnel client={client} period={period} from={from} to={to} />
+              : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
         </div>
       )}
@@ -3004,7 +3123,7 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 
       {subTab === "fases" && (
         <div>
-          {HERMES_FASES.map(fase => (
+          {fases.map(fase => (
             <FaseItem key={fase.id} fase={fase} client={client} onUpdate={onUpdate} />
           ))}
         </div>
@@ -3015,15 +3134,20 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
 function HermesClientView({ client, allClients, onUpdate }) {
+  const isApollo = client.producto?.startsWith("APOLLO");
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+
+  const clientTabs = isApollo
+    ? [["dashboard","🚀 Dashboard"],["biblioteca","🎬 Contenido"],["calendario","📅 Mision"]]
+    : [["dashboard","✦ Dashboard"],["biblioteca","🎬 Contenido"],["calendario","📅 Agenda"]];
 
   return (
     <div>
       <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />
       <div className="tab-row" style={{ marginBottom: "1rem" }}>
-        {[["dashboard","✦ Dashboard"],["biblioteca","🎬 Contenido"],["calendario","📅 Agenda"]].map(([id, lbl]) => (
+        {clientTabs.map(([id, lbl]) => (
           <button key={id} className={"tab " + (subTab === id ? "active" : "")} onClick={() => setSubTab(id)}>{lbl}</button>
         ))}
       </div>
@@ -3031,8 +3155,10 @@ function HermesClientView({ client, allClients, onUpdate }) {
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
           <div className="grid2" style={{ alignItems: "start" }}>
-            <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} />
-            <HermesFunnel client={client} period={period} from={from} to={to} />
+            <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} isApollo={isApollo} />
+            {isApollo
+              ? <ApolloFunnel client={client} period={period} from={from} to={to} />
+              : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
           {/* Datos diarios de campañas */}
           {(client.records || []).length > 0 && (() => {
@@ -4966,7 +5092,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         <div className="tab-row">
           {["info", "hermes", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? "✦ HERMES" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
