@@ -1196,14 +1196,16 @@ const ALL_COLUMNS = [
   { key: "clientesPotenciales", label: "Potenciales"     },
   { key: "formularios", label: "Formularios"             },
   { key: "resultados", label: "Resultados"               },
-  { key: "personas_wp", label: "Personas WP"             },
-  { key: "cpa",      label: "Costo x Resultado", prefix: "$" },
-  { key: "ticket_promedio", label: "Ticket prom.", prefix: "$" },
+  { key: "personas_wp",    label: "Personas WP"                                  },
+  { key: "costo_wp",       label: "Costo x WP",       prefix: "$", autoCalc: true },
+  { key: "pct_captura_wp", label: "% Captura WP",      suffix: "%", autoCalc: true },
+  { key: "cpa",            label: "Costo x Resultado", prefix: "$"                 },
+  { key: "ticket_promedio",label: "Ticket prom.",       prefix: "$"                },
 ];
 
 const DEFAULT_COLS_WA     = ["date","inversion","alcance","cpm","cpc","ctr","leads","contactados","ventas","ingreso"];
 const DEFAULT_COLS_WEB    = ["date","inversion","alcance","cpm","cpc","ctr","sesiones","agregar_carrito","compras","ingreso","roas"];
-const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","resultados","cpa","ingreso"];
+const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","personas_wp","costo_wp","pct_captura_wp","resultados","cpa","ingreso"];
 
 function useColPrefs(client, isWA, isWeb) {
   const storageKey = "cols_" + client.id;
@@ -1276,6 +1278,11 @@ function exportMetricas(rows, client, formato) {
   URL.revokeObjectURL(url);
 }
 
+// EditNum estable — definido FUERA de MetricasAdminPanel para evitar recreación en cada render
+function EditNum({ editForm, fk, prefix, onChange }) {
+  return <NumInput value={editForm[fk] ?? ""} onChange={v => onChange(fk, v)} prefix={prefix} placeholder="0" />;
+}
+
 function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom, to, setTo, rows, t, isWA, isWeb, isLaunch, onAdd }) {
   const [editingRow, setEditingRow] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1330,9 +1337,6 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
     onUpdate({ ...client, records: allRecords });
   }
   const ef = (k, v) => setEditForm(p => ({ ...p, [k]: v }));
-  const EditNum = ({ fk, prefix }) => (
-    <NumInput value={editForm[fk] ?? ""} onChange={v => ef(fk, v)} prefix={prefix} placeholder="0" />
-  );
 
   return (
     <>
@@ -1422,15 +1426,27 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
                       {isEdit
                         ? c.key === "date"
                           ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} />
-                          : <EditNum fk={c.key} prefix={c.prefix} />
+                          : <EditNum editForm={editForm} fk={c.key} prefix={c.prefix} onChange={ef} />
                         : (() => {
                             if (c.key === "date") return fmtDate(r[c.key]);
-                            // CPA calculado dinámicamente por fila
+                            // Métricas calculadas automáticamente
                             if (c.key === "cpa") {
                               const res = r.resultados || r.formularios || r.leads || 0;
                               const inv = r.inversion || 0;
                               if (!res || !inv) return "—";
                               return "$" + fmtNum(inv / res, 2);
+                            }
+                            if (c.key === "costo_wp") {
+                              const wp = parseFloat(r.personas_wp) || 0;
+                              const inv = parseFloat(r.inversion) || 0;
+                              if (!wp || !inv) return "—";
+                              return "$" + fmtNum(inv / wp, 2);
+                            }
+                            if (c.key === "pct_captura_wp") {
+                              const wp = parseFloat(r.personas_wp) || 0;
+                              const fb = parseFloat(r.formularios || r.clientesPotenciales || r.leads) || 0;
+                              if (!wp || !fb) return "—";
+                              return fmtNum((wp / fb) * 100, 1) + "%";
                             }
                             const v = r[c.key];
                             if (v === undefined || v === null || v === "") return "—";
@@ -1466,6 +1482,21 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
               <tr style={{ background: "rgba(124,58,237,.08)", fontWeight: 600 }}>
                 {visibleCols.map(c => {
                   if (c.key === "date") return <td key="date" style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>TOTAL</td>;
+                  if (c.key === "cpa") {
+                    const res = sum(sortedRows, "resultados") || sum(sortedRows, "formularios") || sum(sortedRows, "leads");
+                    const inv = sum(sortedRows, "inversion");
+                    return <td key="cpa">{res && inv ? "$" + fmtNum(inv/res, 2) : "—"}</td>;
+                  }
+                  if (c.key === "costo_wp") {
+                    const wp = sum(sortedRows, "personas_wp");
+                    const inv = sum(sortedRows, "inversion");
+                    return <td key="costo_wp">{wp && inv ? "$" + fmtNum(inv/wp, 2) : "—"}</td>;
+                  }
+                  if (c.key === "pct_captura_wp") {
+                    const wp = sum(sortedRows, "personas_wp");
+                    const fb = sum(sortedRows, "formularios") || sum(sortedRows, "clientesPotenciales");
+                    return <td key="pct_wp">{wp && fb ? fmtNum((wp/fb)*100, 1) + "%" : "—"}</td>;
+                  }
                   const isAvg = ["cpm","cpc","ctr","roas"].includes(c.key);
                   const val = isAvg ? avg(sortedRows, c.key) : sum(sortedRows, c.key);
                   const fmt2 = fmtNum(val, 2);
@@ -2165,13 +2196,17 @@ const APOLLO_KPIS_DEFAULT = [
 ];
 
 const APOLLO_FASES = [
-  { id: "estrategia",    nombre: "Estrategia",          icono: "🧠", tareas: ["Brief del lanzamiento definido","Avatar y segmentacion listos","Nomenclatura de campanas definida","Presupuesto total asignado"] },
-  { id: "produccion",    nombre: "Produccion ads",       icono: "🎬", tareas: ["Anuncios de video grabados","Anuncios de imagen disenados","Copys redactados","Landing/Formularios configurados","Grupos WhatsApp creados"] },
-  { id: "captacion",     nombre: "Captacion",            icono: "📡", tareas: ["Campanas activas y monitoreadas","Leads ingresando a WhatsApp","Presupuesto diario controlado","Reporte diario enviado","Calidad del lead verificada","Optimizacion de campanas"] },
-  { id: "remarketing",   nombre: "Remarketing",          icono: "🔄", tareas: ["Campanas de remarketing activas","Audiencias calidas segmentadas","Mensajes de seguimiento en WP","Calificacion de leads con encuesta"] },
-  { id: "calentamiento", nombre: "Calentamiento",        icono: "🔥", tareas: ["Contenido de valor enviado por WP","Encuesta de intencion enviada","Confirmacion de asistencia obtenida","Lista de oportunidades identificada"] },
-  { id: "evento",        nombre: "Dia del lanzamiento",  icono: "🎯", tareas: ["Transmision configurada (FB/YT Live)","Pruebas tecnicas realizadas","Operacion en vivo","Grabacion del evento","Pico de asistencia registrado","Ventas en vivo monitoreadas"] },
-  { id: "post_evento",   nombre: "Post-evento",          icono: "💰", tareas: ["Follow-up de oportunidades","Ventas cerradas registradas","Reporte final enviado","ROAS calculado","Recomendaciones para proximo lanzamiento"] },
+  { id: "estrategia",      nombre: "Estrategia",           icono: "🧠", tareas: ["Brief del lanzamiento definido","Avatar y segmentacion listos","Nomenclatura de campanas definida","Presupuesto total asignado"] },
+  { id: "produccion",      nombre: "Produccion",           icono: "🎬", tareas: ["Anuncios de video grabados","Anuncios de imagen disenados","Copys redactados","Landing/Formularios configurados","Grupos WhatsApp creados y configurados"] },
+  { id: "captacion",       nombre: "Captacion",            icono: "📡", tareas: ["Campanas activas y monitoreadas","Leads ingresando a WhatsApp","Presupuesto diario controlado","Reporte diario enviado","Calidad del lead verificada","Optimizacion de campanas"] },
+  { id: "remarketing_cap", nombre: "Remarketing Captacion",icono: "🔄", tareas: ["Campanas de remarketing a clases activas","Audiencias calidas segmentadas","Mensajes de seguimiento en WP","Calificacion de leads con encuesta"] },
+  { id: "calentamiento",   nombre: "Calentamiento",        icono: "🔥", tareas: ["Contenido de valor enviado por WP","Encuesta de intencion enviada","Confirmacion de asistencia obtenida","Lista de oportunidades identificada","Campanas de recordatorio activas"] },
+  { id: "evento",          nombre: "Despegue de la mision",icono: "🚀", tareas: ["Transmision configurada (FB/YT Live)","Pruebas tecnicas realizadas","Operacion en vivo","Grabacion del evento","Pico de asistencia registrado","Ventas en vivo monitoreadas"] },
+  { id: "escalamiento",    nombre: "En orbita",            icono: "🛸", tareas: ["Campanas de escala activas","Presupuesto escalado a ganadores","Optimizacion de audiencias calientes","Reportes de escala diarios"] },
+  { id: "remarketing_vta", nombre: "Remarketing Ventas",   icono: "🎯", tareas: ["Campanas remarketing a no compradores","Segmentacion por comportamiento en evento","Mensajes de seguimiento personalizados"] },
+  { id: "ventas",          nombre: "Aterrizaje",           icono: "🌕", tareas: ["Oportunidades contactadas","Ventas cerradas registradas","Seguimiento post-venta","ROAS calculado en tiempo real"] },
+  { id: "replay",          nombre: "Replay",               icono: "📹", tareas: ["Grabacion del evento publicada","Campanas de replay activas","Nuevas oportunidades del replay","Leads calificados del replay"] },
+  { id: "cierre",          nombre: "Cierre de mision",     icono: "🏆", tareas: ["Ultima oferta enviada","Ventas finales cerradas","Reporte final APOLLO enviado","ROAS final calculado","Recomendaciones para siguiente mision"] },
 ];
 
 // ─── HERMES PRODUCT ───────────────────────────────────────────────────────────
@@ -2202,7 +2237,7 @@ const HERMES_KPIS_DEFAULT = [
   { id: "calidad",       nombre: "Calidad de contenido",    unidad: "indice 0-100",                historico: "", actual: "", meta: "50" },
 ];
 
-const HERMES_CATEGORIAS_CONTENIDO = ["Valor", "Viral", "Venta"];
+const HERMES_CATEGORIAS_CONTENIDO = ["Valor", "Viral", "Venta", "Captacion", "Remarketing"];
 
 // Calcular Indice de Validacion (IV) de una pieza
 // calcIV recibe la pieza y el conjunto completo para normalización relativa
@@ -2276,10 +2311,12 @@ function getDiasTranscurridos(client) {
 
 // ─── BARRA DE PROGRESO HERMES ─────────────────────────────────────────────────
 function HermesProgressBar({ client, onUpdate, readOnly }) {
+  const isApollo = client.producto?.startsWith("APOLLO");
   const hermes = client.hermesData || {};
   const momentos = hermes.momentos || {};
-  const dias = Math.min(getDiasTranscurridos(client), 15);
-  const pct = (dias / 15) * 100;
+  const duracion = isApollo ? (client.apolloData?.duracion || 21) : 15;
+  const dias = Math.min(getDiasTranscurridos(client), duracion);
+  const pct = (dias / duracion) * 100;
   const { show, el: toastEl } = useToast();
 
   async function toggleMomento(id) {
@@ -2316,31 +2353,49 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
       {toastEl}
       <div className="hermes-progress-wrap">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--accent2)", letterSpacing: ".05em" }}>
-            ✦ HERMES — Dia {dias} de 15
+          <div style={{ fontWeight: 700, fontSize: 15, color: isApollo ? "#4d9fff" : "var(--accent2)", letterSpacing: ".05em" }}>
+            {isApollo ? "🚀 APOLLO" : "✦ HERMES"} — Dia {dias} de {duracion}
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>{Math.round(pct)}% completado</div>
         </div>
-        <div className="hermes-track">
+        <div className="hermes-track" style={isApollo ? { background: "linear-gradient(90deg,#000510 0%,#001a3d 50%,#000c20 100%)" } : {}}>
           <div className="hermes-stars" />
-          <div className="hermes-fill" style={{ width: `${pct}%` }} />
-          <div className="hermes-carriage" style={{ left: `calc(${Math.min(pct, 92)}% - 12px)` }}>🏺</div>
-          <div className="hermes-temple">🏛️</div>
+          <div className="hermes-fill" style={{ width: `${pct}%`, background: isApollo ? "linear-gradient(90deg,rgba(0,74,173,.4),rgba(77,159,255,.2))" : undefined }} />
+          <div className="hermes-carriage" style={{ left: `calc(${Math.min(pct, 92)}% - 12px)` }}>
+            {isApollo ? "🚀" : "🏺"}
+          </div>
+          <div className="hermes-temple">{isApollo ? "🌕" : "🏛️"}</div>
         </div>
         <div className="hermes-checkpoints">
-          {HERMES_MOMENTOS_WOW.map(m => {
-            const done = !!momentos[m.id];
-            const reachable = dias >= m.dia;
-            return (
-              <div key={m.id} className="hermes-cp" onClick={() => !readOnly && reachable && toggleMomento(m.id)}
-                style={{ opacity: reachable ? 1 : 0.4, cursor: readOnly || !reachable ? "default" : "pointer" }}>
-                <div className={"hermes-cp-dot " + (done ? "done" : reachable ? "active" : "")}>
-                  {done ? "✓" : m.icono}
-                </div>
-                <div className="hermes-cp-label">{m.label}<br/><span style={{ color: "var(--muted)", fontSize: 8 }}>Dia {m.dia}</span></div>
-              </div>
-            );
-          })}
+          {isApollo
+            ? APOLLO_FASES.map((f, idx) => {
+                const diaFase = Math.round((idx / (APOLLO_FASES.length - 1)) * duracion);
+                const done = !!(client.apolloData?.momentos?.[f.id]);
+                const reachable = dias >= diaFase;
+                return (
+                  <div key={f.id} className="hermes-cp"
+                    style={{ opacity: reachable ? 1 : 0.4, cursor: "default" }}>
+                    <div className={"hermes-cp-dot " + (done ? "done" : reachable ? "active" : "")}>
+                      {done ? "✓" : f.icono}
+                    </div>
+                    <div className="hermes-cp-label" style={{ color: "#4d9fff" }}>{f.nombre.slice(0, 8)}</div>
+                  </div>
+                );
+              })
+            : HERMES_MOMENTOS_WOW.map(m => {
+                const done = !!momentos[m.id];
+                const reachable = dias >= m.dia;
+                return (
+                  <div key={m.id} className="hermes-cp" onClick={() => !readOnly && reachable && toggleMomento(m.id)}
+                    style={{ opacity: reachable ? 1 : 0.4, cursor: readOnly || !reachable ? "default" : "pointer" }}>
+                    <div className={"hermes-cp-dot " + (done ? "done" : reachable ? "active" : "")}>
+                      {done ? "✓" : m.icono}
+                    </div>
+                    <div className="hermes-cp-label">{m.label}<br/><span style={{ color: "var(--muted)", fontSize: 8 }}>Dia {m.dia}</span></div>
+                  </div>
+                );
+              })
+          }
         </div>
         {!readOnly && (
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, textAlign: "center" }}>
@@ -2571,9 +2626,15 @@ function HermesFunnel({ client, period, from, to }) {
 
 // ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
 const TIPO_AGENDA = [
-  { id: "grabacion",  label: "Grabacion",         cls: "cal-event-grabacion" },
-  { id: "reunion",    label: "Reunion",             cls: "cal-event-reunion"   },
-  { id: "metricas",   label: "Rev. Metricas",       cls: "cal-event-metricas"  },
+  { id: "grabacion",    label: "Grabacion",              cls: "cal-event-grabacion" },
+  { id: "reunion",      label: "Reunion",                 cls: "cal-event-reunion"   },
+  { id: "metricas",     label: "Rev. Metricas",           cls: "cal-event-metricas"  },
+  // APOLLO
+  { id: "despegue",     label: "🚀 Despegue de mision",   cls: "cal-event-grabacion" },
+  { id: "orbita",       label: "🛸 En orbita (escala)",   cls: "cal-event-reunion"   },
+  { id: "aterrizaje",   label: "🌕 Aterrizaje (ventas)",  cls: "cal-event-metricas"  },
+  { id: "captacion_ap", label: "📡 Captacion activa",     cls: "cal-event-grabacion" },
+  { id: "remarketing_a",label: "🔄 Remarketing",          cls: "cal-event-reunion"   },
 ];
 
 // Obtener todos los eventos de todos los clientes para bloquear horas ocupadas
@@ -2605,12 +2666,13 @@ function CalendarioPanel({ client, onUpdate, readOnly, allClients }) {
   const hermes = client.hermesData || {};
   const eventos = hermes.agenda || [];
   const disponibilidad = hermes.disponibilidad || { dias: [1,2,3,4,5], horaInicio: "09:00", horaFin: "18:00" };
+  const isApollo = client.producto?.startsWith("APOLLO");
   const [mes, setMes] = useState(() => { const h = new Date(); return new Date(h.getFullYear(), h.getMonth(), 1); });
   const [showForm, setShowForm] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [editDisp, setEditDisp] = useState(false);
   const [localDisp, setLocalDisp] = useState(disponibilidad);
-  const [form, setForm] = useState({ tipo: "reunion", titulo: "", hora: "10:00", descripcion: "", tgRecordatorio: true });
+  const [form, setForm] = useState({ tipo: "reunion", titulo: "", hora: "10:00", descripcion: "", tgRecordatorio: true, esRango: false, fechaFin: "" });
   const { show, el: toastEl } = useToast();
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -2626,7 +2688,12 @@ function CalendarioPanel({ client, onUpdate, readOnly, allClients }) {
 
   function getEventosDelDia(d) {
     const key = `${mes.getFullYear()}-${String(mes.getMonth()+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    return eventos.filter(e => e.fecha === key);
+    return eventos.filter(e => {
+      if (e.fecha === key) return true;
+      // Eventos de rango: verificar si el día cae dentro del rango
+      if (e.esRango && e.fechaFin) return key >= e.fecha && key <= e.fechaFin;
+      return false;
+    });
   }
 
   async function saveEvento() {
@@ -2775,16 +2842,43 @@ function CalendarioPanel({ client, onUpdate, readOnly, allClients }) {
                     </div>
                   ) : (
                     // VISTA ADMIN: input de hora libre
-                    <div className="form-row">
-                      <div className="field"><label>Tipo</label>
-                        <select value={form.tipo} onChange={e => f("tipo", e.target.value)}>
-                          {TIPO_AGENDA.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-                        </select>
+                    <div>
+                      <div className="form-row" style={{ marginBottom: 8 }}>
+                        <div className="field" style={{ marginBottom: 0 }}><label>Tipo</label>
+                          <select value={form.tipo} onChange={e => f("tipo", e.target.value)}>
+                            <optgroup label="General">
+                              {TIPO_AGENDA.filter(t => !["despegue","orbita","aterrizaje","captacion_ap","remarketing_a"].includes(t.id)).map(t => (
+                                <option key={t.id} value={t.id}>{t.label}</option>
+                              ))}
+                            </optgroup>
+                            {isApollo && <optgroup label="🚀 APOLLO - Misión">
+                              {TIPO_AGENDA.filter(t => ["despegue","orbita","aterrizaje","captacion_ap","remarketing_a"].includes(t.id)).map(t => (
+                                <option key={t.id} value={t.id}>{t.label}</option>
+                              ))}
+                            </optgroup>}
+                          </select>
+                        </div>
+                        <div className="field" style={{ marginBottom: 0 }}><label>Hora</label>
+                          <input type="time" value={form.hora} onChange={e => f("hora", e.target.value)}
+                            min={disponibilidad.horaInicio} max={disponibilidad.horaFin} />
+                        </div>
                       </div>
-                      <div className="field"><label>Hora</label>
-                        <input type="time" value={form.hora} onChange={e => f("hora", e.target.value)}
-                          min={disponibilidad.horaInicio} max={disponibilidad.horaFin} />
-                      </div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer", marginBottom: 8 }}>
+                        <input type="checkbox" checked={form.esRango || false} onChange={e => f("esRango", e.target.checked)} style={{ width: 14, height: 14 }} />
+                        Actividad de múltiples días (rango de fechas)
+                      </label>
+                      {form.esRango && (
+                        <div className="form-row" style={{ marginBottom: 8 }}>
+                          <div className="field" style={{ marginBottom: 0 }}>
+                            <label>Fecha inicio</label>
+                            <input type="date" value={selectedDate} readOnly style={{ background: "var(--surface2)" }} />
+                          </div>
+                          <div className="field" style={{ marginBottom: 0 }}>
+                            <label>Fecha fin</label>
+                            <input type="date" value={form.fechaFin || ""} onChange={e => f("fechaFin", e.target.value)} min={selectedDate} />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="field"><label>{readOnly ? "Motivo de la reunion" : "Titulo / Descripcion"}</label>
@@ -3095,7 +3189,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
             </div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, marginTop: 4 }}>Metricas de rendimiento</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: ".75rem", marginBottom: "1rem" }}>
-              {[["Alcance","alcance_pza"],["Likes","likes"],["Comentarios","comentarios"],["Compartidos","compartidos"],["Guardados","guardados"],["CTR (%)","ctr_pza"],["Retencion 3s (%)","retencion3s"],["Retencion 50% (%)","retencion50"],["Retencion Final (%)","retencionFinal"]].map(([lbl, fk]) => (
+              {[["Alcance","alcance_pza"],["Likes","likes"],["Comentarios","comentarios"],["Compartidos","compartidos"],["Guardados","guardados"],["CTR (%)","ctr_pza"],["Vistas 3s (personas)","retencion3s"],["Vistas 50% (personas)","retencion50"],["Vistas completas (personas)","retencionFinal"],["Personas en formulario","personas_form"],["Personas en WP","personas_wp_pza"],["Calidad del lead (1-10)","calidad_lead"]].map(([lbl, fk]) => (
                 <div key={fk} className="field" style={{ marginBottom: 0 }}>
                   <label>{lbl}</label>
                   <input type="number" step="any" value={form[fk] || ""} onChange={e => f(fk, e.target.value)} placeholder="0" />
@@ -3398,7 +3492,7 @@ function FilmakerDisponibilidad({ filmmaker, onUpdate }) {
 // ─── ESTUDIO (FICHAS TÉCNICAS) ────────────────────────────────────────────────
 
 const ESTADOS_FICHA = ["Borrador", "En revisión", "Aprobado", "Grabado", "En edición"];
-const CATEGORIAS_FICHA = ["Valor", "Viral", "Venta"];
+const CATEGORIAS_FICHA = ["Valor", "Viral", "Venta", "Captacion", "Remarketing"];
 const OBJETIVOS_FICHA = ["Educar", "Alcance", "Conversión"];
 
 function estadoClass(estado) {
