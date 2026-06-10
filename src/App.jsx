@@ -2145,6 +2145,27 @@ function getBannersForClient(banners, clientId) {
 }
 
 
+// ─── APOLLO PRODUCT ───────────────────────────────────────────────────────────
+
+const APOLLO_KPIS_DEFAULT = [
+  { id: "registros",  nombre: "Registros",              unidad: "personas",  historico: "", actual: "", meta: "" },
+  { id: "asistentes", nombre: "Asistentes al evento",   unidad: "personas",  historico: "", actual: "", meta: "" },
+  { id: "oportunidades", nombre: "Oportunidades",        unidad: "personas",  historico: "", actual: "", meta: "" },
+  { id: "ventas",     nombre: "Ventas cerradas",         unidad: "ventas",    historico: "", actual: "", meta: "" },
+  { id: "cpa",        nombre: "CPA (Costo por venta)",   unidad: "$",         historico: "", actual: "", meta: "" },
+  { id: "roas",       nombre: "ROAS",                    unidad: "x",         historico: "", actual: "", meta: "4" },
+];
+
+const APOLLO_FASES = [
+  { id: "estrategia",    nombre: "Estrategia",          icono: "🧠", tareas: ["Brief del lanzamiento definido","Avatar y segmentacion listos","Nomenclatura de campanas definida","Presupuesto total asignado"] },
+  { id: "produccion",    nombre: "Produccion ads",       icono: "🎬", tareas: ["Anuncios de video grabados","Anuncios de imagen disenados","Copys redactados","Landing/Formularios configurados","Grupos WhatsApp creados"] },
+  { id: "captacion",     nombre: "Captacion",            icono: "📡", tareas: ["Campanas activas y monitoreadas","Leads ingresando a WhatsApp","Presupuesto diario controlado","Reporte diario enviado","Calidad del lead verificada","Optimizacion de campanas"] },
+  { id: "remarketing",   nombre: "Remarketing",          icono: "🔄", tareas: ["Campanas de remarketing activas","Audiencias calidas segmentadas","Mensajes de seguimiento en WP","Calificacion de leads con encuesta"] },
+  { id: "calentamiento", nombre: "Calentamiento",        icono: "🔥", tareas: ["Contenido de valor enviado por WP","Encuesta de intencion enviada","Confirmacion de asistencia obtenida","Lista de oportunidades identificada"] },
+  { id: "evento",        nombre: "Dia del lanzamiento",  icono: "🎯", tareas: ["Transmision configurada (FB/YT Live)","Pruebas tecnicas realizadas","Operacion en vivo","Grabacion del evento","Pico de asistencia registrado","Ventas en vivo monitoreadas"] },
+  { id: "post_evento",   nombre: "Post-evento",          icono: "💰", tareas: ["Follow-up de oportunidades","Ventas cerradas registradas","Reporte final enviado","ROAS calculado","Recomendaciones para proximo lanzamiento"] },
+];
+
 // ─── HERMES PRODUCT ───────────────────────────────────────────────────────────
 
 // Configuración del producto HERMES
@@ -5589,36 +5610,75 @@ function OnboardingWizard({ onSave, onCancel }) {
 
   function finish() {
     if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña");
-    const isHermes = form.producto?.toLowerCase().includes("hermes") || form.serviciosContratados?.includes("hermes");
-    const hermesData = isHermes ? {
-      momentos: {},
-      kpisHermes: HERMES_KPIS_DEFAULT,
-      biblioteca: [],
-    } : undefined;
-    const hermesChecklist = isHermes
-      ? Object.fromEntries(HERMES_FASES.map(f => [f.id, {}]))
-      : {};
+
+    const isHermes = form.producto === "HERMES";
+    const isApollo = form.producto === "APOLLO";
+    const apolloFases = APOLLO_FASES;
+    const apolloDuracion = parseInt(form.apolloDuracion) || 21;
+
+    // ── HERMES autosetup ──
+    const hermesData = isHermes ? { momentos: {}, kpisHermes: HERMES_KPIS_DEFAULT, biblioteca: [] } : undefined;
+    const hermesChecklist = isHermes ? Object.fromEntries(HERMES_FASES.map(f => [f.id, {}])) : {};
     const hermesKpis = isHermes ? HERMES_FASES.flatMap(f => [{
       id: "kpi_" + f.id, nombre: f.nombre, metrica: "resultados",
-      meta_valor: "", unidad: "", plazo: "15 dias", relevancia: "alto",
-      descripcion: f.descripcion || ""
+      meta_valor: "", unidad: "", plazo: "15 dias", relevancia: "alto"
     }]).slice(0, 4) : [];
+
+    // ── APOLLO autosetup ──
+    const apolloData = isApollo ? {
+      tipo: form.producto,
+      duracion: apolloDuracion,
+      momentos: {},
+      kpisApollo: APOLLO_KPIS_DEFAULT,
+      faseActual: 0,
+      fechaLanzamiento: "",
+      wpGrupos: [],
+    } : undefined;
+    const apolloChecklist = isApollo ? Object.fromEntries(apolloFases.map(f => [f.id, {}])) : {};
+    const apolloKpis = isApollo ? APOLLO_KPIS_DEFAULT.map(k => ({
+      id: "kpi_" + k.id, nombre: k.nombre, metrica: k.id === "roas" ? "roas" : k.id === "cpa" ? "cpa" : "resultados",
+      meta_valor: k.meta || "", unidad: k.unidad, plazo: apolloDuracion + " dias", relevancia: "alto"
+    })) : [];
+
+    // Plantillas Telegram adaptadas al producto
+    const plantillasBase = isApollo
+      ? [
+          { id: "p1", nombre: "🚀 Gasto diario APOLLO", tipo: "apollo", texto: "" },
+          { id: "p2", nombre: "Reporte de campaña", tipo: "reporte", texto: "" },
+          { id: "p3", nombre: "Recordatorio de cobro", tipo: "cobro", texto: "" },
+          { id: "p4", nombre: "Mensaje personalizado", tipo: "custom", texto: "" },
+        ]
+      : PLANTILLAS_DEFAULT;
+
+    // Métricas de Facebook adaptadas a APOLLO
+    const fbMetricsApollo = isApollo
+      ? FB_METRICAS_DISPONIBLES.filter(m => ["spend","impressions","reach","cpm","cpc","ctr","clicks","actions_lead","cost_per_result"].includes(m.key))
+      : FB_METRICAS_DISPONIBLES.slice(0, 7);
 
     const client = {
       name: form.name, username: form.username, password: form.password,
-      niche: form.niche, color: form.color, logo: form.logo,
+      niche: isApollo ? "lanzamiento" : form.niche,
+      color: form.color, logo: form.logo,
       producto: form.producto, telefono: form.telefono, email: form.email,
       representante: form.representante,
       serviciosContratados: isHermes
         ? ["estrategia","contenido","pauta","ventas","analisis"]
+        : isApollo
+        ? ["estrategia","captacion","whatsapp","transmision","analiticas"]
         : form.serviciosContratados,
-      checklist: hermesChecklist,
+      checklist: isHermes ? hermesChecklist : isApollo ? apolloChecklist : {},
       cuentas: [], contratos: [], antecedentes: [],
-      records: [], kpis: hermesKpis, funnel: [],
+      records: [],
+      kpis: isHermes ? hermesKpis : isApollo ? apolloKpis : [],
+      funnel: [],
       hermesData: hermesData,
-      tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: PLANTILLAS_DEFAULT } : {},
-      fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: FB_METRICAS_DISPONIBLES.slice(0, 7) } : {},
-      schedConfig: { enabled: false, hora: "08:00", dias: [1,2,3,4,5], plantillaId: "p1" }
+      apolloData: apolloData,
+      tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: plantillasBase } : { plantillas: plantillasBase },
+      fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: fbMetricsApollo } : {},
+      schedConfig: {
+        enabled: false, hora: "08:00", dias: [1,2,3,4,5],
+        plantillaId: isApollo ? "p1" : "p1"
+      }
     };
     onSave(client);
   }
@@ -5658,12 +5718,32 @@ function OnboardingWizard({ onSave, onCancel }) {
               <select value={form.producto} onChange={e => f("producto", e.target.value)}>
                 <option value="">-- Seleccionar producto --</option>
                 <option value="HERMES">✦ HERMES — Contenido + Pauta 15 dias</option>
+                <option value="APOLLO">🚀 APOLLO — Lanzamiento digital</option>
                 <option value="personalizado">Personalizado</option>
               </select>
               {form.producto === "HERMES" && (
                 <div style={{ marginTop: 8, background: "rgba(255,222,89,.08)", border: "1px solid rgba(255,222,89,.2)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--accent2)" }}>
                   ✦ Se configurara automaticamente: 8 fases, 4 KPIs, Biblioteca de contenido y Momentos WOW
                 </div>
+              )}
+              {form.producto === "APOLLO" && (
+                <>
+                  <div style={{ marginTop: 8, background: "rgba(0,74,173,.08)", border: "1px solid rgba(0,74,173,.25)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#4d9fff" }}>
+                    🚀 Se configurara automaticamente: 7 fases de mision, 6 KPIs, Plantilla reporte APOLLO, Metricas de lanzamiento y Calendario de mision
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", display: "block", marginBottom: 6 }}>Duracion del lanzamiento</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {["7","14","21","30"].map(d => (
+                        <button key={d} type="button"
+                          className={"btn btn-sm " + (form.apolloDuracion === d ? "btn-primary" : "btn-ghost")}
+                          onClick={() => f("apolloDuracion", d)}>
+                          {d} dias
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
             <div className="form-row">
