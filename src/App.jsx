@@ -1400,8 +1400,16 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "csv")}>&#11015; CSV</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => exportMetricas(sortedRows, client, "xls")}>&#11015; XLS</button>
+          <BotonesExportar
+            headers={visibleCols.map(c => c.label)}
+            rows={sortedRows.map(r => visibleCols.map(c => {
+              if (c.key === "date") return fmtDate(r.date);
+              const v = r[c.key]; if (v === undefined || v === null || v === "") return "—";
+              const n = parseFloat(v); if (isNaN(n)) return v;
+              return c.prefix ? c.prefix + fmtNum(n,2) : c.suffix ? fmtNum(n,2)+c.suffix : fmtNum(n,0);
+            }))}
+            nombreArchivo={"metricas_" + (client.name||"").replace(/\s/g,"_")}
+          />
         </div>
       </div>
       <div className="card scroll-x">
@@ -1578,9 +1586,16 @@ function VistaPorCampana({ rows, busqueda }) {
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem" }}>
-        {lista.length} campaña{lista.length !== 1 ? "s" : ""}{busqueda ? ` con "${busqueda}"` : ""}
-        <span style={{ marginLeft: 8, fontSize: 11 }}>· Métricas distribuidas proporcionalmente entre campañas activas por día</span>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem", flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+          {lista.length} campaña{lista.length !== 1 ? "s" : ""}{busqueda ? ` con "${busqueda}"` : ""}
+          <span style={{ marginLeft: 8, fontSize: 11 }}>· Métricas distribuidas proporcionalmente</span>
+        </div>
+        <BotonesExportar
+          headers={["Campaña/Conjunto/Anuncio","Inversión","Alcance","CPM","CPC","CTR","Leads/FB","Pers. WP","CPL","Ventas"]}
+          rows={lista.map(c => [c.nombre,"$"+fmtNum(c.inversion,2),fmtNum(c.alcance),"$"+fmtNum(c.cpm,2),"$"+fmtNum(c.cpc,2),fmtNum(c.ctr,2)+"%",c.leads>0?fmtNum(c.leads):"—",c.personas_wp>0?fmtNum(c.personas_wp):"—",c.cpl>0?"$"+fmtNum(c.cpl,2):"—",c.ventas>0?fmtNum(c.ventas):"—"])}
+          nombreArchivo="campanas"
+        />
       </div>
       <div className="card scroll-x">
         <table className="tbl">
@@ -2700,6 +2715,61 @@ function HermesFunnel({ client, period, from, to }) {
 
 
 
+
+// ─── UTILIDAD UNIVERSAL DE EXPORTACIÓN ────────────────────────────────────────
+function exportarTabla(headers, rows, nombreArchivo, tipo) {
+  const fecha = new Date().toISOString().slice(0,10);
+  const nombre = nombreArchivo + "_" + fecha;
+  if (tipo === "csv") {
+    const csvRows = [headers.join(",")];
+    rows.forEach(row => {
+      csvRows.push(row.map(v => {
+        const s = String(v ?? "");
+        // Forzar texto para números que empiezan con + (teléfonos)
+        if (s.startsWith("+") || /^\d{8,}$/.test(s)) return `="${s}"`;
+        return s.includes(",") ? `"${s}"` : s;
+      }).join(","));
+    });
+    const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = nombre + ".csv"; a.click();
+  } else {
+    // XLS via HTML table — Excel lo abre nativamente
+    let html = "<table><tr>" + headers.map(h => `<th>${h}</th>`).join("") + "</tr>";
+    rows.forEach(row => {
+      html += "<tr>" + row.map(v => {
+        const s = String(v ?? "");
+        // Forzar texto para teléfonos/números largos
+        if (s.startsWith("+") || /^\d{8,}$/.test(s)) return `<td style="mso-number-format:'@'">${s}</td>`;
+        return `<td>${s}</td>`;
+      }).join("") + "</tr>";
+    });
+    html += "</table>";
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = nombre + ".xls"; a.click();
+  }
+}
+
+// Botones de exportación reutilizables
+function BotonesExportar({ headers, rows, nombreArchivo, size }) {
+  const sz = size || "btn-sm";
+  return (
+    <div style={{ display:"flex", gap:4 }}>
+      <button className={"btn btn-ghost " + sz} title="Descargar CSV"
+        onClick={() => exportarTabla(headers, rows, nombreArchivo, "csv")}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:4}}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        CSV
+      </button>
+      <button className={"btn btn-ghost " + sz} title="Descargar Excel"
+        onClick={() => exportarTabla(headers, rows, nombreArchivo, "xls")}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:4}}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        XLS
+      </button>
+    </div>
+  );
+}
+
 // ─── TARJETA DE MÉTRICA CON GRÁFICA DESPLEGABLE ──────────────────────────────
 function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
   const [open, setOpen] = useState(false);
@@ -2749,22 +2819,23 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
               <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>× Cerrar</button>
             </div>
           </div>
-          {/* Gráfica de barras SVG */}
-          <div style={{ overflowX:"auto" }}>
-            <svg width={Math.max(histData.length * 36, 300)} height={120}
-              style={{ display:"block", minWidth:"100%" }}>
+          {/* Gráfica de barras SVG — scroll independiente */}
+          <div style={{ overflowX:"auto", overflowY:"visible", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
+            <svg width={Math.max(histData.length * 36, 300)} height={130}
+              style={{ display:"block" }}>
               {histData.map((d, i) => {
-                const barH = maxVal > 0 ? Math.max((d.val / maxVal) * 80, 2) : 2;
+                const barH = maxVal > 0 ? Math.max((d.val / maxVal) * 75, 3) : 3;
                 const x = i * 36 + 4;
+                const valStr = (prefix||"") + (d.val > 9999 ? (d.val/1000).toFixed(1)+"k" : fmtNum(d.val,d.val<100?2:0)) + (suffix||"");
                 return (
                   <g key={i}>
-                    <rect x={x} y={90 - barH} width={28} height={barH}
-                      fill={color || "var(--accent)"} fillOpacity=".7" rx="3" />
-                    <text x={x+14} y={108} textAnchor="middle" fontSize="8" fill="var(--muted)">
+                    <rect x={x} y={88 - barH} width={28} height={barH}
+                      fill={color || "var(--accent)"} fillOpacity=".75" rx="3" />
+                    <text x={x+14} y={112} textAnchor="middle" fontSize="8" fill="var(--muted)">
                       {d.fecha.slice(0,5)}
                     </text>
-                    <text x={x+14} y={85 - barH} textAnchor="middle" fontSize="9" fill={color || "var(--accent)"} fontWeight="600">
-                      {prefix || ""}{d.val > 999 ? (d.val/1000).toFixed(1)+"k" : d.val}{suffix || ""}
+                    <text x={x+14} y={84 - barH} textAnchor="middle" fontSize="9" fill={color || "var(--accent)"} fontWeight="700">
+                      {valStr}
                     </text>
                   </g>
                 );
@@ -3359,33 +3430,7 @@ function HermesClientView({ client, allClients, onUpdate }) {
               ? <ApolloFunnel client={client} period={period} from={from} to={to} />
               : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
-          {/* Tarjetas de captura WP — solo APOLLO */}
-          {isApollo && (() => {
-            const capturaData = client.capturaConfig?.lastData;
-            if (!capturaData) return null;
-            const pctCap = capturaData.total_form > 0 ? (capturaData.total_wp / capturaData.total_form * 100).toFixed(1) : 0;
-            return (
-              <div style={{ marginTop:"1rem" }}>
-                <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>
-                  Captura de WhatsApp
-                </div>
-                <div className="grid4">
-                  {[
-                    ["📋 Reg. en Facebook", capturaData.total_form, "#4d9fff", "Personas en formulario"],
-                    ["📱 Reg. en WhatsApp", capturaData.total_wp, "var(--green)", "Personas en el grupo"],
-                    ["📊 % Captura", pctCap+"%", parseFloat(pctCap)>=70?"var(--green)":parseFloat(pctCap)>=50?"var(--amber)":"var(--red)", "FB → WP"],
-                    ["🎯 Para remarketing", capturaData.total_remarketing||0, "var(--orange)", "Pendientes de ingresar"],
-                  ].map(([label,val,color,sub]) => (
-                    <div key={label} className="card" style={{ padding:"1rem" }}>
-                      <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>{label}</div>
-                      <div style={{ fontSize:22, fontFamily:"var(--mono)", fontWeight:700, color }}>{val}</div>
-                      <div style={{ fontSize:10, color:"var(--muted)", marginTop:2 }}>{sub}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+
           {/* Datos diarios de campañas */}
           {(client.records || []).length > 0 && (() => {
             const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
@@ -3516,8 +3561,11 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => exportBiblioteca("csv")}>⬇ CSV</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => exportBiblioteca("xls")}>⬇ XLS</button>
+            <BotonesExportar
+              headers={["Video","Tipo","Fecha","Alcance","Likes","Comentarios","Compartidos","Guardados","CTR%","IV","Estado"]}
+              rows={biblioteca.map(p => [p.nombre||"",p.tipo||"",p.fecha||"",p.alcance_pza||0,p.likes||0,p.comentarios||0,p.compartidos||0,p.guardados||0,p.ctr_pza||0,calcIV(p,biblioteca),p.estado||""])}
+              nombreArchivo={"biblioteca_" + (client.name||"").replace(/\s/g,"_")}
+            />
             {!readOnly && <button className="btn btn-primary btn-sm" onClick={() => { setShowForm(s => !s); setEditingId(null); setForm({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" }); }}>
               {showForm ? "Cancelar" : "+ Añadir pieza"}
             </button>}
@@ -5477,12 +5525,17 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                       <button key={id} className={"pill " + (nivel===id ? "active" : "")} onClick={() => setNivel(id)}>{lbl}</button>
                     ))}
                   </div>
-                  <div style={{ position:"relative", flex:1, maxWidth:300 }}>
+                  <div style={{ position:"relative", flex:1, maxWidth:240 }}>
                     <input type="text" value={filterText} onChange={e => setFilter(e.target.value)}
                       placeholder={"Buscar " + nivel + "..."} style={{ paddingLeft:28, fontSize:12 }} />
                     <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
                   </div>
                   {filterText && <button className="btn btn-ghost btn-sm" onClick={() => setFilter("")}>×</button>}
+                  <BotonesExportar
+                    headers={["Nombre","Reg. FB","Pers. WP","% Captura","% del Total","Pendientes"]}
+                    rows={sorted.map(i => [i.nombre,i.total_form,i.total_wp,i.pct_captura+"%",i.pct_del_total+"%",i.pendientes||0])}
+                    nombreArchivo={"captura_"+nivel}
+                  />
                 </div>
                 {sorted.length === 0
                   ? <div className="empty"><div style={{ fontSize:24, opacity:.3 }}>📊</div><div style={{ marginTop:6 }}>Sin datos.</div></div>
@@ -5545,6 +5598,14 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
 
             {/* Vista por país */}
             {viewTab === "paises" && (
+              <div>
+                <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:8 }}>
+                  <BotonesExportar
+                    headers={["País","Registros FB","Personas WP","% Captura","Pendientes"]}
+                    rows={paises.map(p => [p.pais,p.total_form,p.total_wp,p.total_form>0?(p.total_wp/p.total_form*100).toFixed(1)+"%":"—",p.total_form-p.total_wp])}
+                    nombreArchivo="captura_paises"
+                  />
+                </div>
               <div className="card scroll-x">
                 <table className="tbl">
                   <thead><tr>
@@ -5573,6 +5634,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                     })}
                   </tbody>
                 </table>
+              </div>
               </div>
             )}
 
@@ -5997,7 +6059,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "Historico"}</div>)}
+          {(["hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "📚 Historial"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
