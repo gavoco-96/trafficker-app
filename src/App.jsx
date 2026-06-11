@@ -2454,11 +2454,14 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
   const hermes = client.hermesData || {};
   const defaultKpis = isApollo ? APOLLO_KPIS_DEFAULT : HERMES_KPIS_DEFAULT;
   const kpis = isApollo
-    ? (client.apolloData?.kpisApollo || defaultKpis)
-    : (hermes.kpisHermes || defaultKpis);
+    ? (client.apolloData?.kpisApollo?.length > 0 ? client.apolloData.kpisApollo : defaultKpis)
+    : (hermes.kpisHermes?.length > 0 ? hermes.kpisHermes : defaultKpis);
   const [editing, setEditing] = useState(false);
   const [local, setLocal] = useState(kpis);
   const { show, el: toastEl } = useToast();
+
+  // Sincronizar local cuando cambian los KPIs guardados o el cliente
+  useEffect(() => { setLocal(kpis); }, [client.id, (client.records||[]).length, client.capturaConfig?.lastSync]);
 
   function upd(id, k, v) { setLocal(p => p.map(kpi => kpi.id === id ? { ...kpi, [k]: v } : kpi)); }
 
@@ -2766,6 +2769,121 @@ function BotonesExportar({ headers, rows, nombreArchivo, size }) {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:4}}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         XLS
       </button>
+    </div>
+  );
+}
+
+
+
+// ─── ALERTA TELEGRAM CONDICIONAL (desde programador) ────────────────────────
+async function enviarAlertaTelegramSiNecesario(client) {
+  if (!client.tgConfig?.token || !client.tgConfig?.chatId) return;
+  if (!client.producto?.startsWith("APOLLO")) return;
+
+  const records = client.records || [];
+  if (!records.length) return;
+
+  const capturaData = client.capturaConfig?.lastData;
+  const kpisApollo = client.apolloData?.kpisApollo || APOLLO_KPIS_DEFAULT;
+  const inv     = records.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
+  const forms   = records.reduce((a,r) => a+(parseFloat(r.resultados)||parseFloat(r.formularios)||0), 0);
+  const ventas  = records.reduce((a,r) => a+(parseFloat(r.ventas)||0), 0);
+  const ingreso = records.reduce((a,r) => a+(parseFloat(r.ingreso)||0), 0);
+  const wpTotal = capturaData?.total_wp || records.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
+  const cpa     = ventas > 0 ? inv/ventas : forms > 0 ? inv/forms : 0;
+  const roas    = inv > 0 && ingreso > 0 ? ingreso/inv : 0;
+  const pctCap  = forms > 0 && wpTotal > 0 ? wpTotal/forms*100 : 0;
+
+  const metaCPA  = parseFloat(kpisApollo.find(k=>k.id==="cpa")?.meta) || 0;
+  const metaRoas = parseFloat(kpisApollo.find(k=>k.id==="roas")?.meta) || 4;
+
+  const alertas = [];
+  if (metaCPA > 0 && cpa > metaCPA * 2)
+    alertas.push(`🔴 CPA $${fmtNum(cpa,2)} supera el doble de la meta ($${fmtNum(metaCPA,2)})`);
+  if (pctCap > 0 && pctCap < 50)
+    alertas.push(`🔴 Captura WP ${fmtNum(pctCap,1)}% — por debajo del 50%`);
+  if (roas > 0 && roas >= metaRoas)
+    alertas.push(`🟢 ROAS ${fmtNum(roas,2)}x — meta alcanzada 🎯`);
+
+  if (!alertas.length) return;
+
+  const msg = `⚠️ *Alerta de misión — ${client.name}*\n\n` + alertas.join("\n") + `\n\n_Trafficker Pro · Centro de Control APOLLO_`;
+  try {
+    await fetch("https://api.telegram.org/bot" + client.tgConfig.token + "/sendMessage", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: client.tgConfig.chatId, text: msg, parse_mode: "Markdown" })
+    });
+  } catch {}
+}
+
+// ─── SEMÁFORO DE MISIÓN APOLLO ────────────────────────────────────────────────
+function SemaforoMision({ client }) {
+  const records = client.records || [];
+  if (!records.length) return null;
+
+  const kpisApollo = client.apolloData?.kpisApollo || APOLLO_KPIS_DEFAULT;
+  const capturaData = client.capturaConfig?.lastData;
+
+  const inv     = records.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
+  const forms   = records.reduce((a,r) => a+(parseFloat(r.resultados)||parseFloat(r.formularios)||0), 0);
+  const ventas  = records.reduce((a,r) => a+(parseFloat(r.ventas)||0), 0);
+  const ingreso = records.reduce((a,r) => a+(parseFloat(r.ingreso)||0), 0);
+  const wpTotal = capturaData?.total_wp || records.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
+  const cpa     = ventas > 0 && inv > 0 ? inv/ventas : forms > 0 && inv > 0 ? inv/forms : 0;
+  const roas    = inv > 0 && ingreso > 0 ? ingreso/inv : 0;
+  const pctCap  = forms > 0 && wpTotal > 0 ? wpTotal/forms*100 : 0;
+
+  const metaCPA  = parseFloat(kpisApollo.find(k=>k.id==="cpa")?.meta) || 0;
+  const metaRoas = parseFloat(kpisApollo.find(k=>k.id==="roas")?.meta) || 4;
+  const metaCap  = parseFloat(kpisApollo.find(k=>k.id==="pct_cap")?.meta) || 70;
+
+  // Evaluar alertas
+  const alertas = [];
+  if (metaCPA > 0 && cpa > 0 && cpa > metaCPA * 2)
+    alertas.push({ tipo:"rojo", msg:`CPA $${fmtNum(cpa,2)} supera el doble de la meta ($${fmtNum(metaCPA,2)})` });
+  else if (metaCPA > 0 && cpa > 0 && cpa > metaCPA * 1.3)
+    alertas.push({ tipo:"amarillo", msg:`CPA $${fmtNum(cpa,2)} por encima de meta ($${fmtNum(metaCPA,2)})` });
+
+  if (pctCap > 0 && pctCap < 50)
+    alertas.push({ tipo:"rojo", msg:`% Captura WP ${fmtNum(pctCap,1)}% está por debajo del 50%` });
+  else if (pctCap > 0 && pctCap < metaCap)
+    alertas.push({ tipo:"amarillo", msg:`% Captura ${fmtNum(pctCap,1)}% por debajo de meta (${metaCap}%)` });
+
+  if (roas > 0 && roas >= metaRoas)
+    alertas.push({ tipo:"verde", msg:`ROAS ${fmtNum(roas,2)}x alcanzó la meta de ${metaRoas}x 🎯` });
+  else if (roas > 0 && roas >= metaRoas * 0.7)
+    alertas.push({ tipo:"amarillo", msg:`ROAS ${fmtNum(roas,2)}x — acercándose a la meta de ${metaRoas}x` });
+
+  const hayAlertas = alertas.length > 0;
+  const tieneRojo = alertas.some(a=>a.tipo==="rojo");
+  const tieneVerde = alertas.every(a=>a.tipo==="verde") && alertas.length > 0;
+
+  const colorBorde = tieneRojo ? "rgba(239,68,68,.4)" : tieneVerde ? "rgba(16,185,129,.4)" : "rgba(255,222,89,.3)";
+  const colorBg    = tieneRojo ? "rgba(239,68,68,.06)" : tieneVerde ? "rgba(16,185,129,.06)" : "rgba(255,222,89,.05)";
+  const icono      = tieneRojo ? "🔴" : tieneVerde ? "🟢" : hayAlertas ? "🟡" : "🟢";
+  const estado     = tieneRojo ? "Requiere atención" : tieneVerde ? "Misión en objetivo" : hayAlertas ? "En monitoreo" : "Misión en curso";
+
+  return (
+    <div style={{ background:colorBg, border:"1px solid "+colorBorde, borderRadius:10, padding:"10px 16px", marginBottom:"1rem", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+      <div style={{ fontSize:20 }}>{icono}</div>
+      <div style={{ flex:1, minWidth:200 }}>
+        <div style={{ fontWeight:700, fontSize:13 }}>{estado}</div>
+        {hayAlertas
+          ? <div style={{ fontSize:12, color:"var(--muted)", marginTop:2 }}>{alertas[0].msg}{alertas.length>1 ? ` · +${alertas.length-1} más` : ""}</div>
+          : <div style={{ fontSize:12, color:"var(--muted)", marginTop:2 }}>
+              CPA ${cpa>0?fmtNum(cpa,2):"—"} · ROAS {roas>0?fmtNum(roas,2)+"x":"—"} · Captura {pctCap>0?fmtNum(pctCap,1)+"%":"—"}
+            </div>
+        }
+      </div>
+      {alertas.length > 1 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+          {alertas.slice(1).map((a,i) => (
+            <div key={i} style={{ fontSize:11, color:"var(--muted)" }}>
+              {a.tipo==="rojo"?"🔴":a.tipo==="verde"?"🟢":"🟡"} {a.msg}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3323,6 +3441,7 @@ function HermesAdminView({ client, allClients, onUpdate }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          {isApollo && <SemaforoMision client={client} />}
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} isApollo={isApollo} />
             {isApollo
@@ -3368,6 +3487,9 @@ function HermesClientView({ client, allClients, onUpdate }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          {/* Semáforo de misión — solo APOLLO */}
+          {isApollo && <SemaforoMision client={client} />}
+
           {/* Panel de métricas rápidas con gráficas — entre barra de progreso y KPIs */}
           {isApollo && (() => {
             const rows = filterByPeriod(client.records || [], period, from, to);
@@ -3395,8 +3517,8 @@ function HermesClientView({ client, allClients, onUpdate }) {
                 </div>
                 {/* Fila 2: métricas de conversión */}
                 <div className="grid4" style={{ marginBottom:"0.5rem" }}>
-                  <MetricaCard label="Formularios" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
-                  <MetricaCard label="Costo/Formulario" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
+                  <MetricaCard label="Formularios/Leads FB" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
+                  <MetricaCard label="Costo x Lead" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
                   <MetricaCard label="Ventas" value={fmtNum(ventas)} color="var(--text)" records={allRows} campo="ventas" />
                   <MetricaCard label="Ingresos" value={"$"+fmtNum(ingreso,2)} color={ingreso > 0 ? "var(--green)" : "#4d9fff"} records={allRows} campo="ingreso" prefix="$" />
                 </div>
@@ -6059,7 +6181,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "📚 Historial"}</div>)}
+          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : ["estudio"]), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "📚 Historial"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
