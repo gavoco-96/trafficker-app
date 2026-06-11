@@ -1587,7 +1587,6 @@ function VistaPorCampana({ rows, busqueda }) {
           <thead>
             <tr>
               <th>Campaña / Conjunto / Anuncio</th>
-              <th>Días</th>
               <th>Inversión</th>
               <th>Alcance</th>
               <th>CPM</th>
@@ -1608,7 +1607,6 @@ function VistaPorCampana({ rows, busqueda }) {
                     {match && <span style={{ color: "var(--accent2)", marginRight: 4 }}>●</span>}
                     {c.nombre}
                   </td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "center" }}>{c.dias}</td>
                   <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.inversion, 2)}</td>
                   <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.alcance)}</td>
                   <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.cpm, 2)}</td>
@@ -2473,10 +2471,12 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
 
     // APOLLO KPIs
     if (kpiId === "reg_fb") {
-      // Prioridad: capturaData (más preciso) → suma de formularios FB
+      // Tomar el TOTAL de la columna resultados/formularios de métricas diarias
+      const totalMetricas = records.reduce((a, r) => a + (parseFloat(r.resultados) || parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      if (totalMetricas > 0) return String(Math.round(totalMetricas));
+      // Fallback: capturaData
       if (capturaData?.total_form > 0) return String(capturaData.total_form);
-      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || parseFloat(r.resultados) || 0), 0);
-      return total > 0 ? String(Math.round(total)) : "";
+      return "";
     }
     if (kpiId === "reg_wp") {
       if (capturaData?.total_wp > 0) return String(capturaData.total_wp);
@@ -2492,10 +2492,11 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
       return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
     }
     if (kpiId === "asistentes") {
-      // 10% de personas en WP — estimado automático
-      const wpTotal = capturaData?.total_wp > 0 ? capturaData.total_wp
-        : records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-      return wpTotal > 0 ? String(Math.round(wpTotal * 0.10)) : "";
+      // 10% de registros en Facebook (no de WP)
+      const fbTotal = records.reduce((a, r) => a + (parseFloat(r.resultados) || parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      if (fbTotal > 0) return String(Math.round(fbTotal * 0.10));
+      if (capturaData?.total_form > 0) return String(Math.round(capturaData.total_form * 0.10));
+      return "";
     }
     // oportunidades: manual
     if (kpiId === "oportunidades") return "";
@@ -2698,18 +2699,118 @@ function HermesFunnel({ client, period, from, to }) {
 }
 
 
+
+// ─── TARJETA DE MÉTRICA CON GRÁFICA DESPLEGABLE ──────────────────────────────
+function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
+  const [open, setOpen] = useState(false);
+
+  // Calcular datos históricos para la gráfica
+  const histData = (records || [])
+    .filter(r => r[campo] !== undefined && r[campo] !== null && r[campo] !== "")
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(r => ({ fecha: fmtDate(r.date), val: parseFloat(r[campo]) || 0 }));
+
+  const maxVal = histData.length > 0 ? Math.max(...histData.map(d => d.val), 0.01) : 1;
+
+  function exportarCSV() {
+    const csv = "Fecha," + label + "\n" + histData.map(d => d.fecha + "," + d.val).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = label.replace(/[^a-z0-9]/gi,"_") + "_" + new Date().toISOString().slice(0,10) + ".csv";
+    a.click();
+  }
+
+  return (
+    <div className="card" style={{ padding:"1rem", cursor: histData.length > 0 ? "pointer" : "default" }}
+      onClick={() => histData.length > 0 && setOpen(o => !o)}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>{label}</div>
+          <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: color || "var(--text)" }}>{value}</div>
+        </div>
+        {histData.length > 0 && (
+          <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:28 }}>
+            {histData.slice(-7).map((d, i) => (
+              <div key={i} style={{ width:4, borderRadius:2, background: color || "var(--accent)", opacity:.6,
+                height: Math.max((d.val / maxVal) * 28, 2) + "px", transition:"height .3s" }} />
+            ))}
+          </div>
+        )}
+      </div>
+      {open && histData.length > 0 && (
+        <div style={{ marginTop:12, borderTop:"1px solid var(--border)", paddingTop:12 }}
+          onClick={e => e.stopPropagation()}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase" }}>
+              Historial — {histData.length} días
+            </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <button className="btn btn-ghost btn-sm" onClick={exportarCSV}>⬇ CSV</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>× Cerrar</button>
+            </div>
+          </div>
+          {/* Gráfica de barras SVG */}
+          <div style={{ overflowX:"auto" }}>
+            <svg width={Math.max(histData.length * 36, 300)} height={120}
+              style={{ display:"block", minWidth:"100%" }}>
+              {histData.map((d, i) => {
+                const barH = maxVal > 0 ? Math.max((d.val / maxVal) * 80, 2) : 2;
+                const x = i * 36 + 4;
+                return (
+                  <g key={i}>
+                    <rect x={x} y={90 - barH} width={28} height={barH}
+                      fill={color || "var(--accent)"} fillOpacity=".7" rx="3" />
+                    <text x={x+14} y={108} textAnchor="middle" fontSize="8" fill="var(--muted)">
+                      {d.fecha.slice(0,5)}
+                    </text>
+                    <text x={x+14} y={85 - barH} textAnchor="middle" fontSize="9" fill={color || "var(--accent)"} fontWeight="600">
+                      {prefix || ""}{d.val > 999 ? (d.val/1000).toFixed(1)+"k" : d.val}{suffix || ""}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+          {/* Mini tabla */}
+          <div style={{ marginTop:8, maxHeight:120, overflowY:"auto" }}>
+            <table className="tbl" style={{ fontSize:11 }}>
+              <thead><tr><th>Fecha</th><th style={{ textAlign:"right" }}>{label}</th></tr></thead>
+              <tbody>
+                {[...histData].reverse().map((d, i) => (
+                  <tr key={i}>
+                    <td style={{ fontFamily:"var(--mono)" }}>{d.fecha}</td>
+                    <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:600, color: color || "var(--text)" }}>
+                      {prefix || ""}{fmtNum(d.val, 2)}{suffix || ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── EMBUDO APOLLO ────────────────────────────────────────────────────────────
 function ApolloFunnel({ client, period, from, to }) {
   const records = filterByPeriod(client.records || [], period, from, to);
 
-  const personasFB  = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-  const personasWP  = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-  const asistentes  = records.reduce((a, r) => a + (parseFloat(r.resultados) || 0), 0);
+  const capturaData = client.capturaConfig?.lastData;
+  // Registros FB: prioridad capturaData → suma formularios
+  const personasFB  = capturaData?.total_form > 0 ? capturaData.total_form
+    : records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.resultados) || parseFloat(r.clientesPotenciales) || 0), 0);
+  // Registros WP: prioridad capturaData → suma personas_wp
+  const personasWP  = capturaData?.total_wp > 0 ? capturaData.total_wp
+    : records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+  // Asistentes = 10% de registros FB (no de WP)
+  const asistentes  = personasFB > 0 ? Math.round(personasFB * 0.10) : 0;
   const ventas      = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
   const gasto       = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
 
   const pctCaptura  = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100).toFixed(1) : null;
-  const pctAsist    = personasWP > 0 && asistentes > 0 ? (asistentes / personasWP * 100).toFixed(1) : null;
+  const pctAsist    = personasFB > 0 ? "10%" : null;
   const pctVentas   = asistentes > 0 && ventas > 0 ? (ventas / asistentes * 100).toFixed(1) : null;
   const cpa         = ventas > 0 && gasto > 0 ? (gasto / ventas).toFixed(2) : null;
   const roas        = gasto > 0 && ventas > 0 ? (ventas / gasto).toFixed(2) : null;
@@ -3196,38 +3297,59 @@ function HermesClientView({ client, allClients, onUpdate }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
-          {/* Panel de métricas rápidas — entre barra de progreso y KPIs */}
+          {/* Panel de métricas rápidas con gráficas — entre barra de progreso y KPIs */}
           {isApollo && (() => {
             const rows = filterByPeriod(client.records || [], period, from, to);
             const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
             const alc = rows.reduce((a,r) => a+(parseFloat(r.alcance)||0), 0);
             const cpm = rows.length ? rows.reduce((a,r) => a+(parseFloat(r.cpm)||0), 0)/rows.length : 0;
-            const forms = rows.reduce((a,r) => a+(parseFloat(r.formularios)||parseFloat(r.resultados)||0), 0);
+            const forms = rows.reduce((a,r) => a+(parseFloat(r.resultados)||parseFloat(r.formularios)||0), 0);
             const wpPersons = client.capturaConfig?.lastData?.total_wp || rows.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
             const cpl = forms > 0 && inv > 0 ? inv/forms : 0;
-            const cpa = rows.reduce((a,r) => a+(parseFloat(r.ventas)||0),0) > 0 ? inv/rows.reduce((a,r) => a+(parseFloat(r.ventas)||0),0) : 0;
-            const roas = rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0),0) > 0 ? rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0),0)/inv : 0;
+            const ventas = rows.reduce((a,r) => a+(parseFloat(r.ventas)||0), 0);
+            const ingreso = rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0), 0);
+            const roas = inv > 0 && ingreso > 0 ? ingreso/inv : 0;
             const pctCap = forms > 0 && wpPersons > 0 ? (wpPersons/forms*100) : 0;
+            const capturaData = client.capturaConfig?.lastData;
+            const remarketing = capturaData?.total_remarketing || 0;
+            const allRows = client.records || [];
             return (
-              <div className="grid4" style={{ marginBottom:"1rem" }}>
-                {[
-                  ["Inversión", "$"+fmtNum(inv,2), "var(--text)"],
-                  ["Alcance", fmtNum(alc), "var(--text)"],
-                  ["CPM", "$"+fmtNum(cpm,2), "var(--text)"],
-                  ["ROAS", roas > 0 ? fmtNum(roas,2)+"x" : "0,00x", roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"],
-                  ["Potenciales", "0", "var(--text)"],
-                  ["Formularios", fmtNum(forms), "var(--accent2)"],
-                  ["Resultados", fmtNum(forms), "#4d9fff"],
-                  ["CPA", cpl > 0 ? "$"+fmtNum(cpl,2) : "—", "var(--text)"],
-                  ["Costo/Formulario", cpl > 0 ? "$"+fmtNum(cpl,2) : "—", "var(--text)"],
-                  ["Ventas", fmtNum(rows.reduce((a,r)=>a+(parseFloat(r.ventas)||0),0)), "var(--text)"],
-                  ["Ingresos", "$"+fmtNum(rows.reduce((a,r)=>a+(parseFloat(r.ingreso)||0),0),2), rows.reduce((a,r)=>a+(parseFloat(r.ingreso)||0),0)>0?"var(--green)":"#4d9fff"],
-                ].map(([label,val,color]) => (
-                  <div key={label} className="card" style={{ padding:"1rem" }}>
-                    <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>{label}</div>
-                    <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color }}>{val}</div>
+              <div>
+                {/* Fila 1: métricas de campaña */}
+                <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+                  <MetricaCard label="Inversión" value={"$"+fmtNum(inv,2)} color="var(--text)" records={allRows} campo="inversion" prefix="$" />
+                  <MetricaCard label="Alcance" value={fmtNum(alc)} color="var(--text)" records={allRows} campo="alcance" />
+                  <MetricaCard label="CPM" value={"$"+fmtNum(cpm,2)} color="var(--text)" records={allRows} campo="cpm" prefix="$" />
+                  <MetricaCard label="ROAS" value={roas > 0 ? fmtNum(roas,2)+"x" : "0,00x"} color={roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"} records={allRows} campo="roas" suffix="x" />
+                </div>
+                {/* Fila 2: métricas de conversión */}
+                <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+                  <MetricaCard label="Formularios" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
+                  <MetricaCard label="Costo/Formulario" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
+                  <MetricaCard label="Ventas" value={fmtNum(ventas)} color="var(--text)" records={allRows} campo="ventas" />
+                  <MetricaCard label="Ingresos" value={"$"+fmtNum(ingreso,2)} color={ingreso > 0 ? "var(--green)" : "#4d9fff"} records={allRows} campo="ingreso" prefix="$" />
+                </div>
+                {/* Fila 3: métricas de captura WP */}
+                {(wpPersons > 0 || capturaData) && (
+                  <div className="grid4" style={{ marginBottom:"1rem" }}>
+                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Registros FB</div>
+                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>{fmtNum(forms)}</div>
+                    </div>
+                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Personas en WP</div>
+                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--green)" }}>{fmtNum(wpPersons)}</div>
+                    </div>
+                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>% Captura FB→WP</div>
+                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: pctCap >= 70 ? "var(--green)" : pctCap >= 50 ? "var(--amber)" : "var(--red)" }}>{pctCap > 0 ? fmtNum(pctCap,1)+"%" : "—"}</div>
+                    </div>
+                    <div className="card" style={{ padding:"1rem", background:"rgba(255,145,77,.06)", borderColor:"rgba(255,145,77,.2)" }}>
+                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Para remarketing</div>
+                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--orange)" }}>{fmtNum(remarketing)}</div>
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
             );
           })()}
@@ -3237,6 +3359,33 @@ function HermesClientView({ client, allClients, onUpdate }) {
               ? <ApolloFunnel client={client} period={period} from={from} to={to} />
               : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
+          {/* Tarjetas de captura WP — solo APOLLO */}
+          {isApollo && (() => {
+            const capturaData = client.capturaConfig?.lastData;
+            if (!capturaData) return null;
+            const pctCap = capturaData.total_form > 0 ? (capturaData.total_wp / capturaData.total_form * 100).toFixed(1) : 0;
+            return (
+              <div style={{ marginTop:"1rem" }}>
+                <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>
+                  Captura de WhatsApp
+                </div>
+                <div className="grid4">
+                  {[
+                    ["📋 Reg. en Facebook", capturaData.total_form, "#4d9fff", "Personas en formulario"],
+                    ["📱 Reg. en WhatsApp", capturaData.total_wp, "var(--green)", "Personas en el grupo"],
+                    ["📊 % Captura", pctCap+"%", parseFloat(pctCap)>=70?"var(--green)":parseFloat(pctCap)>=50?"var(--amber)":"var(--red)", "FB → WP"],
+                    ["🎯 Para remarketing", capturaData.total_remarketing||0, "var(--orange)", "Pendientes de ingresar"],
+                  ].map(([label,val,color,sub]) => (
+                    <div key={label} className="card" style={{ padding:"1rem" }}>
+                      <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>{label}</div>
+                      <div style={{ fontSize:22, fontFamily:"var(--mono)", fontWeight:700, color }}>{val}</div>
+                      <div style={{ fontSize:10, color:"var(--muted)", marginTop:2 }}>{sub}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           {/* Datos diarios de campañas */}
           {(client.records || []).length > 0 && (() => {
             const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
@@ -5089,19 +5238,39 @@ function RemarketingTable({ data, readOnly }) {
 
   function descargar(tipo) {
     const items = (data.niveles?.[nivelRem] || []).filter(i => i.pendientes > 0);
-    if (tipo === "csv") {
+    const fecha = new Date().toISOString().slice(0,10);
+    if (tipo === "telefonos_csv") {
+      // CSV con columna teléfono — listo para subir a cualquier plataforma de masivos
+      const tels = data.telefonosPendientes || [];
+      if (!tels.length) {
+        alert("Ejecuta 'Exportar para Trafficker Pro' en tu Google Sheet para incluir los números.");
+        return;
+      }
+      const csv = "telefono\n" + tels.join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `telefonos_remarketing_${fecha}.csv`; a.click();
+    } else if (tipo === "telefonos_txt") {
+      // Solo números separados por comas — formato universal para masivos
+      const tels = data.telefonosPendientes || [];
+      if (!tels.length) { alert("Ejecuta el script en Google Sheets primero."); return; }
+      const blob = new Blob([tels.join(",")], { type: "text/plain;charset=utf-8;" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `telefonos_remarketing_${fecha}.txt`; a.click();
+    } else if (tipo === "csv") {
+      // CSV con análisis por nivel — separado por comas
       let csv = `${nivelRem},Registros FB,Personas WP,Pendientes WP,% Captura\n`;
       items.forEach(i => { csv += `"${i.nombre}",${i.total_form},${i.total_wp},${i.pendientes},${i.pct_captura}%\n`; });
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `remarketing_${nivelRem}_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+      a.download = `remarketing_${nivelRem}_${fecha}.csv`; a.click();
     } else {
       let html = `<table><tr><th>${nivelRem}</th><th>Reg. FB</th><th>En WP</th><th>Pendientes</th><th>% Captura</th></tr>`;
       items.forEach(i => { html += `<tr><td>${i.nombre}</td><td>${i.total_form}</td><td>${i.total_wp}</td><td>${i.pendientes}</td><td>${i.pct_captura}%</td></tr>`; });
       html += "</table>";
       const blob = new Blob([html], { type: "application/vnd.ms-excel" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `remarketing_${nivelRem}_${new Date().toISOString().slice(0,10)}.xls`; a.click();
+      a.download = `remarketing_${nivelRem}_${fecha}.xls`; a.click();
     }
   }
 
@@ -5119,6 +5288,8 @@ function RemarketingTable({ data, readOnly }) {
           <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
         </div>
         {filtroRem && <button className="btn btn-ghost btn-sm" onClick={() => setFiltroRem("")}>×</button>}
+        <button className="btn btn-sm" onClick={() => descargar("telefonos_csv")} style={{ background:"rgba(255,145,77,.2)", color:"var(--orange)", border:"1px solid rgba(255,145,77,.4)", whiteSpace:"nowrap" }}>📱 CSV masivos</button>
+        <button className="btn btn-sm" onClick={() => descargar("telefonos_txt")} style={{ background:"rgba(255,145,77,.15)", color:"var(--orange)", border:"1px solid rgba(255,145,77,.3)", whiteSpace:"nowrap" }}>📱 TXT masivos</button>
         <button className="btn btn-ghost btn-sm" onClick={() => descargar("csv")}>⬇ CSV</button>
         <button className="btn btn-ghost btn-sm" onClick={() => descargar("xls")}>⬇ Excel</button>
       </div>
@@ -5811,7 +5982,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
 // ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
 function ClientDashboard({ client, onLogout, banners, onUpdate }) {
-  const [tab, setTab] = useState("resumen");
+  const [tab, setTab] = useState("hermes");
   const [period, setPeriod] = useState("mtd");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
   // Columnas personalizables al nivel correcto del componente
@@ -5826,7 +5997,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["resumen", "hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "Historico"}</div>)}
+          {(["hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -5836,7 +6007,9 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
       <div className="main">
         <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
         <div className="content">
-          {/* Carroza visible en todas las tabs EXCEPTO hermes (que ya la tiene dentro) */}
+          {/* Banner de comunicaciones — siempre visible en la parte superior */}
+          {banners && banners.length > 0 && <BannerViewer banners={banners} />}
+          {/* Carroza visible en todas las tabs EXCEPTO hermes */}
           {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate || (() => {})} />}
           {tab === "estudio" && <EstudioPanel client={client} onUpdate={onUpdate || (() => {})} role="client" />}
