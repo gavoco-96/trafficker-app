@@ -2551,6 +2551,16 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
 
   const displayKpis = editing ? local : kpis;
 
+  // KPIs que se calculan automáticamente — siempre usan el valor calculado
+  const AUTO_KPIS = ["reg_fb", "reg_wp", "pct_cap", "asistentes", "cpa", "roas", "calidad"];
+
+  function getDisplayActual(kpi) {
+    const autoVal = getActualFromRecords(kpi.id);
+    if (AUTO_KPIS.includes(kpi.id) && autoVal) return autoVal; // siempre auto
+    if (autoVal) return autoVal; // si hay auto, usarlo
+    return kpi.actual || ""; // fallback al guardado manual
+  }
+
   return (
     <>
       {toastEl}
@@ -2582,7 +2592,7 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
           </thead>
           <tbody>
             {displayKpis.map(kpi => {
-              const actual = getActualFromRecords(kpi.id) || kpi.actual;
+              const actual = getDisplayActual(kpi);
               const delta = calcDelta(kpi.historico, actual);
               return (
                 <tr key={kpi.id}>
@@ -2606,7 +2616,7 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>
                     <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{actual || "—"}</span>
-                    {actual && !kpi.actual && <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 600 }}>auto</div>}
+                    {AUTO_KPIS.includes(kpi.id) && actual && <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 600 }}>auto ✓</div>}
                     {kpi.metrica === "manual" && !actual && <div style={{ fontSize: 10, color: "var(--accent2)", fontWeight: 600 }}>✏️ manual</div>}
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>
@@ -6094,7 +6104,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "historial", "estudio", "cuentas", "contratos", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "cuentas", "contratos", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
               {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
@@ -6189,7 +6199,12 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         </div>
       </div>
       <div className="main">
-        <div className="topbar"><div className="topbar-title">{tab === "resumen" ? "Resumen" : tab === "detalle" ? "Detalle diario" : tab === "proyecciones" ? "Proyecciones" : "Histórico de pauta"}</div><PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} /></div>
+        <div className="topbar">
+          <div className="topbar-title">
+            {tab === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : tab === "captura" ? "📊 Captura WP" : tab === "antecedentes" ? "📚 Historial" : tab === "estudio" ? "🎬 Estudio" : "Histórico de pauta"}
+          </div>
+          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+        </div>
         <div className="content">
           {/* Banner de comunicaciones — siempre visible en la parte superior */}
           {banners && banners.length > 0 && <BannerViewer banners={banners} />}
@@ -6226,7 +6241,14 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
             </div></>}
             {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
           </>}
-          {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={() => { }} readOnly={true} />}
+          {tab === "antecedentes" && (
+            <div>
+              <MisionesPanel client={client} onUpdate={onUpdate || (() => {})} />
+              <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+                <AntecedentesPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
