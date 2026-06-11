@@ -5012,6 +5012,236 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
 }
 
 
+
+// ─── MÓDULO ANÁLISIS DE CAPTURA FB→WP ────────────────────────────────────────
+
+const DEFAULT_SHEETS_URL = "https://docs.google.com/spreadsheets/d/1j6FZO1DU2sbQDPx3-TUyfIQQ7IkaK8wkY4psvhdHW0M";
+
+function extractSheetId(url) {
+  const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+function CapturaWPPanel({ client, onUpdate }) {
+  const sheetConfig = client.capturaConfig || {};
+  const [sheetUrl, setSheetUrl]   = useState(sheetConfig.url || DEFAULT_SHEETS_URL);
+  const [apiKey, setApiKey]       = useState(sheetConfig.apiKey || "");
+  const [loading, setLoading]     = useState(false);
+  const [data, setData]           = useState(sheetConfig.lastData || null);
+  const [nivel, setNivel]         = useState("anuncio");
+  const [sortDir, setSortDir]     = useState("desc");
+  const [sortKey, setSortKey]     = useState("pct_captura");
+  const [filterText, setFilter]   = useState("");
+  const { show, el: toastEl }     = useToast();
+
+  async function cargarDatos() {
+    const sheetId = extractSheetId(sheetUrl);
+    if (!sheetId) return show("URL de Google Sheet inválida", "err");
+    if (!apiKey)  return show("Ingresa tu Google Sheets API Key", "err");
+    setLoading(true);
+    try {
+      // Leer la hoja __trafficker_api__ que el Apps Script genera
+      const range = encodeURIComponent("__trafficker_api__!A1");
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      if (json.error) { show("Error de Google API: " + json.error.message, "err"); setLoading(false); return; }
+      const raw  = json.values?.[0]?.[0];
+      if (!raw)  { show("Sin datos. Ejecuta 'Exportar para Trafficker Pro' en el Apps Script primero.", "err"); setLoading(false); return; }
+      const parsed = JSON.parse(raw);
+      setData(parsed);
+      // Guardar config y último dato
+      const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, lastData: parsed, lastSync: new Date().toISOString() } };
+      await onUpdate(updated);
+      show("✓ Datos cargados: " + parsed.total_wp + " en WP, " + parsed.total_form + " en formulario", "ok");
+    } catch(e) {
+      show("Error al cargar: " + e.message, "err");
+    }
+    setLoading(false);
+  }
+
+  async function guardarConfig() {
+    const updated = { ...client, capturaConfig: { ...sheetConfig, url: sheetUrl, apiKey } };
+    await onUpdate(updated);
+    show("✓ Configuración guardada", "ok");
+  }
+
+  const items = data?.niveles?.[nivel] || [];
+  const filtered = items.filter(i => !filterText || i.nombre.toLowerCase().includes(filterText.toLowerCase()));
+  const sorted = [...filtered].sort((a, b) => {
+    const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
+    return sortDir === "desc" ? vb - va : va - vb;
+  });
+  const maxPct = sorted.length > 0 ? Math.max(...sorted.map(i => i.pct_captura)) : 100;
+
+  function SortBtn({ label, k }) {
+    const active = sortKey === k;
+    return (
+      <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", color: active ? "var(--accent2)" : "" }}
+        onClick={() => { if (sortKey === k) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("desc"); } }}>
+        {label} {active ? (sortDir === "desc" ? "▼" : "▲") : "⇅"}
+      </th>
+    );
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        {/* CONFIGURACIÓN */}
+        <div className="card" style={{ marginBottom: "1rem", borderColor: "rgba(0,74,173,.3)" }}>
+          <div className="card-title">Conexión con Google Sheets</div>
+          <div className="field">
+            <label>URL del Google Sheet</label>
+            <input type="text" value={sheetUrl} onChange={e => setSheetUrl(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/..." />
+          </div>
+          <div className="field">
+            <label>Google Sheets API Key
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank"
+                style={{ fontSize: 10, color: "var(--accent)", marginLeft: 8 }}>
+                ¿Cómo obtenerla? →
+              </a>
+            </label>
+            <PasswordInput value={apiKey} onChange={e => setApiKey(e.target.value)} />
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              La API Key debe tener habilitada la Google Sheets API. No se comparte con nadie.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-primary btn-sm" disabled={loading} onClick={cargarDatos}>
+              {loading ? "⏳ Cargando..." : "🔄 Sincronizar datos"}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={guardarConfig}>💾 Guardar config</button>
+          </div>
+          {sheetConfig.lastSync && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
+              Última sync: {new Date(sheetConfig.lastSync).toLocaleString("es-EC")}
+            </div>
+          )}
+        </div>
+
+        {/* INSTRUCCIONES si no hay datos */}
+        {!data && (
+          <div className="card" style={{ background: "rgba(0,74,173,.06)", borderColor: "rgba(0,74,173,.2)" }}>
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>📋 Cómo configurar (una sola vez):</div>
+            <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.8 }}>
+              <div>1. Abre tu Google Sheet → <strong>Extensions → Apps Script</strong></div>
+              <div>2. Pega el script que descargaste (<code>trafficker_pro_apps_script.js</code>)</div>
+              <div>3. Guarda y recarga el Sheet — aparece el menú <strong>🚀 Trafficker Pro</strong></div>
+              <div>4. Ejecuta <strong>"Analizar captura FB → WP"</strong> — te crea la hoja "Miembros WP"</div>
+              <div>5. Pega los números de WhatsApp en la hoja "Miembros WP" (col A, uno por fila)</div>
+              <div>6. Ejecuta <strong>"Exportar para Trafficker Pro"</strong></div>
+              <div>7. Regresa aquí y presiona <strong>Sincronizar datos</strong></div>
+            </div>
+          </div>
+        )}
+
+        {/* DATOS */}
+        {data && (
+          <div>
+            {/* Resumen */}
+            <div className="grid4" style={{ marginBottom: "1rem" }}>
+              {[
+                ["Personas en WP", data.total_wp, "#10B981"],
+                ["Registros en FB", data.total_form, "#004AAD"],
+                ["% Captura global", data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1)+"%" : "—", "var(--accent2)"],
+                ["Sin match", (data.total_wp - (data.niveles?.anuncio?.reduce((a,i) => a+(i.total_wp>0?i.total_wp:0),0) || 0)), "var(--muted)"],
+              ].map(([label, val, color]) => (
+                <div key={label} className="card" style={{ textAlign: "center", padding: "1rem" }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 22, fontFamily: "var(--mono)", fontWeight: 700, color }}>{val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Selector de nivel + filtro */}
+            <div style={{ display: "flex", gap: 8, marginBottom: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+              <div className="period-pills">
+                {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
+                  <button key={id} className={"pill " + (nivel === id ? "active" : "")} onClick={() => setNivel(id)}>{lbl}</button>
+                ))}
+              </div>
+              <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
+                <input type="text" value={filterText} onChange={e => setFilter(e.target.value)}
+                  placeholder={"Buscar " + nivel + "..."} style={{ paddingLeft: 28, fontSize: 12 }} />
+                <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)" }}>🔍</span>
+              </div>
+              {filterText && <button className="btn btn-ghost btn-sm" onClick={() => setFilter("")}>×</button>}
+            </div>
+
+            {/* Tabla */}
+            {sorted.length === 0
+              ? <div className="empty"><div style={{ fontSize: 24, opacity: .3 }}>📊</div><div style={{ marginTop: 6 }}>Sin datos para mostrar.</div></div>
+              : (
+                <div className="card scroll-x">
+                  <table className="tbl">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <SortBtn label={"Nombre del " + nivel} k="nombre" />
+                        <SortBtn label="Registros FB" k="total_form" />
+                        <SortBtn label="Personas WP" k="total_wp" />
+                        <SortBtn label="% Captura FB→WP" k="pct_captura" />
+                        <SortBtn label="% del Total WP" k="pct_del_total" />
+                        <th>Barra visual</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.map((item, idx) => {
+                        const pct = item.pct_captura;
+                        const color = pct >= 70 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
+                        return (
+                          <tr key={idx}>
+                            <td style={{ color: "var(--muted)", fontSize: 11, textAlign: "center" }}>{idx+1}</td>
+                            <td style={{ fontWeight: 500, maxWidth: 300, wordBreak: "break-word", fontSize: 12 }}>{item.nombre}</td>
+                            <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{item.total_form}</td>
+                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600, color: "var(--green)" }}>{item.total_wp}</td>
+                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 700, color }}>{pct}%</td>
+                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--muted)" }}>{item.pct_del_total}%</td>
+                            <td style={{ minWidth: 120 }}>
+                              <div style={{ background: "var(--surface2)", borderRadius: 20, height: 8, overflow: "hidden" }}>
+                                <div style={{ width: maxPct > 0 ? (pct/maxPct*100) + "%" : "0%", height: "100%", background: color, borderRadius: 20, transition: "width .5s" }} />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    {sorted.length > 1 && (
+                      <tfoot>
+                        <tr style={{ fontWeight: 600, background: "rgba(0,74,173,.08)" }}>
+                          <td colSpan={2}>TOTAL ({sorted.length} {nivel}s)</td>
+                          <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{sorted.reduce((a,i) => a+i.total_form,0)}</td>
+                          <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--green)" }}>{sorted.reduce((a,i) => a+i.total_wp,0)}</td>
+                          <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--accent2)" }}>
+                            {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
+                          </td>
+                          <td>100%</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )
+            }
+
+            {/* Fecha de los datos */}
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, textAlign: "right" }}>
+              Datos del: {data.fecha ? new Date(data.fecha).toLocaleString("es-EC") : "—"}
+              {" · "}
+              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={cargarDatos}>🔄 Actualizar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+
+
 // ─── SISTEMA DE MISIONES HISTÓRICAS ──────────────────────────────────────────
 // Cada misión es un snapshot completo: KPIs, registros, biblioteca, resultados
 
@@ -5320,15 +5550,16 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "misiones", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "misiones", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "misiones" ? "🏁 Misiones" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "misiones" ? "🏁 Misiones" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
         {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
         {tab === "misiones" && <MisionesPanel client={client} onUpdate={handleUpdate} />}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
+        {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
