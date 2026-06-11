@@ -1517,24 +1517,43 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
 
 // ─── VISTA POR CAMPAÑA ────────────────────────────────────────────────────────
 function VistaPorCampana({ rows, busqueda }) {
-  // Agrupa todos los registros por campaña/conjunto/anuncio
   const campanaMap = {};
+
   rows.forEach(r => {
+    // Recopilar todas las fuentes de nomenclatura
     const campanas = (r.campanas || "").split(",").map(c => c.trim()).filter(Boolean);
     const conjuntos = (r.conjuntos || "").split(",").map(c => c.trim()).filter(Boolean);
     const anuncios  = (r.anuncios  || "").split(",").map(c => c.trim()).filter(Boolean);
-    const allKeys = campanas.length ? campanas : conjuntos.length ? conjuntos : anuncios.length ? anuncios : ["Sin nomenclatura"];
+
+    // Usar campañas primero, luego conjuntos, luego anuncios
+    const allKeys = campanas.length ? campanas : conjuntos.length ? conjuntos : anuncios.length ? anuncios : [];
+    if (!allKeys.length) return; // ignorar registros sin nomenclatura
+
+    // Dividir métricas entre el número de campañas activas ese día
+    const divisor = allKeys.length;
+    const inv     = (parseFloat(r.inversion) || 0) / divisor;
+    const alc     = (parseFloat(r.alcance)   || 0) / divisor;
+    const leads   = (parseFloat(r.formularios || r.leads || r.clientesPotenciales) || 0) / divisor;
+    const ventas  = (parseFloat(r.ventas)    || 0) / divisor;
+    const wpP     = (parseFloat(r.personas_wp) || 0) / divisor;
+    const cpm     = parseFloat(r.cpm) || 0;
+    const cpc     = parseFloat(r.cpc) || 0;
+    const ctr     = parseFloat(r.ctr) || 0;
+
     allKeys.forEach(key => {
-      if (!campanaMap[key]) campanaMap[key] = { nombre: key, dias: 0, inversion: 0, alcance: 0, leads: 0, ventas: 0, cpm_sum: 0, cpc_sum: 0, ctr_sum: 0, n: 0 };
-      const c = campanaMap[key];
+      const nombre = key.trim();
+      if (!nombre) return;
+      if (!campanaMap[nombre]) campanaMap[nombre] = { nombre, dias: 0, inversion: 0, alcance: 0, leads: 0, ventas: 0, personas_wp: 0, cpm_sum: 0, cpc_sum: 0, ctr_sum: 0, n: 0 };
+      const c = campanaMap[nombre];
       c.dias++;
-      c.inversion += parseFloat(r.inversion) || 0;
-      c.alcance   += parseFloat(r.alcance)   || 0;
-      c.leads     += parseFloat(r.leads || r.formularios || r.resultados) || 0;
-      c.ventas    += parseFloat(r.ventas)    || 0;
-      c.cpm_sum   += parseFloat(r.cpm)       || 0;
-      c.cpc_sum   += parseFloat(r.cpc)       || 0;
-      c.ctr_sum   += parseFloat(r.ctr)       || 0;
+      c.inversion    += inv;
+      c.alcance      += alc;
+      c.leads        += leads;
+      c.ventas       += ventas;
+      c.personas_wp  += wpP;
+      c.cpm_sum      += cpm;
+      c.cpc_sum      += cpc;
+      c.ctr_sum      += ctr;
       c.n++;
     });
   });
@@ -1548,37 +1567,44 @@ function VistaPorCampana({ rows, busqueda }) {
   })).sort((a, b) => b.inversion - a.inversion);
 
   if (lista.length === 0) return (
-    <div className="empty"><div style={{ fontSize: 28, opacity: .3 }}>📡</div><div style={{ marginTop: 8 }}>Sin campañas registradas.{!busqueda ? " Agrega nombres de campaña en los registros diarios." : ""}</div></div>
+    <div className="empty">
+      <div style={{ fontSize: 28, opacity: .3 }}>📡</div>
+      <div style={{ marginTop: 8 }}>Sin campañas con nomenclatura registrada.</div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4, maxWidth: 340, textAlign: "center" }}>
+        {!busqueda ? "Agrega los nombres de campaña en cada registro diario, o sincroniza desde Facebook." : `No hay registros con "${busqueda}".`}
+      </div>
+    </div>
   );
 
   return (
     <div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem" }}>
-        {lista.length} campañas/conjuntos encontrados{busqueda ? ` con "${busqueda}"` : ""}
+        {lista.length} campaña{lista.length !== 1 ? "s" : ""}{busqueda ? ` con "${busqueda}"` : ""}
+        <span style={{ marginLeft: 8, fontSize: 11 }}>· Métricas distribuidas proporcionalmente entre campañas activas por día</span>
       </div>
       <div className="card scroll-x">
         <table className="tbl">
           <thead>
             <tr>
               <th>Campaña / Conjunto / Anuncio</th>
-              <th>Días activa</th>
+              <th>Días</th>
               <th>Inversión</th>
               <th>Alcance</th>
               <th>CPM</th>
               <th>CPC</th>
               <th>CTR</th>
-              <th>Leads</th>
+              <th>Leads/FB</th>
+              <th>Pers. WP</th>
               <th>CPL</th>
               <th>Ventas</th>
             </tr>
           </thead>
           <tbody>
             {lista.map((c, i) => {
-              // Highlight si hay búsqueda activa
               const match = busqueda && c.nombre.toLowerCase().includes(busqueda.toLowerCase());
               return (
                 <tr key={i} style={{ background: match ? "rgba(255,222,89,.06)" : "" }}>
-                  <td style={{ fontWeight: 500, maxWidth: 280, wordBreak: "break-word" }}>
+                  <td style={{ fontWeight: 500, maxWidth: 300, wordBreak: "break-word", fontSize: 12 }}>
                     {match && <span style={{ color: "var(--accent2)", marginRight: 4 }}>●</span>}
                     {c.nombre}
                   </td>
@@ -1588,8 +1614,9 @@ function VistaPorCampana({ rows, busqueda }) {
                   <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.cpm, 2)}</td>
                   <td style={{ fontFamily: "var(--mono)" }}>${fmtNum(c.cpc, 2)}</td>
                   <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.ctr, 2)}%</td>
-                  <td style={{ fontFamily: "var(--mono)" }}>{fmtNum(c.leads)}</td>
-                  <td style={{ fontFamily: "var(--mono)", color: c.cpl < 5 ? "var(--green)" : c.cpl < 15 ? "var(--amber)" : "var(--red)" }}>
+                  <td style={{ fontFamily: "var(--mono)" }}>{c.leads > 0 ? fmtNum(c.leads) : "—"}</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{c.personas_wp > 0 ? fmtNum(c.personas_wp) : "—"}</td>
+                  <td style={{ fontFamily: "var(--mono)", color: c.cpl > 0 && c.cpl < 5 ? "var(--green)" : c.cpl < 15 ? "var(--amber)" : "var(--red)" }}>
                     {c.cpl > 0 ? "$" + fmtNum(c.cpl, 2) : "—"}
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>{c.ventas > 0 ? fmtNum(c.ventas) : "—"}</td>
@@ -2190,8 +2217,8 @@ const APOLLO_KPIS_DEFAULT = [
   { id: "reg_fb",     nombre: "Registros en Facebook",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "formularios",  hint: "¿Cuántas personas se registraron en el formulario/landing?" },
   { id: "reg_wp",     nombre: "Registros en WhatsApp",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "personas_wp",  hint: "¿Cuántas personas ingresaron al grupo de WhatsApp?" },
   { id: "pct_cap",    nombre: "% de Captura",             unidad: "%",        historico: "", actual: "", meta: "70", metrica: "pct_captura_wp", hint: "¿Qué % pasó de Facebook a WhatsApp?" },
-  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "resultados",  hint: "¿Cuántas personas asistieron a la clase en vivo?" },
-  { id: "oportunidades", nombre: "Oportunidades",         unidad: "personas", historico: "", actual: "", meta: "", metrica: "leads",        hint: "¿Cuántas personas mostraron intención real de compra?" },
+  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "manual",     hint: "Ingreso manual — ¿Cuántas personas asistieron a la clase en vivo?" },
+  { id: "oportunidades", nombre: "Oportunidades",         unidad: "personas", historico: "", actual: "", meta: "", metrica: "manual",     hint: "Ingreso manual — ¿Cuántas personas mostraron intención real de compra?" },
   { id: "ventas",     nombre: "Ventas cerradas",           unidad: "ventas",   historico: "", actual: "", meta: "", metrica: "ventas",       hint: "¿Cuántas ventas se generaron?" },
   { id: "cpa",        nombre: "CPA",                       unidad: "$",        historico: "", actual: "", meta: "", metrica: "cpa",          hint: "¿Cuánto costó conseguir una venta?" },
   { id: "roas",       nombre: "ROAS",                      unidad: "x",        historico: "", actual: "", meta: "4", metrica: "roas",        hint: "¿Cuánto dinero regresó por cada dólar invertido?" },
@@ -2457,14 +2484,8 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
       const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
       return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
     }
-    if (kpiId === "asistentes") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.resultados) || 0), 0);
-      return total > 0 ? String(total) : "";
-    }
-    if (kpiId === "oportunidades") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.leads) || parseFloat(r.formularios) || parseFloat(r.resultados) || 0), 0);
-      return total > 0 ? String(total) : "";
-    }
+    // asistentes y oportunidades son MANUALES - no se autocalculan
+    if (kpiId === "asistentes" || kpiId === "oportunidades") return "";
     if (kpiId === "ventas") {
       const total = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
       return total > 0 ? String(total) : "";
@@ -2546,7 +2567,8 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>
                     <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{actual || "—"}</span>
-                    {actual && !kpi.actual && <div style={{ fontSize: 10, color: "var(--muted)" }}>auto</div>}
+                    {actual && !kpi.actual && <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 600 }}>auto</div>}
+                    {kpi.metrica === "manual" && !actual && <div style={{ fontSize: 10, color: "var(--accent2)", fontWeight: 600 }}>✏️ manual</div>}
                   </td>
                   <td style={{ fontFamily: "var(--mono)" }}>
                     {editing
@@ -4989,6 +5011,214 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   );
 }
 
+
+// ─── SISTEMA DE MISIONES HISTÓRICAS ──────────────────────────────────────────
+// Cada misión es un snapshot completo: KPIs, registros, biblioteca, resultados
+
+function MisionesPanel({ client, onUpdate }) {
+  const misiones = client.misiones || [];
+  const isApollo = client.producto?.startsWith("APOLLO");
+  const { show, el: toastEl } = useToast();
+  const [confirm, setConfirm] = useState(false);
+  const [misionNombre, setMisionNombre] = useState("");
+  const [expandida, setExpandida] = useState(null);
+
+  // Generar nombre sugerido automáticamente
+  const nombreSugerido = isApollo
+    ? `APOLLO ${misiones.length + 1}`
+    : `HERMES ${misiones.length + 1}`;
+
+  async function finalizarMision() {
+    const nombre = misionNombre.trim() || nombreSugerido;
+    const ahora = new Date().toISOString();
+
+    // Snapshot completo de la misión actual
+    const snapshot = {
+      id: "mision_" + Date.now(),
+      nombre,
+      fechaInicio: client.fechaContrato || client.contracts?.[0]?.fechaInicio || "",
+      fechaFin: ahora.slice(0, 10),
+      fechaArchivado: ahora,
+      producto: client.producto,
+      // KPIs según producto
+      kpis: isApollo
+        ? (client.apolloData?.kpisApollo || [])
+        : (client.hermesData?.kpisHermes || []),
+      // Registros diarios
+      records: client.records || [],
+      // Data del producto
+      apolloData: isApollo ? client.apolloData : undefined,
+      hermesData: !isApollo ? client.hermesData : undefined,
+      // Resumen calculado
+      resumen: calcularResumenMision(client, isApollo),
+    };
+
+    // Guardar en misiones y limpiar datos actuales
+    const nuevasMisiones = [...misiones, snapshot];
+
+    const clientLimpio = {
+      ...client,
+      misiones: nuevasMisiones,
+      records: [], // limpiar registros
+      kpis: [],
+      checklist: {},
+      hermesData: !isApollo ? { momentos: {}, kpisHermes: [], biblioteca: client.hermesData?.biblioteca || [] } : client.hermesData,
+      apolloData: isApollo ? {
+        ...client.apolloData,
+        kpisApollo: [],
+        momentos: {},
+        faseActual: 0,
+        fechaLanzamiento: "",
+      } : client.apolloData,
+    };
+
+    await onUpdate(clientLimpio);
+    setConfirm(false);
+    setMisionNombre("");
+    show(`✓ ${nombre} archivada. Datos listos para nueva misión.`, "ok");
+  }
+
+  function calcularResumenMision(c, apollo) {
+    const records = c.records || [];
+    if (!records.length) return {};
+    const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+    const leads = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.leads) || 0), 0);
+    const wpPersons = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+    const ventas = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
+    const ingreso = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
+    const dias = records.length;
+    return {
+      inversion: inv.toFixed(2),
+      leads,
+      personas_wp: wpPersons,
+      pct_captura: leads > 0 && wpPersons > 0 ? (wpPersons / leads * 100).toFixed(1) : null,
+      ventas,
+      cpa: ventas > 0 && inv > 0 ? (inv / ventas).toFixed(2) : null,
+      roas: inv > 0 && ingreso > 0 ? (ingreso / inv).toFixed(2) : null,
+      ingreso: ingreso.toFixed(2),
+      dias,
+    };
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        {/* Botón de finalizar misión actual */}
+        <div className="card" style={{ borderColor: "rgba(255,145,77,.3)", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {isApollo ? "🚀 Finalizar misión actual" : "✦ Finalizar ciclo HERMES actual"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                Archiva todos los datos actuales (KPIs, registros, métricas) y deja el perfil listo para la siguiente misión.
+                Los datos quedan guardados permanentemente en el historial.
+              </div>
+            </div>
+            {!confirm
+              ? <button className="btn btn-sm" style={{ background: "rgba(255,145,77,.2)", color: "var(--orange)", border: "1px solid rgba(255,145,77,.3)", whiteSpace: "nowrap" }}
+                  onClick={() => { setConfirm(true); setMisionNombre(nombreSugerido); }}>
+                  🏁 Finalizar y archivar
+                </button>
+              : <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="text" value={misionNombre} onChange={e => setMisionNombre(e.target.value)}
+                    placeholder={nombreSugerido}
+                    style={{ width: 140, fontSize: 12 }} />
+                  <button className="btn btn-green btn-sm" onClick={finalizarMision}>✓ Confirmar</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirm(false)}>×</button>
+                </div>
+            }
+          </div>
+          {confirm && (
+            <div style={{ marginTop: 8, background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--red)" }}>
+              ⚠️ Se archivarán {(client.records || []).length} registros diarios y los KPIs actuales. Esta acción no se puede deshacer.
+            </div>
+          )}
+        </div>
+
+        {/* Historial de misiones */}
+        <div className="sec-title" style={{ marginBottom: ".75rem" }}>
+          Historial de misiones — {misiones.length} archivada{misiones.length !== 1 ? "s" : ""}
+        </div>
+
+        {misiones.length === 0 && (
+          <div className="empty">
+            <div style={{ fontSize: 28, opacity: .3 }}>{isApollo ? "🚀" : "✦"}</div>
+            <div style={{ marginTop: 8 }}>Sin misiones archivadas aún.</div>
+          </div>
+        )}
+
+        {[...misiones].reverse().map(m => {
+          const isExp = expandida === m.id;
+          const r = m.resumen || {};
+          return (
+            <div key={m.id} className="card" style={{ marginBottom: ".75rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setExpandida(isExp ? null : m.id)}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: isApollo ? "rgba(0,74,173,.2)" : "rgba(255,222,89,.15)", color: isApollo ? "#4d9fff" : "var(--accent2)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                  {isApollo ? "🚀" : "✦"}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{m.nombre}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>
+                    {m.fechaFin ? fmtDate(m.fechaFin) : "—"} · {r.dias || 0} días · {r.records?.length || m.records?.length || 0} registros
+                  </div>
+                </div>
+                {/* Resumen rápido */}
+                <div style={{ display: "flex", gap: 12, fontSize: 11 }}>
+                  {r.inversion && <div style={{ textAlign: "center" }}><div style={{ color: "var(--muted)" }}>Inversión</div><div style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>${r.inversion}</div></div>}
+                  {r.leads > 0 && <div style={{ textAlign: "center" }}><div style={{ color: "var(--muted)" }}>Leads</div><div style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{r.leads}</div></div>}
+                  {r.ventas > 0 && <div style={{ textAlign: "center" }}><div style={{ color: "var(--muted)" }}>Ventas</div><div style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{r.ventas}</div></div>}
+                  {r.roas && <div style={{ textAlign: "center" }}><div style={{ color: "var(--muted)" }}>ROAS</div><div style={{ fontFamily: "var(--mono)", fontWeight: 600, color: parseFloat(r.roas) >= 4 ? "var(--green)" : parseFloat(r.roas) >= 2 ? "var(--amber)" : "var(--red)" }}>{r.roas}x</div></div>}
+                </div>
+                <span style={{ color: "var(--muted)", fontSize: 12 }}>{isExp ? "▲" : "▼"}</span>
+              </div>
+
+              {isExp && (
+                <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+                  {/* KPIs de la misión */}
+                  {(m.kpis || []).length > 0 && (
+                    <div style={{ marginBottom: "1rem" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>KPIs finales</div>
+                      <div className="grid2">
+                        {m.kpis.map(k => (
+                          <div key={k.id} style={{ background: "var(--surface2)", borderRadius: 8, padding: "8px 12px" }}>
+                            <div style={{ fontSize: 11, color: "var(--muted)" }}>{k.nombre}</div>
+                            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 16, color: "var(--accent2)", marginTop: 2 }}>
+                              {k.actual || "—"} <span style={{ fontSize: 10, color: "var(--muted)" }}>{k.unidad}</span>
+                            </div>
+                            {k.meta && <div style={{ fontSize: 10, color: "var(--muted)" }}>Meta: {k.meta}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Resumen de métricas */}
+                  <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Resumen de métricas</div>
+                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                      {[["Inversión", r.inversion ? "$"+r.inversion : null],["Leads/Registros FB", r.leads],["Personas WP", r.personas_wp],["% Captura", r.pct_captura ? r.pct_captura+"%" : null],["Ventas", r.ventas],["CPA", r.cpa ? "$"+r.cpa : null],["ROAS", r.roas ? r.roas+"x" : null],["Ingresos", r.ingreso ? "$"+r.ingreso : null]].filter(x => x[1]).map(([label, val]) => (
+                        <div key={label} style={{ fontSize: 12 }}>
+                          <div style={{ color: "var(--muted)", fontSize: 10 }}>{label}</div>
+                          <div style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
+                    Archivado el {new Date(m.fechaArchivado).toLocaleDateString("es-EC")} · {(m.records || []).length} registros guardados
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
 // Cambio de contraseña inline desde el perfil admin
 function ChangePasswordInline({ client, onUpdate }) {
@@ -5090,13 +5320,14 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "misiones", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "misiones" ? "🏁 Misiones" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
         {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
+        {tab === "misiones" && <MisionesPanel client={client} onUpdate={handleUpdate} />}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "info" && (
           <div>
