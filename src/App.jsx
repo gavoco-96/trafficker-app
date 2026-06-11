@@ -2214,10 +2214,10 @@ function getBannersForClient(banners, clientId) {
 // ─── APOLLO PRODUCT ───────────────────────────────────────────────────────────
 
 const APOLLO_KPIS_DEFAULT = [
-  { id: "reg_fb",     nombre: "Registros en Facebook",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "formularios",  hint: "¿Cuántas personas se registraron en el formulario/landing?" },
-  { id: "reg_wp",     nombre: "Registros en WhatsApp",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "personas_wp",  hint: "¿Cuántas personas ingresaron al grupo de WhatsApp?" },
-  { id: "pct_cap",    nombre: "% de Captura",             unidad: "%",        historico: "", actual: "", meta: "70", metrica: "pct_captura_wp", hint: "¿Qué % pasó de Facebook a WhatsApp?" },
-  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "manual",     hint: "Ingreso manual — ¿Cuántas personas asistieron a la clase en vivo?" },
+  { id: "reg_fb",     nombre: "Registros en Facebook",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "formularios",  hint: "Auto — suma de formularios FB" },
+  { id: "reg_wp",     nombre: "Registros en WhatsApp",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "personas_wp",  hint: "Auto — desde Captura WP o campo personas_wp" },
+  { id: "pct_cap",    nombre: "% de Captura FB→WP",       unidad: "%",        historico: "", actual: "", meta: "70", metrica: "pct_captura_wp", hint: "Auto — calculado desde Captura WP" },
+  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "auto_wp",    hint: "Auto — estimado 10% del total en WP" },
   { id: "oportunidades", nombre: "Oportunidades",         unidad: "personas", historico: "", actual: "", meta: "", metrica: "manual",     hint: "Ingreso manual — ¿Cuántas personas mostraron intención real de compra?" },
   { id: "ventas",     nombre: "Ventas cerradas",           unidad: "ventas",   historico: "", actual: "", meta: "", metrica: "ventas",       hint: "¿Cuántas ventas se generaron?" },
   { id: "cpa",        nombre: "CPA",                       unidad: "$",        historico: "", actual: "", meta: "", metrica: "cpa",          hint: "¿Cuánto costó conseguir una venta?" },
@@ -2499,6 +2499,36 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
       const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
       const ing = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
       return inv > 0 && ing > 0 ? (ing / inv).toFixed(2) : "";
+    }
+    // reg_fb: suma automática de formularios de Facebook
+    if (kpiId === "reg_fb") {
+      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      return total > 0 ? String(Math.round(total)) : "";
+    }
+    // reg_wp: desde capturaConfig si está disponible, sino desde personas_wp
+    if (kpiId === "reg_wp") {
+      // Primero intentar desde la data de captura WP
+      const capturaData = client.capturaConfig?.lastData;
+      if (capturaData?.total_wp > 0) return String(capturaData.total_wp);
+      const total = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+      return total > 0 ? String(Math.round(total)) : "";
+    }
+    // pct_cap: porcentaje de captura FB→WP
+    if (kpiId === "pct_cap") {
+      const capturaData = client.capturaConfig?.lastData;
+      if (capturaData?.total_wp > 0 && capturaData?.total_form > 0) {
+        return (capturaData.total_wp / capturaData.total_form * 100).toFixed(1);
+      }
+      const fb = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+      return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
+    }
+    // asistentes: 10% de personas en WP (estimado automático)
+    if (kpiId === "asistentes") {
+      const capturaData = client.capturaConfig?.lastData;
+      const wpTotal = capturaData?.total_wp > 0 ? capturaData.total_wp
+        : records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
+      return wpTotal > 0 ? String(Math.round(wpTotal * 0.10)) : "";
     }
     // KPIs HERMES
     if (kpiId === "calidad") {
@@ -5022,17 +5052,18 @@ function extractSheetId(url) {
   return m ? m[1] : null;
 }
 
-function CapturaWPPanel({ client, onUpdate }) {
+function CapturaWPPanel({ client, onUpdate, readOnly }) {
   const sheetConfig = client.capturaConfig || {};
-  const [sheetUrl, setSheetUrl]   = useState(sheetConfig.url || DEFAULT_SHEETS_URL);
-  const [apiKey, setApiKey]       = useState(sheetConfig.apiKey || "");
-  const [loading, setLoading]     = useState(false);
-  const [data, setData]           = useState(sheetConfig.lastData || null);
-  const [nivel, setNivel]         = useState("anuncio");
-  const [sortDir, setSortDir]     = useState("desc");
-  const [sortKey, setSortKey]     = useState("pct_captura");
-  const [filterText, setFilter]   = useState("");
-  const { show, el: toastEl }     = useToast();
+  const [sheetUrl, setSheetUrl] = useState(sheetConfig.url || DEFAULT_SHEETS_URL);
+  const [apiKey, setApiKey]     = useState(sheetConfig.apiKey || "");
+  const [loading, setLoading]   = useState(false);
+  const [data, setData]         = useState(sheetConfig.lastData || null);
+  const [nivel, setNivel]       = useState("anuncio");
+  const [sortDir, setSortDir]   = useState("desc");
+  const [sortKey, setSortKey]   = useState("pct_captura");
+  const [filterText, setFilter] = useState("");
+  const [viewTab, setViewTab]   = useState("anuncios"); // anuncios | paises | remarketing
+  const { show, el: toastEl }   = useToast();
 
   async function cargarDatos() {
     const sheetId = extractSheetId(sheetUrl);
@@ -5040,29 +5071,24 @@ function CapturaWPPanel({ client, onUpdate }) {
     if (!apiKey)  return show("Ingresa tu Google Sheets API Key", "err");
     setLoading(true);
     try {
-      // Leer la hoja __trafficker_api__ que el Apps Script genera
       const range = encodeURIComponent("__trafficker_api__!A1");
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`;
       const res  = await fetch(url);
       const json = await res.json();
       if (json.error) { show("Error de Google API: " + json.error.message, "err"); setLoading(false); return; }
-      const raw  = json.values?.[0]?.[0];
-      if (!raw)  { show("Sin datos. Ejecuta 'Exportar para Trafficker Pro' en el Apps Script primero.", "err"); setLoading(false); return; }
+      const raw = json.values?.[0]?.[0];
+      if (!raw) { show("Sin datos. Ejecuta Exportar para Trafficker Pro primero.", "err"); setLoading(false); return; }
       const parsed = JSON.parse(raw);
       setData(parsed);
-      // Guardar config y último dato
       const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, lastData: parsed, lastSync: new Date().toISOString() } };
       await onUpdate(updated);
-      show("✓ Datos cargados: " + parsed.total_wp + " en WP, " + parsed.total_form + " en formulario", "ok");
-    } catch(e) {
-      show("Error al cargar: " + e.message, "err");
-    }
+      show("✓ " + parsed.total_wp + " en WP · " + parsed.total_con_match + " identificados · " + parsed.total_remarketing + " para remarketing", "ok");
+    } catch(e) { show("Error: " + e.message, "err"); }
     setLoading(false);
   }
 
   async function guardarConfig() {
-    const updated = { ...client, capturaConfig: { ...sheetConfig, url: sheetUrl, apiKey } };
-    await onUpdate(updated);
+    await onUpdate({ ...client, capturaConfig: { ...sheetConfig, url: sheetUrl, apiKey } });
     show("✓ Configuración guardada", "ok");
   }
 
@@ -5072,12 +5098,13 @@ function CapturaWPPanel({ client, onUpdate }) {
     const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
     return sortDir === "desc" ? vb - va : va - vb;
   });
-  const maxPct = sorted.length > 0 ? Math.max(...sorted.map(i => i.pct_captura)) : 100;
+  const maxPct = sorted.length > 0 ? Math.max(...sorted.map(i => i.pct_captura), 1) : 100;
+  const paises = data?.paises || [];
 
   function SortBtn({ label, k }) {
     const active = sortKey === k;
     return (
-      <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", color: active ? "var(--accent2)" : "" }}
+      <th style={{ cursor:"pointer", userSelect:"none", whiteSpace:"nowrap", color: active ? "var(--accent2)" : "" }}
         onClick={() => { if (sortKey === k) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("desc"); } }}>
         {label} {active ? (sortDir === "desc" ? "▼" : "▲") : "⇅"}
       </th>
@@ -5088,150 +5115,313 @@ function CapturaWPPanel({ client, onUpdate }) {
     <>
       {toastEl}
       <div>
-        {/* CONFIGURACIÓN */}
-        <div className="card" style={{ marginBottom: "1rem", borderColor: "rgba(0,74,173,.3)" }}>
-          <div className="card-title">Conexión con Google Sheets</div>
-          <div className="field">
-            <label>URL del Google Sheet</label>
-            <input type="text" value={sheetUrl} onChange={e => setSheetUrl(e.target.value)}
-              placeholder="https://docs.google.com/spreadsheets/d/..." />
-          </div>
-          <div className="field">
-            <label>Google Sheets API Key
-              <a href="https://console.cloud.google.com/apis/credentials" target="_blank"
-                style={{ fontSize: 10, color: "var(--accent)", marginLeft: 8 }}>
-                ¿Cómo obtenerla? →
-              </a>
-            </label>
-            <PasswordInput value={apiKey} onChange={e => setApiKey(e.target.value)} />
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-              La API Key debe tener habilitada la Google Sheets API. No se comparte con nadie.
+        {/* Configuración — solo admin */}
+        {!readOnly && (
+          <div className="card" style={{ marginBottom:"1rem", borderColor:"rgba(0,74,173,.3)" }}>
+            <div className="card-title">Conexión con Google Sheets</div>
+            <div className="field">
+              <label>URL del Google Sheet</label>
+              <input type="text" value={sheetUrl} onChange={e => setSheetUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button className="btn btn-primary btn-sm" disabled={loading} onClick={cargarDatos}>
-              {loading ? "⏳ Cargando..." : "🔄 Sincronizar datos"}
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={guardarConfig}>💾 Guardar config</button>
-          </div>
-          {sheetConfig.lastSync && (
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
-              Última sync: {new Date(sheetConfig.lastSync).toLocaleString("es-EC")}
+            <div className="field">
+              <label>Google Sheets API Key <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style={{ fontSize:10, color:"var(--accent)", marginLeft:8 }}>¿Cómo obtenerla? →</a></label>
+              <PasswordInput value={apiKey} onChange={e => setApiKey(e.target.value)} />
             </div>
-          )}
-        </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <button className="btn btn-primary btn-sm" disabled={loading} onClick={cargarDatos}>{loading ? "⏳ Cargando..." : "🔄 Sincronizar datos"}</button>
+              <button className="btn btn-ghost btn-sm" onClick={guardarConfig}>💾 Guardar config</button>
+            </div>
+            {sheetConfig.lastSync && <div style={{ fontSize:11, color:"var(--muted)", marginTop:8 }}>Última sync: {new Date(sheetConfig.lastSync).toLocaleString("es-EC")}</div>}
+          </div>
+        )}
 
-        {/* INSTRUCCIONES si no hay datos */}
-        {!data && (
-          <div className="card" style={{ background: "rgba(0,74,173,.06)", borderColor: "rgba(0,74,173,.2)" }}>
-            <div style={{ fontWeight: 600, marginBottom: 12 }}>📋 Cómo configurar (una sola vez):</div>
-            <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.8 }}>
-              <div>1. Abre tu Google Sheet → <strong>Extensions → Apps Script</strong></div>
-              <div>2. Pega el script que descargaste (<code>trafficker_pro_apps_script.js</code>)</div>
-              <div>3. Guarda y recarga el Sheet — aparece el menú <strong>🚀 Trafficker Pro</strong></div>
-              <div>4. Ejecuta <strong>"Analizar captura FB → WP"</strong> — te crea la hoja "Miembros WP"</div>
-              <div>5. Pega los números de WhatsApp en la hoja "Miembros WP" (col A, uno por fila)</div>
+        {/* Instrucciones si no hay datos */}
+        {!data && !readOnly && (
+          <div className="card" style={{ background:"rgba(0,74,173,.06)", borderColor:"rgba(0,74,173,.2)" }}>
+            <div style={{ fontWeight:600, marginBottom:12 }}>📋 Cómo configurar (una sola vez):</div>
+            <div style={{ fontSize:13, color:"var(--muted)", lineHeight:1.8 }}>
+              <div>1. Abre tu Google Sheet → <strong>Extensiones → Apps Script</strong></div>
+              <div>2. Pega el script <code>trafficker_pro_apps_script.js</code> y guarda</div>
+              <div>3. Recarga el Sheet — aparece el menú <strong>🚀 Trafficker Pro</strong></div>
+              <div>4. Ejecuta <strong>"Analizar captura FB → WP"</strong> → crea hoja "Miembros WP"</div>
+              <div>5. Pega números de WhatsApp en col A de "Miembros WP"</div>
               <div>6. Ejecuta <strong>"Exportar para Trafficker Pro"</strong></div>
-              <div>7. Regresa aquí y presiona <strong>Sincronizar datos</strong></div>
+              <div>7. Regresa aquí → presiona Sincronizar datos</div>
             </div>
           </div>
+        )}
+
+        {/* Vista cliente sin datos */}
+        {!data && readOnly && (
+          <div className="empty"><div style={{ fontSize:28, opacity:.3 }}>📊</div><div style={{ marginTop:8 }}>Análisis de captura no disponible aún.</div></div>
         )}
 
         {/* DATOS */}
         {data && (
           <div>
-            {/* Resumen */}
-            <div className="grid4" style={{ marginBottom: "1rem" }}>
+            {/* Resumen 4 tarjetas */}
+            <div className="grid4" style={{ marginBottom:"1rem" }}>
               {[
-                ["Personas en WP", data.total_wp, "#10B981"],
-                ["Registros en FB", data.total_form, "#004AAD"],
+                ["Personas en WP", data.total_wp, "var(--green)"],
+                ["Registros en FB", data.total_form, "#4d9fff"],
                 ["% Captura global", data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1)+"%" : "—", "var(--accent2)"],
-                ["Sin match", (data.total_wp - (data.niveles?.anuncio?.reduce((a,i) => a+(i.total_wp>0?i.total_wp:0),0) || 0)), "var(--muted)"],
+                ["Para remarketing", data.total_remarketing || 0, "var(--orange)"],
               ].map(([label, val, color]) => (
-                <div key={label} className="card" style={{ textAlign: "center", padding: "1rem" }}>
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{label}</div>
-                  <div style={{ fontSize: 22, fontFamily: "var(--mono)", fontWeight: 700, color }}>{val}</div>
+                <div key={label} className="card" style={{ textAlign:"center", padding:"1rem" }}>
+                  <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>{label}</div>
+                  <div style={{ fontSize:22, fontFamily:"var(--mono)", fontWeight:700, color }}>{val}</div>
                 </div>
               ))}
             </div>
 
-            {/* Selector de nivel + filtro */}
-            <div style={{ display: "flex", gap: 8, marginBottom: "1rem", flexWrap: "wrap", alignItems: "center" }}>
-              <div className="period-pills">
-                {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
-                  <button key={id} className={"pill " + (nivel === id ? "active" : "")} onClick={() => setNivel(id)}>{lbl}</button>
-                ))}
-              </div>
-              <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
-                <input type="text" value={filterText} onChange={e => setFilter(e.target.value)}
-                  placeholder={"Buscar " + nivel + "..."} style={{ paddingLeft: 28, fontSize: 12 }} />
-                <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)" }}>🔍</span>
-              </div>
-              {filterText && <button className="btn btn-ghost btn-sm" onClick={() => setFilter("")}>×</button>}
+            {/* Tabs de vista */}
+            <div className="period-pills" style={{ marginBottom:"1rem" }}>
+              <button className={"pill " + (viewTab==="anuncios" ? "active" : "")} onClick={() => setViewTab("anuncios")}>📡 Por anuncio</button>
+              <button className={"pill " + (viewTab==="paises" ? "active" : "")} onClick={() => setViewTab("paises")}>🌎 Por país</button>
+              {!readOnly && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing || 0})</button>}
+              {readOnly && data.total_remarketing > 0 && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing})</button>}
             </div>
 
-            {/* Tabla */}
-            {sorted.length === 0
-              ? <div className="empty"><div style={{ fontSize: 24, opacity: .3 }}>📊</div><div style={{ marginTop: 6 }}>Sin datos para mostrar.</div></div>
-              : (
-                <div className="card scroll-x">
-                  <table className="tbl">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <SortBtn label={"Nombre del " + nivel} k="nombre" />
-                        <SortBtn label="Registros FB" k="total_form" />
-                        <SortBtn label="Personas WP" k="total_wp" />
-                        <SortBtn label="% Captura FB→WP" k="pct_captura" />
-                        <SortBtn label="% del Total WP" k="pct_del_total" />
-                        <th>Barra visual</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sorted.map((item, idx) => {
-                        const pct = item.pct_captura;
-                        const color = pct >= 70 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
-                        return (
-                          <tr key={idx}>
-                            <td style={{ color: "var(--muted)", fontSize: 11, textAlign: "center" }}>{idx+1}</td>
-                            <td style={{ fontWeight: 500, maxWidth: 300, wordBreak: "break-word", fontSize: 12 }}>{item.nombre}</td>
-                            <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{item.total_form}</td>
-                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600, color: "var(--green)" }}>{item.total_wp}</td>
-                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 700, color }}>{pct}%</td>
-                            <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--muted)" }}>{item.pct_del_total}%</td>
-                            <td style={{ minWidth: 120 }}>
-                              <div style={{ background: "var(--surface2)", borderRadius: 20, height: 8, overflow: "hidden" }}>
-                                <div style={{ width: maxPct > 0 ? (pct/maxPct*100) + "%" : "0%", height: "100%", background: color, borderRadius: 20, transition: "width .5s" }} />
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    {sorted.length > 1 && (
-                      <tfoot>
-                        <tr style={{ fontWeight: 600, background: "rgba(0,74,173,.08)" }}>
-                          <td colSpan={2}>TOTAL ({sorted.length} {nivel}s)</td>
-                          <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{sorted.reduce((a,i) => a+i.total_form,0)}</td>
-                          <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--green)" }}>{sorted.reduce((a,i) => a+i.total_wp,0)}</td>
-                          <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: "var(--accent2)" }}>
-                            {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
-                          </td>
-                          <td>100%</td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
+            {/* Vista por anuncio/conjunto/campaña */}
+            {viewTab === "anuncios" && (
+              <div>
+                <div style={{ display:"flex", gap:8, marginBottom:"1rem", flexWrap:"wrap", alignItems:"center" }}>
+                  <div className="period-pills">
+                    {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
+                      <button key={id} className={"pill " + (nivel===id ? "active" : "")} onClick={() => setNivel(id)}>{lbl}</button>
+                    ))}
+                  </div>
+                  <div style={{ position:"relative", flex:1, maxWidth:300 }}>
+                    <input type="text" value={filterText} onChange={e => setFilter(e.target.value)}
+                      placeholder={"Buscar " + nivel + "..."} style={{ paddingLeft:28, fontSize:12 }} />
+                    <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
+                  </div>
+                  {filterText && <button className="btn btn-ghost btn-sm" onClick={() => setFilter("")}>×</button>}
                 </div>
-              )
-            }
+                {sorted.length === 0
+                  ? <div className="empty"><div style={{ fontSize:24, opacity:.3 }}>📊</div><div style={{ marginTop:6 }}>Sin datos.</div></div>
+                  : <div className="card scroll-x">
+                      <table className="tbl">
+                        <thead><tr>
+                          <th>#</th>
+                          <SortBtn label={"Nombre del " + nivel} k="nombre" />
+                          <SortBtn label="Reg. FB" k="total_form" />
+                          <SortBtn label="Pers. WP" k="total_wp" />
+                          <SortBtn label="% Captura FB→WP" k="pct_captura" />
+                          <SortBtn label="% del Total WP" k="pct_del_total" />
+                          {!readOnly && <SortBtn label="Pendientes" k="pendientes" />}
+                          <th>Visual</th>
+                        </tr></thead>
+                        <tbody>
+                          {sorted.map((item, idx) => {
+                            const pct = item.pct_captura;
+                            const color = pct >= 70 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
+                            const match = filterText && item.nombre.toLowerCase().includes(filterText.toLowerCase());
+                            return (
+                              <tr key={idx} style={{ background: match ? "rgba(255,222,89,.06)" : "" }}>
+                                <td style={{ color:"var(--muted)", fontSize:11, textAlign:"center" }}>{idx+1}</td>
+                                <td style={{ fontWeight:500, maxWidth:280, wordBreak:"break-word", fontSize:12 }}>
+                                  {match && <span style={{ color:"var(--accent2)", marginRight:4 }}>●</span>}
+                                  {item.nombre}
+                                </td>
+                                <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{item.total_form}</td>
+                                <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:600, color:"var(--green)" }}>{item.total_wp}</td>
+                                <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color }}>{pct}%</td>
+                                <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--muted)" }}>{item.pct_del_total}%</td>
+                                {!readOnly && <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)" }}>{item.pendientes || 0}</td>}
+                                <td style={{ minWidth:100 }}>
+                                  <div style={{ background:"var(--surface2)", borderRadius:20, height:8, overflow:"hidden" }}>
+                                    <div style={{ width: maxPct > 0 ? (pct/maxPct*100)+"%" : "0%", height:"100%", background:color, borderRadius:20, transition:"width .5s" }} />
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {sorted.length > 1 && (
+                          <tfoot><tr style={{ fontWeight:600, background:"rgba(0,74,173,.08)" }}>
+                            <td colSpan={2}>TOTAL ({sorted.length})</td>
+                            <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{sorted.reduce((a,i)=>a+i.total_form,0)}</td>
+                            <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{sorted.reduce((a,i)=>a+i.total_wp,0)}</td>
+                            <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)" }}>
+                              {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
+                            </td>
+                            <td>100%</td>
+                            {!readOnly && <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)" }}>{data.total_remarketing || 0}</td>}
+                            <td></td>
+                          </tr></tfoot>
+                        )}
+                      </table>
+                    </div>
+                }
+              </div>
+            )}
 
-            {/* Fecha de los datos */}
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, textAlign: "right" }}>
-              Datos del: {data.fecha ? new Date(data.fecha).toLocaleString("es-EC") : "—"}
-              {" · "}
-              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={cargarDatos}>🔄 Actualizar</button>
+            {/* Vista por país */}
+            {viewTab === "paises" && (
+              <div className="card scroll-x">
+                <table className="tbl">
+                  <thead><tr>
+                    <th>País</th><th>Registros FB</th><th>Personas WP</th>
+                    <th>% Captura</th><th>Pendientes</th><th>Visual</th>
+                  </tr></thead>
+                  <tbody>
+                    {[...paises].sort((a,b) => b.total_form - a.total_form).map((p, i) => {
+                      const pct = p.total_form > 0 ? (p.total_wp/p.total_form*100) : 0;
+                      const color = pct >= 70 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
+                      const maxPaisForm = Math.max(...paises.map(x => x.total_form), 1);
+                      return (
+                        <tr key={i}>
+                          <td style={{ fontWeight:500 }}>{p.pais}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{p.total_form}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)", fontWeight:600 }}>{p.total_wp}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color }}>{pct.toFixed(1)}%</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)" }}>{p.total_form - p.total_wp}</td>
+                          <td style={{ minWidth:100 }}>
+                            <div style={{ background:"var(--surface2)", borderRadius:20, height:8, overflow:"hidden" }}>
+                              <div style={{ width:(p.total_form/maxPaisForm*100)+"%", height:"100%", background:"#4d9fff", borderRadius:20 }} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Remarketing — admin Y cliente */}
+            {viewTab === "remarketing" && (
+              <div>
+                <div style={{ background:"rgba(255,145,77,.08)", border:"1px solid rgba(255,145,77,.2)", borderRadius:10, padding:"10px 14px", marginBottom:"1rem", fontSize:12 }}>
+                  <strong>🎯 {data.total_remarketing} personas</strong> se registraron en Facebook pero no llegaron a WhatsApp.
+                  {readOnly
+                    ? " Descarga la lista para activar tu remarketing."
+                    : " Expórtalas también del Google Sheet en la hoja \"Remarketing FB→WP\"."}
+                </div>
+
+                {/* Tabla de remarketing por anuncio con descarga */}
+                {(() => {
+                  const remItems = (data.niveles?.anuncio || []).filter(i => i.pendientes > 0).sort((a,b) => b.pendientes - a.pendientes);
+                  const [filtroRem, setFiltroRem] = useState("");
+                  const [nivelRem, setNivelRem]   = useState("anuncio");
+
+                  const remItemsFiltrados = (data.niveles?.[nivelRem] || [])
+                    .filter(i => i.pendientes > 0)
+                    .filter(i => !filtroRem || i.nombre.toLowerCase().includes(filtroRem.toLowerCase()))
+                    .sort((a,b) => b.pendientes - a.pendientes);
+
+                  function descargarCSV() {
+                    const nivel = nivelRem;
+                    const items = (data.niveles?.[nivel] || []).filter(i => i.pendientes > 0);
+                    let csv = `${nivel},Registros FB,Personas WP,Pendientes WP,% Captura\n`;
+                    items.forEach(i => {
+                      csv += `"${i.nombre}",${i.total_form},${i.total_wp},${i.pendientes},${i.pct_captura}%\n`;
+                    });
+                    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                    const url  = URL.createObjectURL(blob);
+                    const a    = document.createElement("a");
+                    a.href = url;
+                    a.download = `remarketing_${nivel}_${new Date().toISOString().slice(0,10)}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }
+
+                  function descargarExcel() {
+                    const nivel = nivelRem;
+                    const items = (data.niveles?.[nivel] || []).filter(i => i.pendientes > 0);
+                    let html = `<table><tr><th>${nivel}</th><th>Registros FB</th><th>Personas WP</th><th>Pendientes WP</th><th>% Captura</th></tr>`;
+                    items.forEach(i => { html += `<tr><td>${i.nombre}</td><td>${i.total_form}</td><td>${i.total_wp}</td><td>${i.pendientes}</td><td>${i.pct_captura}%</td></tr>`; });
+                    html += "</table>";
+                    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+                    const url  = URL.createObjectURL(blob);
+                    const a    = document.createElement("a");
+                    a.href = url;
+                    a.download = `remarketing_${nivel}_${new Date().toISOString().slice(0,10)}.xls`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }
+
+                  return (
+                    <div>
+                      {/* Controles */}
+                      <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:"1rem" }}>
+                        <div className="period-pills">
+                          {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
+                            <button key={id} className={"pill " + (nivelRem===id ? "active" : "")} onClick={() => setNivelRem(id)}>{lbl}</button>
+                          ))}
+                        </div>
+                        <div style={{ position:"relative", flex:1, maxWidth:260 }}>
+                          <input type="text" value={filtroRem} onChange={e => setFiltroRem(e.target.value)}
+                            placeholder="Filtrar..." style={{ paddingLeft:28, fontSize:12 }} />
+                          <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
+                        </div>
+                        {filtroRem && <button className="btn btn-ghost btn-sm" onClick={() => setFiltroRem("")}>×</button>}
+                        <button className="btn btn-ghost btn-sm" onClick={descargarCSV} title="Descargar CSV">⬇ CSV</button>
+                        <button className="btn btn-ghost btn-sm" onClick={descargarExcel} title="Descargar Excel">⬇ Excel</button>
+                      </div>
+
+                      {/* Tabla */}
+                      <div className="card scroll-x">
+                        <table className="tbl">
+                          <thead><tr>
+                            <th>#</th>
+                            <th>Nombre</th>
+                            <th>Reg. FB</th>
+                            <th>En WP</th>
+                            <th style={{ color:"var(--orange)" }}>Pendientes</th>
+                            <th>% Captura actual</th>
+                            <th>Potencial si recuperas 30%</th>
+                          </tr></thead>
+                          <tbody>
+                            {remItemsFiltrados.map((item, i) => {
+                              const potencial = Math.round(item.pendientes * 0.3);
+                              const pctNew = item.total_form > 0
+                                ? ((item.total_wp + potencial) / item.total_form * 100).toFixed(1)
+                                : 0;
+                              return (
+                                <tr key={i}>
+                                  <td style={{ color:"var(--muted)", fontSize:11, textAlign:"center" }}>{i+1}</td>
+                                  <td style={{ fontWeight:500, fontSize:12, maxWidth:260, wordBreak:"break-word" }}>{item.nombre}</td>
+                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{item.total_form}</td>
+                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{item.total_wp}</td>
+                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color:"var(--orange)" }}>{item.pendientes}</td>
+                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color: item.pct_captura >= 70 ? "var(--green)" : item.pct_captura >= 50 ? "var(--amber)" : "var(--red)" }}>
+                                    {item.pct_captura}%
+                                  </td>
+                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>
+                                    +{potencial} → {pctNew}%
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          {remItemsFiltrados.length > 1 && (
+                            <tfoot><tr style={{ fontWeight:600, background:"rgba(255,145,77,.08)" }}>
+                              <td colSpan={2}>TOTAL</td>
+                              <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_form,0)}</td>
+                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_wp,0)}</td>
+                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)", fontWeight:700 }}>{remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)}</td>
+                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)" }}>
+                                {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
+                              </td>
+                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>
+                                +{Math.round(remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)*0.3)} potenciales
+                              </td>
+                            </tr></tfoot>
+                          )}
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ fontSize:11, color:"var(--muted)", marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span>Datos del: {sheetConfig.lastSync ? new Date(sheetConfig.lastSync).toLocaleString("es-EC") : "—"}</span>
+              {!readOnly && <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} disabled={loading} onClick={cargarDatos}>🔄 Actualizar</button>}
             </div>
           </div>
         )}
@@ -5239,8 +5429,6 @@ function CapturaWPPanel({ client, onUpdate }) {
     </>
   );
 }
-
-
 
 // ─── SISTEMA DE MISIONES HISTÓRICAS ──────────────────────────────────────────
 // Cada misión es un snapshot completo: KPIs, registros, biblioteca, resultados
@@ -5630,7 +5818,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {["resumen", "hermes", "estudio", "antecedentes"].map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? "✦ HERMES" : v === "estudio" ? "🎬 Estudio" : "Historico"}</div>)}
+          {(["resumen", "hermes", "estudio", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : []), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "resumen" ? "Resumen" : v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "Historico"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -5644,6 +5832,12 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
           {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
           {tab === "hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate || (() => {})} />}
           {tab === "estudio" && <EstudioPanel client={client} onUpdate={onUpdate || (() => {})} role="client" />}
+          {tab === "captura" && client.capturaConfig?.lastData && (
+            <CapturaWPPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
+          )}
+          {tab === "captura" && !client.capturaConfig?.lastData && (
+            <div className="empty"><div style={{ fontSize:28, opacity:.3 }}>📊</div><div style={{ marginTop:8 }}>El análisis de captura estará disponible pronto.</div></div>
+          )}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
