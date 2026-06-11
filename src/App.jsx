@@ -2469,68 +2469,58 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
   // Calcular actual desde datos de metricas diarias
   function getActualFromRecords(kpiId) {
     const records = client.records || [];
-    if (!records.length) return "";
-    // KPIs APOLLO
+    const capturaData = client.capturaConfig?.lastData;
+
+    // APOLLO KPIs
     if (kpiId === "reg_fb") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-      return total > 0 ? String(total) : "";
-    }
-    if (kpiId === "reg_wp") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-      return total > 0 ? String(total) : "";
-    }
-    if (kpiId === "pct_cap") {
-      const fb = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-      const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-      return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
-    }
-    // asistentes y oportunidades son MANUALES - no se autocalculan
-    if (kpiId === "asistentes" || kpiId === "oportunidades") return "";
-    if (kpiId === "ventas") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
-      return total > 0 ? String(total) : "";
-    }
-    if (kpiId === "cpa") {
-      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
-      const res = records.reduce((a, r) => a + (parseFloat(r.ventas) || parseFloat(r.leads) || parseFloat(r.resultados) || 0), 0);
-      return inv > 0 && res > 0 ? (inv / res).toFixed(2) : "";
-    }
-    if (kpiId === "roas") {
-      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
-      const ing = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
-      return inv > 0 && ing > 0 ? (ing / inv).toFixed(2) : "";
-    }
-    // reg_fb: suma automática de formularios de Facebook
-    if (kpiId === "reg_fb") {
-      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
+      // Prioridad: capturaData (más preciso) → suma de formularios FB
+      if (capturaData?.total_form > 0) return String(capturaData.total_form);
+      const total = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || parseFloat(r.resultados) || 0), 0);
       return total > 0 ? String(Math.round(total)) : "";
     }
-    // reg_wp: desde capturaConfig si está disponible, sino desde personas_wp
     if (kpiId === "reg_wp") {
-      // Primero intentar desde la data de captura WP
-      const capturaData = client.capturaConfig?.lastData;
       if (capturaData?.total_wp > 0) return String(capturaData.total_wp);
       const total = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
       return total > 0 ? String(Math.round(total)) : "";
     }
-    // pct_cap: porcentaje de captura FB→WP
     if (kpiId === "pct_cap") {
-      const capturaData = client.capturaConfig?.lastData;
-      if (capturaData?.total_wp > 0 && capturaData?.total_form > 0) {
+      if (capturaData?.total_wp > 0 && capturaData?.total_form > 0)
         return (capturaData.total_wp / capturaData.total_form * 100).toFixed(1);
-      }
+      if (!records.length) return "";
       const fb = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
       const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
       return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
     }
-    // asistentes: 10% de personas en WP (estimado automático)
     if (kpiId === "asistentes") {
-      const capturaData = client.capturaConfig?.lastData;
+      // 10% de personas en WP — estimado automático
       const wpTotal = capturaData?.total_wp > 0 ? capturaData.total_wp
         : records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
       return wpTotal > 0 ? String(Math.round(wpTotal * 0.10)) : "";
     }
-    // KPIs HERMES
+    // oportunidades: manual
+    if (kpiId === "oportunidades") return "";
+    if (kpiId === "ventas") {
+      if (!records.length) return "";
+      const total = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
+      return total > 0 ? String(Math.round(total)) : "";
+    }
+    if (kpiId === "cpa") {
+      if (!records.length) return "";
+      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+      const ventas = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
+      // Para APOLLO: CPA = inversión / ventas
+      if (inv > 0 && ventas > 0) return (inv / ventas).toFixed(2);
+      // Si no hay ventas, usar CPA por registro FB
+      const regs = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.resultados) || 0), 0);
+      return inv > 0 && regs > 0 ? (inv / regs).toFixed(2) : "";
+    }
+    if (kpiId === "roas") {
+      if (!records.length) return "";
+      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+      const ing = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
+      return inv > 0 && ing > 0 ? (ing / inv).toFixed(2) : "";
+    }
+    // HERMES KPIs
     if (kpiId === "calidad") {
       const piezas = hermes.biblioteca || [];
       if (!piezas.length) return "";
@@ -3206,6 +3196,41 @@ function HermesClientView({ client, allClients, onUpdate }) {
       {subTab === "dashboard" && (
         <div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+          {/* Panel de métricas rápidas — entre barra de progreso y KPIs */}
+          {isApollo && (() => {
+            const rows = filterByPeriod(client.records || [], period, from, to);
+            const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
+            const alc = rows.reduce((a,r) => a+(parseFloat(r.alcance)||0), 0);
+            const cpm = rows.length ? rows.reduce((a,r) => a+(parseFloat(r.cpm)||0), 0)/rows.length : 0;
+            const forms = rows.reduce((a,r) => a+(parseFloat(r.formularios)||parseFloat(r.resultados)||0), 0);
+            const wpPersons = client.capturaConfig?.lastData?.total_wp || rows.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
+            const cpl = forms > 0 && inv > 0 ? inv/forms : 0;
+            const cpa = rows.reduce((a,r) => a+(parseFloat(r.ventas)||0),0) > 0 ? inv/rows.reduce((a,r) => a+(parseFloat(r.ventas)||0),0) : 0;
+            const roas = rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0),0) > 0 ? rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0),0)/inv : 0;
+            const pctCap = forms > 0 && wpPersons > 0 ? (wpPersons/forms*100) : 0;
+            return (
+              <div className="grid4" style={{ marginBottom:"1rem" }}>
+                {[
+                  ["Inversión", "$"+fmtNum(inv,2), "var(--text)"],
+                  ["Alcance", fmtNum(alc), "var(--text)"],
+                  ["CPM", "$"+fmtNum(cpm,2), "var(--text)"],
+                  ["ROAS", roas > 0 ? fmtNum(roas,2)+"x" : "0,00x", roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"],
+                  ["Potenciales", "0", "var(--text)"],
+                  ["Formularios", fmtNum(forms), "var(--accent2)"],
+                  ["Resultados", fmtNum(forms), "#4d9fff"],
+                  ["CPA", cpl > 0 ? "$"+fmtNum(cpl,2) : "—", "var(--text)"],
+                  ["Costo/Formulario", cpl > 0 ? "$"+fmtNum(cpl,2) : "—", "var(--text)"],
+                  ["Ventas", fmtNum(rows.reduce((a,r)=>a+(parseFloat(r.ventas)||0),0)), "var(--text)"],
+                  ["Ingresos", "$"+fmtNum(rows.reduce((a,r)=>a+(parseFloat(r.ingreso)||0),0),2), rows.reduce((a,r)=>a+(parseFloat(r.ingreso)||0),0)>0?"var(--green)":"#4d9fff"],
+                ].map(([label,val,color]) => (
+                  <div key={label} className="card" style={{ padding:"1rem" }}>
+                    <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>{label}</div>
+                    <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} isApollo={isApollo} />
             {isApollo
@@ -5052,6 +5077,96 @@ function extractSheetId(url) {
   return m ? m[1] : null;
 }
 
+// RemarketingTable — componente separado para evitar useState ilegal en render
+function RemarketingTable({ data, readOnly }) {
+  const [filtroRem, setFiltroRem] = useState("");
+  const [nivelRem, setNivelRem]   = useState("anuncio");
+
+  const remItemsFiltrados = (data.niveles?.[nivelRem] || [])
+    .filter(i => i.pendientes > 0)
+    .filter(i => !filtroRem || i.nombre.toLowerCase().includes(filtroRem.toLowerCase()))
+    .sort((a, b) => b.pendientes - a.pendientes);
+
+  function descargar(tipo) {
+    const items = (data.niveles?.[nivelRem] || []).filter(i => i.pendientes > 0);
+    if (tipo === "csv") {
+      let csv = `${nivelRem},Registros FB,Personas WP,Pendientes WP,% Captura\n`;
+      items.forEach(i => { csv += `"${i.nombre}",${i.total_form},${i.total_wp},${i.pendientes},${i.pct_captura}%\n`; });
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `remarketing_${nivelRem}_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    } else {
+      let html = `<table><tr><th>${nivelRem}</th><th>Reg. FB</th><th>En WP</th><th>Pendientes</th><th>% Captura</th></tr>`;
+      items.forEach(i => { html += `<tr><td>${i.nombre}</td><td>${i.total_form}</td><td>${i.total_wp}</td><td>${i.pendientes}</td><td>${i.pct_captura}%</td></tr>`; });
+      html += "</table>";
+      const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `remarketing_${nivelRem}_${new Date().toISOString().slice(0,10)}.xls`; a.click();
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:"1rem" }}>
+        <div className="period-pills">
+          {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
+            <button key={id} className={"pill " + (nivelRem===id ? "active" : "")} onClick={() => setNivelRem(id)}>{lbl}</button>
+          ))}
+        </div>
+        <div style={{ position:"relative", flex:1, maxWidth:260 }}>
+          <input type="text" value={filtroRem} onChange={e => setFiltroRem(e.target.value)}
+            placeholder="Filtrar..." style={{ paddingLeft:28, fontSize:12 }} />
+          <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
+        </div>
+        {filtroRem && <button className="btn btn-ghost btn-sm" onClick={() => setFiltroRem("")}>×</button>}
+        <button className="btn btn-ghost btn-sm" onClick={() => descargar("csv")}>⬇ CSV</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => descargar("xls")}>⬇ Excel</button>
+      </div>
+      <div className="card scroll-x">
+        <table className="tbl">
+          <thead><tr>
+            <th>#</th><th>Nombre</th><th>Reg. FB</th><th>En WP</th>
+            <th style={{ color:"var(--orange)" }}>Pendientes</th>
+            <th>% Captura</th><th>Potencial +30%</th>
+          </tr></thead>
+          <tbody>
+            {remItemsFiltrados.map((item, i) => {
+              const potencial = Math.round(item.pendientes * 0.3);
+              const pctNew = item.total_form > 0 ? ((item.total_wp + potencial) / item.total_form * 100).toFixed(1) : 0;
+              const color = item.pct_captura >= 70 ? "var(--green)" : item.pct_captura >= 50 ? "var(--amber)" : "var(--red)";
+              return (
+                <tr key={i}>
+                  <td style={{ color:"var(--muted)", fontSize:11, textAlign:"center" }}>{i+1}</td>
+                  <td style={{ fontWeight:500, fontSize:12, maxWidth:260, wordBreak:"break-word" }}>{item.nombre}</td>
+                  <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{item.total_form}</td>
+                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{item.total_wp}</td>
+                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color:"var(--orange)" }}>{item.pendientes}</td>
+                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color }}>{item.pct_captura}%</td>
+                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>+{potencial} → {pctNew}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {remItemsFiltrados.length > 1 && (
+            <tfoot><tr style={{ fontWeight:600, background:"rgba(255,145,77,.08)" }}>
+              <td colSpan={2}>TOTAL ({remItemsFiltrados.length})</td>
+              <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_form,0)}</td>
+              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_wp,0)}</td>
+              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)", fontWeight:700 }}>{remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)}</td>
+              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)" }}>
+                {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
+              </td>
+              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>
+                +{Math.round(remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)*0.3)} potenciales
+              </td>
+            </tr></tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function CapturaWPPanel({ client, onUpdate, readOnly }) {
   const sheetConfig = client.capturaConfig || {};
   const [sheetUrl, setSheetUrl] = useState(sheetConfig.url || DEFAULT_SHEETS_URL);
@@ -5300,121 +5415,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                     : " Expórtalas también del Google Sheet en la hoja \"Remarketing FB→WP\"."}
                 </div>
 
-                {/* Tabla de remarketing por anuncio con descarga */}
-                {(() => {
-                  const remItems = (data.niveles?.anuncio || []).filter(i => i.pendientes > 0).sort((a,b) => b.pendientes - a.pendientes);
-                  const [filtroRem, setFiltroRem] = useState("");
-                  const [nivelRem, setNivelRem]   = useState("anuncio");
-
-                  const remItemsFiltrados = (data.niveles?.[nivelRem] || [])
-                    .filter(i => i.pendientes > 0)
-                    .filter(i => !filtroRem || i.nombre.toLowerCase().includes(filtroRem.toLowerCase()))
-                    .sort((a,b) => b.pendientes - a.pendientes);
-
-                  function descargarCSV() {
-                    const nivel = nivelRem;
-                    const items = (data.niveles?.[nivel] || []).filter(i => i.pendientes > 0);
-                    let csv = `${nivel},Registros FB,Personas WP,Pendientes WP,% Captura\n`;
-                    items.forEach(i => {
-                      csv += `"${i.nombre}",${i.total_form},${i.total_wp},${i.pendientes},${i.pct_captura}%\n`;
-                    });
-                    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-                    const url  = URL.createObjectURL(blob);
-                    const a    = document.createElement("a");
-                    a.href = url;
-                    a.download = `remarketing_${nivel}_${new Date().toISOString().slice(0,10)}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }
-
-                  function descargarExcel() {
-                    const nivel = nivelRem;
-                    const items = (data.niveles?.[nivel] || []).filter(i => i.pendientes > 0);
-                    let html = `<table><tr><th>${nivel}</th><th>Registros FB</th><th>Personas WP</th><th>Pendientes WP</th><th>% Captura</th></tr>`;
-                    items.forEach(i => { html += `<tr><td>${i.nombre}</td><td>${i.total_form}</td><td>${i.total_wp}</td><td>${i.pendientes}</td><td>${i.pct_captura}%</td></tr>`; });
-                    html += "</table>";
-                    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
-                    const url  = URL.createObjectURL(blob);
-                    const a    = document.createElement("a");
-                    a.href = url;
-                    a.download = `remarketing_${nivel}_${new Date().toISOString().slice(0,10)}.xls`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }
-
-                  return (
-                    <div>
-                      {/* Controles */}
-                      <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:"1rem" }}>
-                        <div className="period-pills">
-                          {[["campaña","Campaña"],["conjunto","Conjunto"],["anuncio","Anuncio"]].map(([id,lbl]) => (
-                            <button key={id} className={"pill " + (nivelRem===id ? "active" : "")} onClick={() => setNivelRem(id)}>{lbl}</button>
-                          ))}
-                        </div>
-                        <div style={{ position:"relative", flex:1, maxWidth:260 }}>
-                          <input type="text" value={filtroRem} onChange={e => setFiltroRem(e.target.value)}
-                            placeholder="Filtrar..." style={{ paddingLeft:28, fontSize:12 }} />
-                          <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
-                        </div>
-                        {filtroRem && <button className="btn btn-ghost btn-sm" onClick={() => setFiltroRem("")}>×</button>}
-                        <button className="btn btn-ghost btn-sm" onClick={descargarCSV} title="Descargar CSV">⬇ CSV</button>
-                        <button className="btn btn-ghost btn-sm" onClick={descargarExcel} title="Descargar Excel">⬇ Excel</button>
-                      </div>
-
-                      {/* Tabla */}
-                      <div className="card scroll-x">
-                        <table className="tbl">
-                          <thead><tr>
-                            <th>#</th>
-                            <th>Nombre</th>
-                            <th>Reg. FB</th>
-                            <th>En WP</th>
-                            <th style={{ color:"var(--orange)" }}>Pendientes</th>
-                            <th>% Captura actual</th>
-                            <th>Potencial si recuperas 30%</th>
-                          </tr></thead>
-                          <tbody>
-                            {remItemsFiltrados.map((item, i) => {
-                              const potencial = Math.round(item.pendientes * 0.3);
-                              const pctNew = item.total_form > 0
-                                ? ((item.total_wp + potencial) / item.total_form * 100).toFixed(1)
-                                : 0;
-                              return (
-                                <tr key={i}>
-                                  <td style={{ color:"var(--muted)", fontSize:11, textAlign:"center" }}>{i+1}</td>
-                                  <td style={{ fontWeight:500, fontSize:12, maxWidth:260, wordBreak:"break-word" }}>{item.nombre}</td>
-                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{item.total_form}</td>
-                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{item.total_wp}</td>
-                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color:"var(--orange)" }}>{item.pendientes}</td>
-                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color: item.pct_captura >= 70 ? "var(--green)" : item.pct_captura >= 50 ? "var(--amber)" : "var(--red)" }}>
-                                    {item.pct_captura}%
-                                  </td>
-                                  <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>
-                                    +{potencial} → {pctNew}%
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                          {remItemsFiltrados.length > 1 && (
-                            <tfoot><tr style={{ fontWeight:600, background:"rgba(255,145,77,.08)" }}>
-                              <td colSpan={2}>TOTAL</td>
-                              <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_form,0)}</td>
-                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{remItemsFiltrados.reduce((a,i)=>a+i.total_wp,0)}</td>
-                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)", fontWeight:700 }}>{remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)}</td>
-                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)" }}>
-                                {data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1) : 0}%
-                              </td>
-                              <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--accent2)", fontSize:11 }}>
-                                +{Math.round(remItemsFiltrados.reduce((a,i)=>a+i.pendientes,0)*0.3)} potenciales
-                              </td>
-                            </tr></tfoot>
-                          )}
-                        </table>
-                      </div>
-                    </div>
-                  );
-                })()}
+                <RemarketingTable data={data} readOnly={readOnly} />
               </div>
             )}
 
@@ -5738,14 +5739,21 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "misiones", "estudio", "cuentas", "contratos", "antecedentes", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "historial", "estudio", "cuentas", "contratos", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "misiones" ? "🏁 Misiones" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
         {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
-        {tab === "misiones" && <MisionesPanel client={client} onUpdate={handleUpdate} />}
+        {tab === "historial" && (
+          <div>
+            <MisionesPanel client={client} onUpdate={handleUpdate} />
+            <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+              <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />
+            </div>
+          </div>
+        )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "info" && (
@@ -5778,7 +5786,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         )}
         {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
         {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
-        {tab === "antecedentes" && <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
+
         {tab === "metricas" && <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />}
         {tab === "facebook" && (
           <FacebookPanel client={client} onUpdate={handleUpdate} />
