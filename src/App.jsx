@@ -2494,46 +2494,43 @@ function resolverFuente(fuente, records, capturaData) {
 }
 
 function calcularKPI(kpi, records, capturaData) {
-  if (kpi.tipo === "manual") return null; // manual = no calcular
+  if (kpi.tipo === "manual") return null;
+
+  const r = records || [];
+  const c = capturaData || {};
 
   if (kpi.tipo === "auto") {
-    const val = resolverFuente(kpi.fuente, records, capturaData);
+    const val = resolverFuente(kpi.fuente, r, c);
     return val > 0 ? val : null;
   }
 
   if (kpi.tipo === "calc" && kpi.formula) {
-    // Parsear fórmula: "fuente1 op fuente2" o "fuente1 op número"
     const formula = kpi.formula.trim();
 
-    // Operador %  → porcentaje: A/B*100
+    // Operador % → porcentaje: A/B*100
     if (formula.includes(" % ")) {
-      const [a, b] = formula.split(" % ").map(s => s.trim());
-      const va = resolverFuente(a, records, capturaData);
-      const vb = isNaN(parseFloat(b)) ? resolverFuente(b, records, capturaData) : parseFloat(b);
-      return vb > 0 ? va/vb*100 : null;
+      const parts = formula.split(" % ").map(s => s.trim());
+      const va = resolverFuente(parts[0], r, c);
+      const vb = isNaN(parseFloat(parts[1])) ? resolverFuente(parts[1], r, c) : parseFloat(parts[1]);
+      if (va === 0 || vb === 0) return null;
+      return va / vb * 100;
     }
-    // Operadores estándar
-    for (const op of ["/","*","-","+"]) {
+
+    // Operadores estándar — probarlos todos
+    for (const op of ["/", "*", "-", "+"]) {
       if (formula.includes(` ${op} `)) {
-        const [a, b] = formula.split(` ${op} `).map(s => s.trim());
-        const va = isNaN(parseFloat(a)) ? resolverFuente(a, records, capturaData) : parseFloat(a);
-        const vb = isNaN(parseFloat(b)) ? resolverFuente(b, records, capturaData) : parseFloat(b);
-        if (vb === 0 && op === "/") return null;
+        const parts = formula.split(` ${op} `).map(s => s.trim());
+        const va = isNaN(parseFloat(parts[0])) ? resolverFuente(parts[0], r, c) : parseFloat(parts[0]);
+        const vb = isNaN(parseFloat(parts[1])) ? resolverFuente(parts[1], r, c) : parseFloat(parts[1]);
+        if (op === "/" && vb === 0) return null;
+        if (op === "/" && va === 0) return null;
+        if (op === "*" && (va === 0 || vb === 0)) return null;
         if (op === "+") return va + vb;
         if (op === "-") return va - vb;
         if (op === "*") return va * vb;
         if (op === "/") return va / vb;
       }
     }
-    // Fórmula personalizada con eval seguro
-    try {
-      const expr = formula.replace(/[a-z_]+/g, match => {
-        const val = resolverFuente(match, records, capturaData);
-        return String(val);
-      });
-      const result = Function('"use strict"; return (' + expr + ')')();
-      return isFinite(result) ? result : null;
-    } catch { return null; }
   }
   return null;
 }
@@ -2669,6 +2666,10 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
     : (hermes.kpisHermes || []);
   const kpis = savedKpis.length > 0 ? savedKpis : defaultKpis;
 
+  // Migración automática: si los KPIs guardados son del formato viejo (sin tipo/fuente), usar los nuevos default
+  const kpisNecesitanMigracion = savedKpis.length > 0 && savedKpis.every(k => !k.tipo && !k.fuente && !k.formula);
+  const kpis = (savedKpis.length > 0 && !kpisNecesitanMigracion) ? savedKpis : defaultKpis;
+
   const [editing, setEditing]   = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
   const [local, setLocal]       = useState(kpis);
@@ -2676,8 +2677,19 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
 
   // Sincronizar cuando cambian datos externos
   useEffect(() => {
-    setLocal(savedKpis.length > 0 ? savedKpis : defaultKpis);
+    const current = (savedKpis.length > 0 && !savedKpis.every(k => !k.tipo && !k.fuente)) ? savedKpis : defaultKpis;
+    setLocal(current);
   }, [client.id, records.length, capturaData?.total_wp, capturaData?.lastSync]);
+
+  async function resetearKpis() {
+    if (!window.confirm("¿Restablecer los KPIs al formato nuevo? Los valores de 'Antes' y 'Meta' que hayas guardado se perderán.")) return;
+    const updated = isApollo
+      ? { ...client, apolloData: { ...(client.apolloData||{}), kpisApollo: APOLLO_KPIS_DEFAULT } }
+      : { ...client, hermesData: { ...hermes, kpisHermes: HERMES_KPIS_DEFAULT } };
+    await onUpdate(updated);
+    setLocal(defaultKpis);
+    show("✓ KPIs restablecidos con el nuevo formato", "ok");
+  }
 
   function upd(id, k, v) { setLocal(p => p.map(kpi => kpi.id === id ? { ...kpi, [k]: v } : kpi)); }
 
@@ -2717,6 +2729,13 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
           {!readOnly && (
             <div style={{ display:"flex", gap:6 }}>
               {!editing && !showBuilder && <button className="btn btn-ghost btn-sm" onClick={() => setShowBuilder(true)}>+ KPI</button>}
+              {!editing && isApollo && (kpisNecesitanMigracion || savedKpis.length === 0) && (
+                <button className="btn btn-sm" style={{ background:"rgba(255,145,77,.15)", color:"var(--orange)", border:"1px solid rgba(255,145,77,.3)", fontSize:11 }}
+                  onClick={resetearKpis}>⚡ Actualizar formato</button>
+              )}
+              {!editing && isApollo && savedKpis.length > 0 && !kpisNecesitanMigracion && (
+                <button className="btn btn-ghost btn-sm" style={{ fontSize:10 }} onClick={resetearKpis} title="Restablecer KPIs al formato nuevo">↺</button>
+              )}
               {editing
                 ? <><button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button><button className="btn btn-ghost btn-sm" onClick={() => { setLocal(kpis); setEditing(false); }}>Cancelar</button></>
                 : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>}
