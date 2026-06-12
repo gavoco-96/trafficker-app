@@ -3262,6 +3262,11 @@ function ApolloFunnel({ client, period, from, to }) {
             {roas && <div style={{ fontSize: 11, color: "var(--muted)" }}>ROAS: <span style={{ color: parseFloat(roas) >= 4 ? "var(--green)" : "var(--amber)", fontWeight: 700 }}>{roas}x</span></div>}
             {gasto > 0 && <div style={{ fontSize: 11, color: "var(--muted)" }}>Gasto: <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>${fmtNum(gasto, 2)}</span></div>}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
 const TIPO_AGENDA = [
