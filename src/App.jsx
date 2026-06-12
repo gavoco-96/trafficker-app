@@ -2660,11 +2660,9 @@ function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
   const records = client.records || [];
   const defaultKpis = isApollo ? APOLLO_KPIS_DEFAULT : HERMES_KPIS_DEFAULT;
 
-  // Siempre usar los default de APOLLO si no hay guardados o si los guardados son los viejos
   const savedKpis = isApollo
     ? (client.apolloData?.kpisApollo || [])
     : (hermes.kpisHermes || []);
-  const kpis = savedKpis.length > 0 ? savedKpis : defaultKpis;
 
   // Migración automática: si los KPIs guardados son del formato viejo (sin tipo/fuente), usar los nuevos default
   const kpisNecesitanMigracion = savedKpis.length > 0 && savedKpis.every(k => !k.tipo && !k.fuente && !k.formula);
