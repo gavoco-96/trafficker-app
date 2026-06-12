@@ -3177,96 +3177,222 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
 }
 
 // ─── EMBUDO APOLLO ────────────────────────────────────────────────────────────
-function ApolloFunnel({ client, period, from, to }) {
-  const records = filterByPeriod(client.records || [], period, from, to);
-  const capturaData = client.capturaConfig?.lastData || {};
+function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const allRecords = client.records || [];
+  const capturaData = client.capturaConfig?.lastData || {};
 
-  // Usar el motor de KPIs para obtener los mismos valores que la tabla
-  const getVal = (fuente) => resolverFuente(fuente, allRecords, capturaData);
+  // ── Datos REALES desde el motor de KPIs ──────────────────────────────────
+  const personasFB = resolverFuente("sum_resultados", allRecords, capturaData) || resolverFuente("cap_total_form", allRecords, capturaData);
+  const personasWP = resolverFuente("cap_total_wp", allRecords, capturaData) || resolverFuente("sum_personas_wp", allRecords, capturaData);
+  const gasto      = resolverFuente("sum_inversion", allRecords, capturaData);
+  const ingreso    = resolverFuente("sum_ingreso", allRecords, capturaData);
+  const ventasReal = resolverFuente("sum_ventas", allRecords, capturaData);
 
-  const personasFB = getVal("sum_resultados") || getVal("cap_total_form");
-  const personasWP = getVal("cap_total_wp") || getVal("sum_personas_wp");
-  const asistentes = personasWP > 0 ? Math.round(personasWP * 0.10) : 0;
-  const ventas     = getVal("sum_ventas");
-  const gasto      = getVal("sum_inversion");
-  const ingreso    = getVal("sum_ingreso");
+  // ── Config de proyección guardada en el cliente ──────────────────────────
+  const proyConfig = client.apolloData?.proyeccionFunnel || {};
+  const [modoProyeccion, setModoProyeccion] = useState(false);
+  const [pctAsistencia, setPctAsistencia]   = useState(proyConfig.pctAsistencia ?? 10);
+  const [pctConversion, setPctConversion]   = useState(proyConfig.pctConversion ?? 10);
+  const [precioProducto, setPrecioProducto] = useState(proyConfig.precioProducto ?? 297);
+  const [savingProyec, setSavingProyec]      = useState(false);
+  const { show, el: toastEl } = useToast();
 
-  const pctCaptura = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100).toFixed(1) : null;
-  const cpaFb      = personasFB > 0 && gasto > 0 ? (gasto / personasFB).toFixed(2) : null;
-  const cpaWp      = personasWP > 0 && gasto > 0 ? (gasto / personasWP).toFixed(2) : null;
-  const roas       = gasto > 0 && ingreso > 0 ? (ingreso / gasto).toFixed(2) : null;
+  // ── Cálculos ─────────────────────────────────────────────────────────────
+  const pctCaptura = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100) : 0;
+  const cpaFb  = personasFB > 0 && gasto > 0 ? gasto / personasFB : 0;
+  const cpaWp  = personasWP > 0 && gasto > 0 ? gasto / personasWP : 0;
+  const roasReal = gasto > 0 && ingreso > 0 ? ingreso / gasto : 0;
 
-  // Stages dinámicos — solo mostrar los que tienen datos o siempre los 4 principales
+  // Proyección
+  const asistentesProyec = Math.round(personasWP * (pctAsistencia / 100));
+  const ventasProyec     = Math.round(asistentesProyec * (pctConversion / 100));
+  const revenueProyec    = ventasProyec * precioProducto;
+  const roasProyec       = gasto > 0 ? revenueProyec / gasto : 0;
+
+  // Datos que muestra el embudo según el modo
+  const asistentes = modoProyeccion ? asistentesProyec : Math.round(personasWP * 0.10);
+  const ventas     = modoProyeccion ? ventasProyec     : ventasReal;
+
+  async function guardarProyeccion() {
+    setSavingProyec(true);
+    const updated = { ...client, apolloData: { ...(client.apolloData||{}),
+      proyeccionFunnel: { pctAsistencia, pctConversion, precioProducto }
+    }};
+    await onUpdate(updated);
+    show("✓ Proyección guardada", "ok");
+    setSavingProyec(false);
+  }
+
   const stages = [
-    { label: "Personas en Facebook",  sub: "Registros en formulario/LP",                     val: personasFB, color: "#004AAD", topW: 300, botW: 240, h: 56 },
-    { label: "Personas en WhatsApp",  sub: pctCaptura ? pctCaptura + "% captura" : "Tasa de captura", val: personasWP, color: "#0066cc", topW: 240, botW: 180, h: 48 },
-    { label: "Asistentes a la clase", sub: "10% asistencia",                                  val: asistentes, color: "#FF914D", topW: 180, botW: 120, h: 40 },
-    { label: "Ventas",                sub: "Tasa de conversión",                               val: ventas,     color: "#10B981", topW: 120, botW: 70,  h: 32 },
+    { label:"Personas en Facebook", sub: personasFB > 0 ? fmtNum(personasFB,0)+" registros FB" : "Registros en formulario/LP",
+      val: personasFB, color:"#004AAD", topW:300, botW:240, h:56 },
+    { label:"Personas en WhatsApp", sub: pctCaptura > 0 ? fmtNum(pctCaptura,1)+"% captura" : "Tasa de captura",
+      val: personasWP, color:"#0066cc", topW:240, botW:180, h:48 },
+    { label:"Asistentes a la clase",
+      sub: modoProyeccion ? `${pctAsistencia}% de WP (proyección)` : "10% de personas en WP",
+      val: asistentes, color:"#FF914D", topW:180, botW:120, h:40 },
+    { label:"Ventas",
+      sub: modoProyeccion ? `${pctConversion}% de asistentes (proyección)` : "Tasa de conversión",
+      val: ventas > 0 ? ventas : (modoProyeccion ? ventasProyec : 0), color:"#10B981", topW:120, botW:70, h:32 },
   ];
 
-  const svgW = 300;
-  const gap = 4;
-  // Altura dinámica — exactamente lo que necesitan las etapas sin espacio extra
-  const totalH = stages.reduce((a, s) => a + s.h + gap, 0) - gap;
-  const cx = svgW / 2;
+  const svgW   = 300;
+  const gap    = 4;
+  const totalH = stages.reduce((a,s) => a + s.h + gap, 0) - gap;
+  const cx     = svgW / 2;
 
   return (
-    <div className="card" style={{ height: "100%" }}>
-      <div className="card-title">Embudo de la Misión</div>
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <svg width={svgW} height={totalH} viewBox={"0 0 " + svgW + " " + totalH}
-          style={{ flexShrink: 0, display: "block" }}>
-          <defs>
-            {stages.map((s, i) => (
-              <linearGradient key={i} id={"afg" + i} x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor={s.color} stopOpacity="1" />
-                <stop offset="100%" stopColor={s.color} stopOpacity="0.55" />
-              </linearGradient>
-            ))}
-          </defs>
-          {stages.map((s, i) => {
-            const y = stages.slice(0, i).reduce((a, p) => a + p.h + gap, 0);
-            const tl = cx - s.topW / 2, tr = cx + s.topW / 2;
-            const bl = cx - s.botW / 2, br = cx + s.botW / 2;
-            const ey = s.h * 0.18;
-            return (
-              <g key={i}>
-                <path d={"M " + tl + " " + (y + ey) + " L " + bl + " " + (y + s.h - ey * 0.5) + " L " + br + " " + (y + s.h - ey * 0.5) + " L " + tr + " " + (y + ey) + " Z"}
-                  fill={"url(#afg" + i + ")"} />
-                <ellipse cx={cx} cy={y + s.h - ey * 0.5} rx={s.botW / 2} ry={ey * 0.6} fill={s.color} fillOpacity="0.5" />
-                <ellipse cx={cx} cy={y + ey} rx={s.topW / 2} ry={ey} fill={s.color} fillOpacity="0.2" stroke={s.color} strokeWidth="1.5" strokeOpacity="0.7" />
-                <text x={cx} y={y + s.h * 0.52} textAnchor="middle" dominantBaseline="middle"
-                  fill="#fff" fontSize={Math.max(s.h * 0.28, 11)} fontWeight="800" fontFamily="var(--mono)">
-                  {s.val > 0 ? s.val.toLocaleString("es-EC") : "—"}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-        {/* Leyenda lateral con los mismos datos que los KPIs */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 4, flex: 1 }}>
-          {stages.map((s, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: (s.h + gap) + "px" }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color, boxShadow: "0 0 6px " + s.color, flexShrink: 0 }} />
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 12, color: s.color }}>{s.label}</div>
-                <div style={{ fontSize: 10, color: "var(--muted)" }}>{s.sub}</div>
+    <>
+      {toastEl}
+      <div className="card" style={{ height:"100%" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+          <div className="card-title" style={{ margin:0 }}>Embudo de la Misión</div>
+          <div className="period-pills">
+            <button className={"pill " + (!modoProyeccion ? "active" : "")} onClick={() => setModoProyeccion(false)}>📊 Real</button>
+            <button className={"pill " + (modoProyeccion ? "active" : "")}
+              style={modoProyeccion ? { background:"rgba(255,145,77,.2)", borderColor:"rgba(255,145,77,.4)", color:"var(--orange)" } : {}}
+              onClick={() => setModoProyeccion(true)}>🎯 Proyección</button>
+          </div>
+        </div>
+
+        {/* PANEL DE PROYECCIÓN */}
+        {modoProyeccion && (
+          <div style={{ background:"rgba(255,145,77,.06)", border:"1px solid rgba(255,145,77,.2)", borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
+            <div style={{ fontSize:11, fontWeight:600, color:"var(--orange)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:10 }}>
+              Ajusta los parámetros de proyección
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>% Asistencia al evento</label>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <input type="number" min="1" max="100" step="1" value={pctAsistencia}
+                    onChange={e => setPctAsistencia(Math.min(100, Math.max(1, parseFloat(e.target.value)||10)))}
+                    style={{ width:70 }} />
+                  <span style={{ color:"var(--muted)", fontSize:12 }}>% de {fmtNum(personasWP,0)} WP = <strong style={{ color:"var(--orange)" }}>{asistentesProyec}</strong></span>
+                </div>
+              </div>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>% Conversión a ventas</label>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <input type="number" min="1" max="100" step="0.5" value={pctConversion}
+                    onChange={e => setPctConversion(Math.min(100, Math.max(0.1, parseFloat(e.target.value)||10)))}
+                    style={{ width:70 }} />
+                  <span style={{ color:"var(--muted)", fontSize:12 }}>% de {asistentesProyec} = <strong style={{ color:"var(--green)" }}>{ventasProyec}</strong></span>
+                </div>
+              </div>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>Precio del producto ($)</label>
+                <input type="number" min="1" step="1" value={precioProducto}
+                  onChange={e => setPrecioProducto(Math.max(1, parseFloat(e.target.value)||297))}
+                  style={{ width:100 }} />
               </div>
             </div>
-          ))}
-          {/* Métricas resumen alineadas con el final del embudo */}
-          <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-            {cpaFb && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA FB: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpaFb}</span></div>}
-            {cpaWp && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA WP: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpaWp}</span></div>}
-            {roas && <div style={{ fontSize: 11, color: "var(--muted)" }}>ROAS: <span style={{ color: parseFloat(roas) >= 4 ? "var(--green)" : "var(--amber)", fontWeight: 700 }}>{roas}x</span></div>}
-            {gasto > 0 && <div style={{ fontSize: 11, color: "var(--muted)" }}>Gasto: <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>${fmtNum(gasto, 2)}</span></div>}
+            {/* Resumen de proyección */}
+            <div style={{ marginTop:10, display:"flex", gap:16, flexWrap:"wrap", borderTop:"1px solid rgba(255,145,77,.2)", paddingTop:10 }}>
+              <div style={{ fontSize:12 }}>
+                <span style={{ color:"var(--muted)" }}>Revenue proyectado: </span>
+                <strong style={{ color:"var(--green)", fontSize:15, fontFamily:"var(--mono)" }}>${fmtNum(revenueProyec,2)}</strong>
+              </div>
+              <div style={{ fontSize:12 }}>
+                <span style={{ color:"var(--muted)" }}>ROAS proyectado: </span>
+                <strong style={{ color: roasProyec >= 4 ? "var(--green)" : roasProyec >= 2 ? "var(--amber)" : "var(--red)", fontFamily:"var(--mono)" }}>
+                  {gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}
+                </strong>
+              </div>
+              <div style={{ fontSize:12 }}>
+                <span style={{ color:"var(--muted)" }}>CPA proyectado: </span>
+                <strong style={{ fontFamily:"var(--mono)", color:"var(--accent2)" }}>
+                  {ventasProyec > 0 && gasto > 0 ? "$"+fmtNum(gasto/ventasProyec,2) : "—"}
+                </strong>
+              </div>
+              {onUpdate && (
+                <button className="btn btn-ghost btn-sm" style={{ marginLeft:"auto", fontSize:11 }}
+                  disabled={savingProyec} onClick={guardarProyeccion}>
+                  {savingProyec ? "Guardando..." : "💾 Guardar parámetros"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" }}>
+          <svg width={svgW} height={totalH} viewBox={"0 0 "+svgW+" "+totalH} style={{ flexShrink:0, display:"block" }}>
+            <defs>
+              {stages.map((s,i) => (
+                <linearGradient key={i} id={"afg"+i} x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor={s.color} stopOpacity={modoProyeccion && i >= 2 ? "0.5" : "1"} />
+                  <stop offset="100%" stopColor={s.color} stopOpacity={modoProyeccion && i >= 2 ? "0.25" : "0.55"} />
+                </linearGradient>
+              ))}
+            </defs>
+            {stages.map((s,i) => {
+              const y = stages.slice(0,i).reduce((a,p) => a+p.h+gap, 0);
+              const tl = cx-s.topW/2, tr = cx+s.topW/2;
+              const bl = cx-s.botW/2, br = cx+s.botW/2;
+              const ey = s.h*0.18;
+              return (
+                <g key={i}>
+                  {/* Línea punteada para etapas proyectadas */}
+                  <path d={"M "+tl+" "+(y+ey)+" L "+bl+" "+(y+s.h-ey*0.5)+" L "+br+" "+(y+s.h-ey*0.5)+" L "+tr+" "+(y+ey)+" Z"}
+                    fill={"url(#afg"+i+")"}
+                    strokeDasharray={modoProyeccion && i >= 2 ? "4 3" : "none"}
+                    stroke={modoProyeccion && i >= 2 ? s.color : "none"}
+                    strokeWidth={modoProyeccion && i >= 2 ? "1.5" : "0"} />
+                  <ellipse cx={cx} cy={y+s.h-ey*0.5} rx={s.botW/2} ry={ey*0.6} fill={s.color} fillOpacity={modoProyeccion && i>=2 ? "0.25" : "0.5"} />
+                  <ellipse cx={cx} cy={y+ey} rx={s.topW/2} ry={ey} fill={s.color} fillOpacity="0.2"
+                    stroke={s.color} strokeWidth="1.5" strokeOpacity="0.7"
+                    strokeDasharray={modoProyeccion && i >= 2 ? "4 3" : "none"} />
+                  <text x={cx} y={y+s.h*0.52} textAnchor="middle" dominantBaseline="middle"
+                    fill="#fff" fontSize={Math.max(s.h*0.28, 11)} fontWeight="800" fontFamily="var(--mono)">
+                    {s.val > 0 ? s.val.toLocaleString("es-EC") : "—"}
+                  </text>
+                  {/* Ícono de proyección */}
+                  {modoProyeccion && i >= 2 && (
+                    <text x={cx+s.topW/2-10} y={y+10} fontSize="10" fill={s.color} fillOpacity="0.8">~</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+
+          {/* Leyenda lateral */}
+          <div style={{ display:"flex", flexDirection:"column", gap:4, paddingTop:4, flex:1 }}>
+            {stages.map((s,i) => (
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:8, minHeight:(s.h+gap)+"px" }}>
+                <div style={{ width:10, height:10, borderRadius:"50%", background:s.color,
+                  boxShadow:"0 0 6px "+s.color, flexShrink:0,
+                  opacity: modoProyeccion && i >= 2 ? 0.6 : 1 }} />
+                <div>
+                  <div style={{ fontWeight:700, fontSize:12, color:s.color,
+                    opacity: modoProyeccion && i >= 2 ? 0.8 : 1 }}>
+                    {s.label}
+                    {modoProyeccion && i >= 2 && <span style={{ fontSize:9, marginLeft:4, color:"var(--orange)" }}>proyección</span>}
+                  </div>
+                  <div style={{ fontSize:10, color:"var(--muted)" }}>{s.sub}</div>
+                </div>
+              </div>
+            ))}
+            {/* Métricas reales */}
+            <div style={{ marginTop:8, borderTop:"1px solid var(--border)", paddingTop:8, display:"flex", flexDirection:"column", gap:4 }}>
+              {cpaFb > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA FB: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaFb,2)}</span></div>}
+              {cpaWp > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA WP: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaWp,2)}</span></div>}
+              {modoProyeccion
+                ? <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS proy: <span style={{ color: roasProyec >= 4 ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}</span></div>
+                : roasReal > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS: <span style={{ color: roasReal >= 4 ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{fmtNum(roasReal,2)}x</span></div>}
+              {gasto > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>Gasto: <span style={{ fontFamily:"var(--mono)", color:"var(--text)" }}>${fmtNum(gasto,2)}</span></div>}
+              {modoProyeccion && revenueProyec > 0 && (
+                <div style={{ fontSize:12, fontWeight:700, color:"var(--green)", marginTop:4, padding:"4px 8px", background:"rgba(16,185,129,.1)", borderRadius:6 }}>
+                  💰 ${fmtNum(revenueProyec,2)} revenue estimado
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
+
 
 // ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
 const TIPO_AGENDA = [
@@ -3643,7 +3769,7 @@ function HermesAdminView({ client, allClients, onUpdate }) {
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={onUpdate} readOnly={false} isApollo={isApollo} />
             {isApollo
-              ? <ApolloFunnel client={client} period={period} from={from} to={to} />
+              ? <ApolloFunnel client={client} period={period} from={from} to={to} onUpdate={onUpdate} />
               : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
         </div>
@@ -3747,7 +3873,7 @@ function HermesClientView({ client, allClients, onUpdate }) {
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} isApollo={isApollo} />
             {isApollo
-              ? <ApolloFunnel client={client} period={period} from={from} to={to} />
+              ? <ApolloFunnel client={client} period={period} from={from} to={to} onUpdate={onUpdate} />
               : <HermesFunnel client={client} period={period} from={from} to={to} />}
           </div>
 
