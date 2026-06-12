@@ -5407,6 +5407,99 @@ function extractSheetId(url) {
 }
 
 // RemarketingTable — componente separado para evitar useState ilegal en render
+// ─── PANEL DE NÚMEROS SIN IDENTIFICAR ────────────────────────────────────────
+function SinIdentificarPanel({ data, client, onUpdate }) {
+  const sinIdentificar = data?.sinAnuncioIdentificado || [];
+  const asignaciones = client.capturaConfig?.asignacionesManuales || {};
+  const [localAsig, setLocalAsig] = useState(asignaciones);
+  const [saving, setSaving] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  // Obtener lista de anuncios disponibles del análisis
+  const anunciosDisp = (data?.niveles?.anuncio || []).map(a => a.nombre).filter(Boolean);
+
+  async function guardarAsignaciones() {
+    setSaving(true);
+    const updated = { ...client, capturaConfig: { ...client.capturaConfig, asignacionesManuales: localAsig } };
+    await onUpdate(updated);
+    show("✓ Asignaciones guardadas", "ok");
+    setSaving(false);
+  }
+
+  if (sinIdentificar.length === 0) return (
+    <div className="empty"><div style={{ fontSize:24, opacity:.3 }}>✅</div><div style={{ marginTop:8 }}>Todos los contactos tienen anuncio identificado.</div></div>
+  );
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div style={{ background:"rgba(255,222,89,.08)", border:"1px solid rgba(255,222,89,.25)", borderRadius:10, padding:"10px 14px", marginBottom:"1rem", fontSize:12 }}>
+          <strong>⚠️ {sinIdentificar.length} contactos</strong> están en el grupo de WhatsApp y tienen registro en el formulario, pero <strong>no se pudo identificar el anuncio de origen</strong> (campo ad_name vacío en Facebook). Puedes asignarlos manualmente para que no queden fuera del análisis.
+        </div>
+
+        <div className="card scroll-x">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Teléfono</th>
+                <th>País</th>
+                <th>Nombre</th>
+                <th>Asignar al anuncio</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sinIdentificar.map((c, i) => {
+                const asignado = localAsig[c.tel] || "";
+                return (
+                  <tr key={i} style={{ background: asignado ? "rgba(16,185,129,.04)" : "" }}>
+                    <td style={{ color:"var(--muted)", fontSize:11, textAlign:"center" }}>{i+1}</td>
+                    <td style={{ fontFamily:"var(--mono)", fontSize:12 }}>{c.tel}</td>
+                    <td style={{ fontSize:12 }}>{c.pais || "—"}</td>
+                    <td style={{ fontSize:12 }}>{c.nombre || "—"}</td>
+                    <td>
+                      <select
+                        value={asignado}
+                        onChange={e => setLocalAsig(p => ({ ...p, [c.tel]: e.target.value }))}
+                        style={{ fontSize:12, minWidth:200 }}>
+                        <option value="">-- Sin asignar --</option>
+                        {anunciosDisp.map(a => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                        <option value="__organico__">Orgánico / Sin anuncio</option>
+                        <option value="__equipo__">Miembro del equipo</option>
+                        <option value="__prueba__">Registro de prueba</option>
+                      </select>
+                    </td>
+                    <td>
+                      {asignado === "__organico__" && <span style={{ fontSize:10, color:"var(--muted)" }}>Orgánico</span>}
+                      {asignado === "__equipo__" && <span style={{ fontSize:10, color:"var(--muted)" }}>Equipo</span>}
+                      {asignado === "__prueba__" && <span style={{ fontSize:10, color:"var(--red)" }}>Prueba</span>}
+                      {asignado && !asignado.startsWith("__") && <span style={{ fontSize:10, color:"var(--green)" }}>✓ Asignado</span>}
+                      {!asignado && <span style={{ fontSize:10, color:"var(--accent2)" }}>Pendiente</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop:"1rem", display:"flex", gap:8, alignItems:"center" }}>
+          <button className="btn btn-primary btn-sm" disabled={saving} onClick={guardarAsignaciones}>
+            {saving ? "Guardando..." : "💾 Guardar asignaciones"}
+          </button>
+          <span style={{ fontSize:12, color:"var(--muted)" }}>
+            {Object.values(localAsig).filter(Boolean).length} de {sinIdentificar.length} asignados
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function RemarketingTable({ data, readOnly }) {
   const [filtroRem, setFiltroRem] = useState("");
   const [nivelRem, setNivelRem]   = useState("anuncio");
@@ -5644,6 +5737,13 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
             <div className="period-pills" style={{ marginBottom:"1rem" }}>
               <button className={"pill " + (viewTab==="anuncios" ? "active" : "")} onClick={() => setViewTab("anuncios")}>📡 Por anuncio</button>
               <button className={"pill " + (viewTab==="paises" ? "active" : "")} onClick={() => setViewTab("paises")}>🌎 Por país</button>
+              {(data.sinAnuncioIdentificado?.length > 0) && (
+                <button className={"pill " + (viewTab==="sin" ? "active" : "")}
+                  style={{ borderColor: "rgba(255,222,89,.4)", color: "var(--accent2)" }}
+                  onClick={() => setViewTab("sin")}>
+                  ⚠️ Sin identificar ({data.sinAnuncioIdentificado.length})
+                </button>
+              )}
               {!readOnly && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing || 0})</button>}
               {readOnly && data.total_remarketing > 0 && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing})</button>}
             </div>
@@ -5726,6 +5826,11 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                     </div>
                 }
               </div>
+            )}
+
+            {/* Sin identificar — asignación manual */}
+            {viewTab === "sin" && (
+              <SinIdentificarPanel data={data} client={client} onUpdate={onUpdate} />
             )}
 
             {/* Vista por país */}
