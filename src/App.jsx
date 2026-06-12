@@ -3794,6 +3794,60 @@ function HermesClientView({ client, allClients, onUpdate }) {
   );
 }
 
+
+// ─── SYNC MÉTRICAS POR ANUNCIO DESDE FACEBOOK ─────────────────────────────────
+async function fetchMetricasPorAnuncio(token, adAccountId, fechaInicio, fechaFin) {
+  // Obtener métricas a nivel de anuncio individual
+  const fields = "ad_name,spend,reach,impressions,cpm,cpc,ctr,actions,cost_per_action_type,video_avg_time_watched_actions,video_p50_watched_actions,video_p100_watched_actions";
+  const timeRange = JSON.stringify({ since: fechaInicio, until: fechaFin });
+  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fields}&time_range=${encodeURIComponent(timeRange)}&level=ad&limit=100&access_token=${token}`;
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) return { ok: false, error: data.error.message };
+
+    const ads = (data.data || []).map(ad => {
+      // Extraer acciones específicas
+      const getAction = (type) => {
+        const a = (ad.actions || []).find(x => x.action_type === type);
+        return a ? parseFloat(a.value) || 0 : 0;
+      };
+      const getVideo = (arr, field) => {
+        if (!arr || !arr.length) return 0;
+        return parseFloat(arr[0]?.value) || 0;
+      };
+
+      return {
+        nombre:       ad.ad_name || "",
+        alcance:      parseFloat(ad.reach) || 0,
+        impresiones:  parseFloat(ad.impressions) || 0,
+        gasto:        parseFloat(ad.spend) || 0,
+        cpm:          parseFloat(ad.cpm) || 0,
+        cpc:          parseFloat(ad.cpc) || 0,
+        ctr:          parseFloat(ad.ctr) || 0,
+        leads:        getAction("lead") || getAction("onsite_conversion.lead_grouped"),
+        likes:        getAction("post_reaction"),
+        comentarios:  getAction("comment"),
+        compartidos:  getAction("post"),
+        // Video metrics — disponibles si el anuncio tiene video
+        vistas3s:     getVideo(ad.video_avg_time_watched_actions),
+        vistas50:     getVideo(ad.video_p50_watched_actions),
+        vistas100:    getVideo(ad.video_p100_watched_actions),
+      };
+    });
+
+    return { ok: true, ads };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// Normalizar nombre para comparación — quitar espacios extra, mayúsculas
+function normalizarNombre(nombre) {
+  return (nombre || "").toLowerCase().replace(/[\s_\-]+/g, " ").trim();
+}
+
 function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const hermes = client.hermesData || {};
   const biblioteca = hermes.biblioteca || [];
@@ -3804,9 +3858,59 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const [sortDir, setSortDir] = useState("desc");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [showSyncPanel, setShowSyncPanel] = useState(false);
+  const [syncDesde, setSyncDesde] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10);
+  });
+  const [syncHasta, setSyncHasta] = useState(new Date().toISOString().slice(0,10));
   const [form, setForm] = useState({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" });
   const { show, el: toastEl } = useToast();
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  async function sincronizarConFacebook() {
+    const { token, adAccountId } = client.fbConfig || {};
+    if (!token || !adAccountId) return show("Configura Facebook Ads en la tab 📘 Facebook primero", "err");
+    setSyncing(true); setSyncResult(null);
+    const result = await fetchMetricasPorAnuncio(token, adAccountId, syncDesde, syncHasta);
+    if (!result.ok) { show("Error Facebook: " + result.error, "err"); setSyncing(false); return; }
+
+    // Hacer match por nombre entre biblioteca y anuncios de Facebook
+    let actualizados = 0, noEncontrados = [];
+    const newBib = biblioteca.map(pieza => {
+      const normPieza = normalizarNombre(pieza.nombre);
+      const adMatch = result.ads.find(ad => normalizarNombre(ad.nombre) === normPieza)
+        || result.ads.find(ad => normalizarNombre(ad.nombre).includes(normPieza) || normPieza.includes(normalizarNombre(ad.nombre)));
+
+      if (adMatch) {
+        actualizados++;
+        return {
+          ...pieza,
+          alcance_pza:   adMatch.alcance   > 0 ? String(adMatch.alcance)   : pieza.alcance_pza,
+          ctr_pza:       adMatch.ctr       > 0 ? String(adMatch.ctr)       : pieza.ctr_pza,
+          likes:         adMatch.likes     > 0 ? String(adMatch.likes)     : pieza.likes,
+          comentarios:   adMatch.comentarios > 0 ? String(adMatch.comentarios) : pieza.comentarios,
+          compartidos:   adMatch.compartidos > 0 ? String(adMatch.compartidos) : pieza.compartidos,
+          retencion3s:   adMatch.vistas3s  > 0 ? String(Math.round(adMatch.vistas3s))  : pieza.retencion3s,
+          retencion50:   adMatch.vistas50  > 0 ? String(Math.round(adMatch.vistas50))  : pieza.retencion50,
+          retencionFinal:adMatch.vistas100 > 0 ? String(Math.round(adMatch.vistas100)) : pieza.retencionFinal,
+          leads_fb:      adMatch.leads     > 0 ? String(adMatch.leads)     : pieza.leads_fb,
+          gasto_pza:     adMatch.gasto     > 0 ? String(adMatch.gasto)     : pieza.gasto_pza,
+          cpl_pza:       adMatch.leads > 0 && adMatch.gasto > 0 ? String((adMatch.gasto / adMatch.leads).toFixed(2)) : pieza.cpl_pza,
+          fbSyncDate:    new Date().toISOString().slice(0,10),
+        };
+      } else {
+        noEncontrados.push(pieza.nombre);
+        return pieza;
+      }
+    });
+
+    await onUpdate({ ...client, hermesData: { ...hermes, biblioteca: newBib } });
+    setSyncResult({ actualizados, total: result.ads.length, noEncontrados, ads: result.ads });
+    setSyncing(false);
+    show(`✓ ${actualizados} piezas actualizadas desde Facebook`, "ok");
+  }
 
   function handleSort(col) { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } }
 
@@ -3880,17 +3984,70 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
               {biblioteca.length} piezas · IV promedio: <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{avgIV}/100</span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <BotonesExportar
               headers={["Video","Tipo","Fecha","Alcance","Likes","Comentarios","Compartidos","Guardados","CTR%","IV","Estado"]}
               rows={biblioteca.map(p => [p.nombre||"",p.tipo||"",p.fecha||"",p.alcance_pza||0,p.likes||0,p.comentarios||0,p.compartidos||0,p.guardados||0,p.ctr_pza||0,calcIV(p,biblioteca),p.estado||""])}
               nombreArchivo={"biblioteca_" + (client.name||"").replace(/\s/g,"_")}
             />
+            {!readOnly && client.fbConfig?.token && (
+              <button className="btn btn-sm" disabled={syncing}
+                style={{ background:"rgba(0,74,173,.15)", color:"#4d9fff", border:"1px solid rgba(0,74,173,.3)" }}
+                onClick={() => setShowSyncPanel(s => !s)}>
+                {syncing ? "⏳ Sincronizando..." : "📘 Sync con Facebook"}
+              </button>
+            )}
             {!readOnly && <button className="btn btn-primary btn-sm" onClick={() => { setShowForm(s => !s); setEditingId(null); setForm({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" }); }}>
               {showForm ? "Cancelar" : "+ Añadir pieza"}
             </button>}
           </div>
         </div>
+
+        {/* PANEL DE SYNC CON FACEBOOK */}
+        {showSyncPanel && !readOnly && (
+          <div className="card" style={{ borderColor:"rgba(0,74,173,.3)", marginBottom:"1rem", background:"rgba(0,74,173,.04)" }}>
+            <div className="card-title">📘 Sincronizar métricas desde Facebook Ads</div>
+            <div style={{ fontSize:12, color:"var(--muted)", marginBottom:"1rem", lineHeight:1.6 }}>
+              El sistema buscará cada video de la biblioteca por nombre exacto en tus anuncios de Facebook y actualizará automáticamente: <strong>Alcance, CTR, Likes, Comentarios, Compartidos, Vistas 3s, Vistas 50% y Vistas completas</strong>.
+              <br/>⚠️ El nombre del video en la biblioteca debe coincidir con el nombre del anuncio en Facebook.
+            </div>
+            <div className="form-row" style={{ marginBottom:"1rem" }}>
+              <div className="field"><label>Desde</label><input type="date" value={syncDesde} onChange={e => setSyncDesde(e.target.value)} /></div>
+              <div className="field"><label>Hasta</label><input type="date" value={syncHasta} onChange={e => setSyncHasta(e.target.value)} /></div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button className="btn btn-primary btn-sm" disabled={syncing || !biblioteca.length} onClick={sincronizarConFacebook}>
+                {syncing ? "⏳ Sincronizando..." : "🔄 Sincronizar ahora"}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowSyncPanel(false); setSyncResult(null); }}>Cerrar</button>
+            </div>
+
+            {/* Resultado de la sincronización */}
+            {syncResult && (
+              <div style={{ marginTop:"1rem", borderTop:"1px solid var(--border)", paddingTop:"1rem" }}>
+                <div style={{ fontSize:12, fontWeight:600, marginBottom:8 }}>
+                  ✅ {syncResult.actualizados} de {biblioteca.length} piezas actualizadas · {syncResult.total} anuncios encontrados en Facebook
+                </div>
+                {syncResult.noEncontrados.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, color:"var(--amber)", marginBottom:6 }}>
+                      ⚠️ {syncResult.noEncontrados.length} piezas sin match en Facebook — verifica que el nombre sea exactamente igual:
+                    </div>
+                    {syncResult.noEncontrados.map((n,i) => (
+                      <div key={i} style={{ fontSize:11, color:"var(--muted)", padding:"2px 8px", background:"var(--surface2)", borderRadius:4, marginBottom:2 }}>
+                        📄 "{n}"
+                      </div>
+                    ))}
+                    <div style={{ fontSize:11, color:"var(--muted)", marginTop:6 }}>
+                      Anuncios disponibles en Facebook: {syncResult.ads.slice(0,5).map(a => `"${a.nombre}"`).join(", ")}
+                      {syncResult.ads.length > 5 && ` y ${syncResult.ads.length-5} más`}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {showForm && !readOnly && (
           <div className="card" style={{ borderColor: "rgba(0,74,173,.4)" }}>
@@ -3909,7 +4066,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
             </div>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, marginTop: 4 }}>Metricas de rendimiento</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: ".75rem", marginBottom: "1rem" }}>
-              {[["Alcance","alcance_pza"],["Likes","likes"],["Comentarios","comentarios"],["Compartidos","compartidos"],["Guardados","guardados"],["CTR (%)","ctr_pza"],["Vistas 3s (personas)","retencion3s"],["Vistas 50% (personas)","retencion50"],["Vistas completas (personas)","retencionFinal"],["Personas en formulario","personas_form"],["Personas en WP","personas_wp_pza"],["Calidad del lead (1-10)","calidad_lead"]].map(([lbl, fk]) => (
+              {[["Inversión ($)","gasto_pza"],["Alcance","alcance_pza"],["Likes","likes"],["Comentarios","comentarios"],["Compartidos","compartidos"],["Guardados","guardados"],["CTR (%)","ctr_pza"],["Leads/Registros","leads_fb"],["Vistas 3s (personas)","retencion3s"],["Vistas 50% (personas)","retencion50"],["Vistas completas (personas)","retencionFinal"],["Personas en formulario","personas_form"],["Personas en WP","personas_wp_pza"],["Calidad del lead (1-10)","calidad_lead"]].map(([lbl, fk]) => (
                 <div key={fk} className="field" style={{ marginBottom: 0 }}>
                   <label>{lbl}</label>
                   <input type="number" step="any" value={form[fk] || ""} onChange={e => f(fk, e.target.value)} placeholder="0" />
@@ -3953,12 +4110,15 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
                   <SortTh col="nombre" label="Video" />
                   <SortTh col="categoria" label="Tipo" />
                   <SortTh col="fechaGrabacion" label="Fecha" />
+                  <SortTh col="gasto_pza" label="Inversión" />
                   <SortTh col="alcance_pza" label="Alcance" />
                   <SortTh col="likes" label="Likes" />
                   <SortTh col="comentarios" label="Coment." />
                   <SortTh col="compartidos" label="Compart." />
                   <SortTh col="guardados" label="Guardados" />
                   <SortTh col="ctr_pza" label="CTR%" />
+                  <SortTh col="leads_fb" label="Leads" />
+                  <SortTh col="cpl_pza" label="CPL" />
                   <SortTh col="retencion3s" label="Ret.3s" />
                   <SortTh col="retencion50" label="Ret.50%" />
                   <SortTh col="iv" label="IV" />
@@ -3977,15 +4137,18 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
                           : p.nombre}
                       </td>
                       <td><span className="badge" style={{ fontSize: 11, background: p.categoria === "Valor" ? "rgba(0,74,173,.15)" : p.categoria === "Viral" ? "rgba(255,222,89,.1)" : "rgba(255,145,77,.1)", color: p.categoria === "Valor" ? "#4d9fff" : p.categoria === "Viral" ? "var(--accent2)" : "var(--orange)" }}>{p.categoria}</span></td>
-                      <td style={{ fontSize: 12, color: "var(--muted)", fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>{p.fechaGrabacion ? fmtDate(p.fechaGrabacion) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>{p.fechaGrabacion ? fmtDate(p.fechaGrabacion) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)", color: p.gasto_pza ? "var(--accent2)" : "" }}>{p.gasto_pza ? "$"+fmtNum(parseFloat(p.gasto_pza),2) : "—"}</td>
                       <td style={{ fontFamily: "var(--mono)" }}>{p.alcance_pza ? fmtNum(parseFloat(p.alcance_pza), 0) : "—"}</td>
                       <td style={{ fontFamily: "var(--mono)" }}>{p.likes || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)" }}>{p.comentarios || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)" }}>{p.compartidos || "—"}</td>
                       <td style={{ fontFamily: "var(--mono)" }}>{p.guardados || "—"}</td>
-                      <td style={{ fontFamily: "var(--mono)" }}>{p.ctr_pza ? p.ctr_pza + "%" : "—"}</td>
-                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion3s ? p.retencion3s + "%" : "—"}</td>
-                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion50 ? p.retencion50 + "%" : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.ctr_pza ? fmtNum(parseFloat(p.ctr_pza),2)+"%" : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.leads_fb || "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)", color: p.cpl_pza ? "var(--green)" : "" }}>{p.cpl_pza ? "$"+fmtNum(parseFloat(p.cpl_pza),2) : p.gasto_pza && p.leads_fb ? "$"+fmtNum(parseFloat(p.gasto_pza)/parseFloat(p.leads_fb),2) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion3s ? fmtNum(parseFloat(p.retencion3s),0) : "—"}</td>
+                      <td style={{ fontFamily: "var(--mono)" }}>{p.retencion50 ? fmtNum(parseFloat(p.retencion50),0) : "—"}</td>
                       <td><span className={"iv-badge " + getIVClass(iv)}>{iv}</span></td>
                       <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>{getIVLabel(iv)}</td>
                       {!readOnly && <td>
