@@ -7055,21 +7055,23 @@ function CplTradingChart({ client }) {
             <rect key={i} x={xP(i)-Math.max(cW/n/2,4)} y={PAD.top} width={Math.max(cW/n,8)} height={cH}
               fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={() => setHovIdx(i)} />
           ))}
-          {hovIdx !== null && (() => {
-            const d = datosVista[hovIdx];
-            const tx = Math.min(xP(hovIdx)+10, W-148);
-            const ty = Math.max(yP(d.cpl)-48, PAD.top);
-            return (
-              <g>
-                <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2"/>
-                <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="5" fill={colorLinea} stroke="var(--bg)" strokeWidth="2"/>
-                <rect x={tx} y={ty} width={138} height={d.mision?50:38} rx="6" fill="var(--surface2)" stroke={colorLinea} strokeWidth="0.5"/>
-                <text x={tx+8} y={ty+14} fontSize="10" fill="var(--muted)">{modoRT ? d.fecha : d.fecha}</text>
-                <text x={tx+8} y={ty+28} fontSize="12" fontWeight="700" fill={colorLinea} fontFamily="var(--mono)">${fmtNum(d.cpl,2)} / lead</text>
-                {d.mision && <text x={tx+8} y={ty+42} fontSize="9" fill="var(--muted)">{d.mision}</text>}
-              </g>
-            );
-          })()}
+          {hovIdx !== null && hovIdx < datosVista.length && (
+            <g>
+              {(() => {
+                const d = datosVista[hovIdx];
+                const tx = Math.min(xP(hovIdx)+10, W-148);
+                const ty = Math.max(yP(d.cpl)-48, PAD.top);
+                return (<>
+                  <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2"/>
+                  <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="5" fill={colorLinea} stroke="var(--bg)" strokeWidth="2"/>
+                  <rect x={tx} y={ty} width={138} height={d.mision?50:38} rx="6" fill="var(--surface2)" stroke={colorLinea} strokeWidth="0.5"/>
+                  <text x={tx+8} y={ty+14} fontSize="10" fill="var(--muted)">{d.fecha}</text>
+                  <text x={tx+8} y={ty+28} fontSize="12" fontWeight="700" fill={colorLinea} fontFamily="var(--mono)">${fmtNum(d.cpl,2)} / lead</text>
+                  {d.mision && <text x={tx+8} y={ty+42} fontSize="9" fill="var(--muted)">{d.mision}</text>}
+                </>);
+              })()}
+            </g>
+          )}
           <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
         </svg>
       </div>
@@ -7218,9 +7220,19 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                       <span>{v}</span>
                     </div>
                   ))}
-                  {/* Cambio de contraseña */}
                   <ChangePasswordInline client={client} onUpdate={handleUpdate} />
                 </div>
+              </div>
+            </div>
+            {/* Cuentas y Contratos consolidados */}
+            <div className="grid2" style={{ alignItems:"start", marginTop:"1rem" }}>
+              <div>
+                <div className="sec-title" style={{ marginBottom:".75rem" }}>💳 Cuentas</div>
+                <CuentasPanel client={client} onUpdate={handleUpdate} readOnly={false} />
+              </div>
+              <div>
+                <div className="sec-title" style={{ marginBottom:".75rem" }}>📄 Contratos</div>
+                <ContratosPanel client={client} onUpdate={handleUpdate} />
               </div>
             </div>
           </div>
@@ -7228,13 +7240,12 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
         {tab === "metricas" && (
           <div>
+            {/* Gráfica CPL tiempo real — primera */}
+            {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} />}
             <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
             {client.producto?.startsWith("APOLLO") && (
               <div style={{ marginTop:"1.5rem" }}>
                 <GraficasMetricas client={client} period={period} from={from} to={to} />
-                <div style={{ marginTop:"1rem" }}>
-                  <CplTradingChart client={client} />
-                </div>
               </div>
             )}
           </div>
