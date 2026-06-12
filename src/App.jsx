@@ -3194,6 +3194,7 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const [pctAsistencia, setPctAsistencia]   = useState(proyConfig.pctAsistencia ?? 10);
   const [pctConversion, setPctConversion]   = useState(proyConfig.pctConversion ?? 10);
   const [precioProducto, setPrecioProducto] = useState(proyConfig.precioProducto ?? 297);
+  const [metaRoasProyec, setMetaRoasProyec] = useState(proyConfig.metaRoasProyec ?? 4);
   const [savingProyec, setSavingProyec]      = useState(false);
   const { show, el: toastEl } = useToast();
 
@@ -3208,6 +3209,8 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const ventasProyec     = Math.round(asistentesProyec * (pctConversion / 100));
   const revenueProyec    = ventasProyec * precioProducto;
   const roasProyec       = gasto > 0 ? revenueProyec / gasto : 0;
+  // Inversión necesaria para alcanzar el ROAS meta con el revenue proyectado
+  const inversionNecesaria = metaRoasProyec > 0 && revenueProyec > 0 ? revenueProyec / metaRoasProyec : 0;
 
   // Datos que muestra el embudo según el modo
   const asistentes = modoProyeccion ? asistentesProyec : Math.round(personasWP * 0.10);
@@ -3216,7 +3219,7 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   async function guardarProyeccion() {
     setSavingProyec(true);
     const updated = { ...client, apolloData: { ...(client.apolloData||{}),
-      proyeccionFunnel: { pctAsistencia, pctConversion, precioProducto }
+      proyeccionFunnel: { pctAsistencia, pctConversion, precioProducto, metaRoasProyec }
     }};
     await onUpdate(updated);
     show("✓ Proyección guardada", "ok");
@@ -3286,6 +3289,15 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
                   onChange={e => setPrecioProducto(Math.max(1, parseFloat(e.target.value)||297))}
                   style={{ width:100 }} />
               </div>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>ROAS meta</label>
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <input type="number" min="0.1" max="100" step="0.5" value={metaRoasProyec}
+                    onChange={e => setMetaRoasProyec(Math.max(0.1, parseFloat(e.target.value)||4))}
+                    style={{ width:70 }} />
+                  <span style={{ color:"var(--muted)", fontSize:11 }}>x</span>
+                </div>
+              </div>
             </div>
             {/* Resumen de proyección */}
             <div style={{ marginTop:10, display:"flex", gap:16, flexWrap:"wrap", borderTop:"1px solid rgba(255,145,77,.2)", paddingTop:10 }}>
@@ -3295,9 +3307,10 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
               </div>
               <div style={{ fontSize:12 }}>
                 <span style={{ color:"var(--muted)" }}>ROAS proyectado: </span>
-                <strong style={{ color: roasProyec >= 4 ? "var(--green)" : roasProyec >= 2 ? "var(--amber)" : "var(--red)", fontFamily:"var(--mono)" }}>
+                <strong style={{ color: roasProyec >= metaRoasProyec ? "var(--green)" : roasProyec >= metaRoasProyec*0.7 ? "var(--amber)" : "var(--red)", fontFamily:"var(--mono)" }}>
                   {gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}
                 </strong>
+                <span style={{ color:"var(--muted)", fontSize:10 }}> / meta {metaRoasProyec}x</span>
               </div>
               <div style={{ fontSize:12 }}>
                 <span style={{ color:"var(--muted)" }}>CPA proyectado: </span>
@@ -3305,6 +3318,15 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
                   {ventasProyec > 0 && gasto > 0 ? "$"+fmtNum(gasto/ventasProyec,2) : "—"}
                 </strong>
               </div>
+              {inversionNecesaria > 0 && (
+                <div style={{ fontSize:12 }}>
+                  <span style={{ color:"var(--muted)" }}>Inversión para ROAS {metaRoasProyec}x: </span>
+                  <strong style={{ fontFamily:"var(--mono)", color: gasto >= inversionNecesaria ? "var(--green)" : "var(--orange)" }}>
+                    ${fmtNum(inversionNecesaria,2)}
+                  </strong>
+                  {gasto > 0 && <span style={{ fontSize:10, color:"var(--muted)" }}> (actual ${fmtNum(gasto,2)})</span>}
+                </div>
+              )}
               {onUpdate && (
                 <button className="btn btn-ghost btn-sm" style={{ marginLeft:"auto", fontSize:11 }}
                   disabled={savingProyec} onClick={guardarProyeccion}>
@@ -3377,8 +3399,8 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
               {cpaFb > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA FB: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaFb,2)}</span></div>}
               {cpaWp > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA WP: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaWp,2)}</span></div>}
               {modoProyeccion
-                ? <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS proy: <span style={{ color: roasProyec >= 4 ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}</span></div>
-                : roasReal > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS: <span style={{ color: roasReal >= 4 ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{fmtNum(roasReal,2)}x</span></div>}
+                ? <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS proy: <span style={{ color: roasProyec >= metaRoasProyec ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}</span></div>
+                : roasReal > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS: <span style={{ color: roasReal >= (client.apolloData?.kpisApollo?.find(k=>k.id==="roas")?.meta || 4) ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{fmtNum(roasReal,2)}x</span></div>}
               {gasto > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>Gasto: <span style={{ fontFamily:"var(--mono)", color:"var(--text)" }}>${fmtNum(gasto,2)}</span></div>}
               {modoProyeccion && revenueProyec > 0 && (
                 <div style={{ fontSize:12, fontWeight:700, color:"var(--green)", marginTop:4, padding:"4px 8px", background:"rgba(16,185,129,.1)", borderRadius:6 }}>
