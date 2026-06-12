@@ -1208,16 +1208,20 @@ const DEFAULT_COLS_WEB    = ["date","inversion","alcance","cpm","cpc","ctr","ses
 const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","personas_wp","costo_wp","pct_captura_wp","resultados","cpa","ingreso"];
 
 function useColPrefs(client, isWA, isWeb) {
-  const storageKey = "cols_" + client.id;
+  const storageKey = "cols_" + (client?.id || "default");
   const defaults = isWA ? DEFAULT_COLS_WA : isWeb ? DEFAULT_COLS_WEB : DEFAULT_COLS_LAUNCH;
   const [cols, setCols] = useState(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s) : defaults; } catch { return defaults; }
+    try {
+      const s = typeof localStorage !== "undefined" ? localStorage.getItem(storageKey) : null;
+      if (s) { const parsed = JSON.parse(s); if (Array.isArray(parsed) && parsed.length > 0) return parsed; }
+    } catch {}
+    return defaults;
   });
   function toggle(key) {
     if (key === "date") return;
     setCols(prev => {
       const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
-      localStorage.setItem(storageKey, JSON.stringify(next));
+      try { if (typeof localStorage !== "undefined") localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
       return next;
     });
   }
@@ -3816,6 +3820,61 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 }
 
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
+
+// Sub-componente del dashboard APOLLO — evita IIFE en JSX
+function ApolloMetricasPanel({ client, period, from, to }) {
+  const rows = filterByPeriod(client.records || [], period, from, to);
+  const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
+  const alc = rows.reduce((a,r) => a+(parseFloat(r.alcance)||0), 0);
+  const cpm = rows.length ? rows.reduce((a,r) => a+(parseFloat(r.cpm)||0), 0)/rows.length : 0;
+  const forms = rows.reduce((a,r) => a+(parseFloat(r.resultados)||parseFloat(r.formularios)||0), 0);
+  const wpPersons = client.capturaConfig?.lastData?.total_wp || rows.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
+  const cpl = forms > 0 && inv > 0 ? inv/forms : 0;
+  const ventas = rows.reduce((a,r) => a+(parseFloat(r.ventas)||0), 0);
+  const ingreso = rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0), 0);
+  const roas = inv > 0 && ingreso > 0 ? ingreso/inv : 0;
+  const pctCap = forms > 0 && wpPersons > 0 ? (wpPersons/forms*100) : 0;
+  const capturaData = client.capturaConfig?.lastData;
+  const remarketing = capturaData?.total_remarketing || 0;
+  const allRows = client.records || [];
+  return (
+    <div>
+      <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+        <MetricaCard label="Inversión" value={"$"+fmtNum(inv,2)} color="var(--text)" records={allRows} campo="inversion" prefix="$" />
+        <MetricaCard label="Alcance" value={fmtNum(alc)} color="var(--text)" records={allRows} campo="alcance" />
+        <MetricaCard label="CPM" value={"$"+fmtNum(cpm,2)} color="var(--text)" records={allRows} campo="cpm" prefix="$" />
+        <MetricaCard label="ROAS" value={roas > 0 ? fmtNum(roas,2)+"x" : "0,00x"} color={roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"} records={allRows} campo="roas" suffix="x" />
+      </div>
+      <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+        <MetricaCard label="Formularios/Leads FB" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
+        <MetricaCard label="Costo x Lead" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
+        <MetricaCard label="Ventas" value={fmtNum(ventas)} color="var(--text)" records={allRows} campo="ventas" />
+        <MetricaCard label="Ingresos" value={"$"+fmtNum(ingreso,2)} color={ingreso > 0 ? "var(--green)" : "#4d9fff"} records={allRows} campo="ingreso" prefix="$" />
+      </div>
+      {wpPersons > 0 || capturaData ? (
+        <div className="grid4" style={{ marginBottom:"1rem" }}>
+          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Registros FB</div>
+            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>{fmtNum(forms)}</div>
+          </div>
+          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Personas en WP</div>
+            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--green)" }}>{fmtNum(wpPersons)}</div>
+          </div>
+          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
+            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>% Captura FB→WP</div>
+            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: pctCap >= 70 ? "var(--green)" : pctCap >= 50 ? "var(--amber)" : "var(--red)" }}>{pctCap > 0 ? fmtNum(pctCap,1)+"%" : "—"}</div>
+          </div>
+          <div className="card" style={{ padding:"1rem", background:"rgba(255,145,77,.06)", borderColor:"rgba(255,145,77,.2)" }}>
+            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Para remarketing</div>
+            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--orange)" }}>{fmtNum(remarketing)}</div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function HermesClientView({ client, allClients, onUpdate }) {
   const isApollo = client.producto?.startsWith("APOLLO");
   const [subTab, setSubTab] = useState("dashboard");
@@ -3840,62 +3899,8 @@ function HermesClientView({ client, allClients, onUpdate }) {
           {/* Semáforo de misión — solo APOLLO */}
           {isApollo && <SemaforoMision client={client} />}
 
-          {/* Panel de métricas rápidas con gráficas — entre barra de progreso y KPIs */}
-          {isApollo && (() => {
-            const rows = filterByPeriod(client.records || [], period, from, to);
-            const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
-            const alc = rows.reduce((a,r) => a+(parseFloat(r.alcance)||0), 0);
-            const cpm = rows.length ? rows.reduce((a,r) => a+(parseFloat(r.cpm)||0), 0)/rows.length : 0;
-            const forms = rows.reduce((a,r) => a+(parseFloat(r.resultados)||parseFloat(r.formularios)||0), 0);
-            const wpPersons = client.capturaConfig?.lastData?.total_wp || rows.reduce((a,r) => a+(parseFloat(r.personas_wp)||0), 0);
-            const cpl = forms > 0 && inv > 0 ? inv/forms : 0;
-            const ventas = rows.reduce((a,r) => a+(parseFloat(r.ventas)||0), 0);
-            const ingreso = rows.reduce((a,r) => a+(parseFloat(r.ingreso)||0), 0);
-            const roas = inv > 0 && ingreso > 0 ? ingreso/inv : 0;
-            const pctCap = forms > 0 && wpPersons > 0 ? (wpPersons/forms*100) : 0;
-            const capturaData = client.capturaConfig?.lastData;
-            const remarketing = capturaData?.total_remarketing || 0;
-            const allRows = client.records || [];
-            return (
-              <div>
-                {/* Fila 1: métricas de campaña */}
-                <div className="grid4" style={{ marginBottom:"0.5rem" }}>
-                  <MetricaCard label="Inversión" value={"$"+fmtNum(inv,2)} color="var(--text)" records={allRows} campo="inversion" prefix="$" />
-                  <MetricaCard label="Alcance" value={fmtNum(alc)} color="var(--text)" records={allRows} campo="alcance" />
-                  <MetricaCard label="CPM" value={"$"+fmtNum(cpm,2)} color="var(--text)" records={allRows} campo="cpm" prefix="$" />
-                  <MetricaCard label="ROAS" value={roas > 0 ? fmtNum(roas,2)+"x" : "0,00x"} color={roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"} records={allRows} campo="roas" suffix="x" />
-                </div>
-                {/* Fila 2: métricas de conversión */}
-                <div className="grid4" style={{ marginBottom:"0.5rem" }}>
-                  <MetricaCard label="Formularios/Leads FB" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
-                  <MetricaCard label="Costo x Lead" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
-                  <MetricaCard label="Ventas" value={fmtNum(ventas)} color="var(--text)" records={allRows} campo="ventas" />
-                  <MetricaCard label="Ingresos" value={"$"+fmtNum(ingreso,2)} color={ingreso > 0 ? "var(--green)" : "#4d9fff"} records={allRows} campo="ingreso" prefix="$" />
-                </div>
-                {/* Fila 3: métricas de captura WP */}
-                {(wpPersons > 0 || capturaData) && (
-                  <div className="grid4" style={{ marginBottom:"1rem" }}>
-                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Registros FB</div>
-                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>{fmtNum(forms)}</div>
-                    </div>
-                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Personas en WP</div>
-                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--green)" }}>{fmtNum(wpPersons)}</div>
-                    </div>
-                    <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>% Captura FB→WP</div>
-                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: pctCap >= 70 ? "var(--green)" : pctCap >= 50 ? "var(--amber)" : "var(--red)" }}>{pctCap > 0 ? fmtNum(pctCap,1)+"%" : "—"}</div>
-                    </div>
-                    <div className="card" style={{ padding:"1rem", background:"rgba(255,145,77,.06)", borderColor:"rgba(255,145,77,.2)" }}>
-                      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Para remarketing</div>
-                      <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--orange)" }}>{fmtNum(remarketing)}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          {/* Panel de métricas rápidas — entre barra de progreso y KPIs */}
+          {isApollo && <ApolloMetricasPanel client={client} period={period} from={from} to={to} />}
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} isApollo={isApollo} />
             {isApollo
@@ -7276,7 +7281,11 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
   const [tab, setTab] = useState("hermes");
   const [period, setPeriod] = useState("mtd");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
-  // Columnas personalizables al nivel correcto del componente
+
+  // Defensivo: si client no está listo, mostrar loading
+  if (!client || !client.id) return <div className="app" style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh" }}><div style={{ color:"var(--muted)" }}>Cargando...</div></div>;
+
+  const isApollo = client.producto?.startsWith("APOLLO");
   const { cols: clientCols, toggle: clientToggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
   const t = buildTotals(client.niche, rows);
