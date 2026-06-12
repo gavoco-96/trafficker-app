@@ -1526,8 +1526,12 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
 // ─── VISTA POR CAMPAÑA ────────────────────────────────────────────────────────
 function VistaPorCampana({ rows, busqueda }) {
   const campanaMap = {};
+  const hoy = new Date().toISOString().slice(0,10);
 
-  rows.forEach(r => {
+  // Solo registros hasta hoy (no futuros)
+  const rowsActivos = rows.filter(r => r.date <= hoy);
+
+  rowsActivos.forEach(r => {
     // Recopilar todas las fuentes de nomenclatura
     const campanas = (r.campanas || "").split(",").map(c => c.trim()).filter(Boolean);
     const conjuntos = (r.conjuntos || "").split(",").map(c => c.trim()).filter(Boolean);
@@ -6633,6 +6637,389 @@ function MisionesPanel({ client, onUpdate }) {
 }
 
 
+
+// ─── GRÁFICAS DE MÉTRICAS PRINCIPALES ─────────────────────────────────────────
+function GraficasMetricas({ client, period, from, to }) {
+  const allRows = (client.records || []).filter(r => {
+    const hoy = new Date().toISOString().slice(0,10);
+    return r.date <= hoy;
+  });
+  const rows = filterByPeriod(allRows, period, from, to).sort((a,b) => a.date.localeCompare(b.date));
+  const capturaData = client.capturaConfig?.lastData;
+
+  if (!rows.length) return null;
+
+  // Agrupar métricas por gráfica
+  const GRAFICAS = [
+    {
+      id: "captacion",
+      titulo: "Captación — Resultados vs Personas WP",
+      metricas: [
+        { key: "resultados",  label: "Registros FB",   color: "#004AAD", fn: r => parseFloat(r.resultados||r.formularios) || 0 },
+        { key: "personas_wp", label: "Personas WP",    color: "#10B981", fn: r => parseFloat(r.personas_wp) || 0 },
+      ]
+    },
+    {
+      id: "costos",
+      titulo: "Costos — CPA FB vs Costo WP",
+      metricas: [
+        { key: "cpa",      label: "Costo x Resultado", color: "#FF914D", fn: (r, i) => {
+          const inv = parseFloat(r.inversion) || 0;
+          const res = parseFloat(r.resultados||r.formularios) || 0;
+          return res > 0 ? inv/res : 0;
+        }},
+        { key: "costo_wp", label: "Costo x WP",        color: "#FFDE59", fn: (r) => {
+          const inv = parseFloat(r.inversion) || 0;
+          const wp  = parseFloat(r.personas_wp) || 0;
+          return wp > 0 ? inv/wp : 0;
+        }},
+      ]
+    },
+    {
+      id: "captura_pct",
+      titulo: "% de Captura FB → WP",
+      metricas: [
+        { key: "pct_cap", label: "% Captura", color: "#A855F7", fn: r => {
+          const fb = parseFloat(r.resultados||r.formularios) || 0;
+          const wp = parseFloat(r.personas_wp) || 0;
+          return fb > 0 && wp > 0 ? (wp/fb*100) : 0;
+        }},
+      ]
+    },
+    {
+      id: "inversion",
+      titulo: "Inversión diaria",
+      metricas: [
+        { key: "inversion", label: "Inversión $", color: "#EF4444", fn: r => parseFloat(r.inversion) || 0 },
+      ]
+    },
+  ];
+
+  return (
+    <div style={{ marginTop: "1rem" }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: "1rem" }}>
+        Gráficas de tendencia
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+        {GRAFICAS.map(g => (
+          <MiniLineChart key={g.id} titulo={g.titulo} rows={rows} metricas={g.metricas} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniLineChart({ titulo, rows, metricas }) {
+  const [expandido, setExpandido] = useState(false);
+  const W = expandido ? 700 : 340;
+  const H = expandido ? 200 : 120;
+  const PAD = { top: 20, right: 16, bottom: 28, left: 40 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  // Calcular datos
+  const series = metricas.map(m => ({
+    ...m,
+    data: rows.map((r, i) => ({ fecha: r.date, val: m.fn(r, i) }))
+  }));
+
+  const allVals = series.flatMap(s => s.data.map(d => d.val)).filter(v => v > 0);
+  if (!allVals.length) return null;
+
+  const minVal = 0;
+  const maxVal = Math.max(...allVals) * 1.1 || 1;
+  const n = rows.length;
+
+  function xPos(i) { return PAD.left + (i / Math.max(n-1, 1)) * chartW; }
+  function yPos(v) { return PAD.top + chartH - ((v - minVal) / (maxVal - minVal)) * chartH; }
+
+  function makePath(data) {
+    const pts = data.filter(d => d.val > 0);
+    if (!pts.length) return "";
+    const allPts = data.map((d, i) => ({ x: xPos(i), y: d.val > 0 ? yPos(d.val) : null }));
+    let path = "";
+    allPts.forEach((pt, i) => {
+      if (pt.y === null) return;
+      if (i === 0 || allPts[i-1].y === null) path += `M ${pt.x} ${pt.y}`;
+      else path += ` L ${pt.x} ${pt.y}`;
+    });
+    return path;
+  }
+
+  function makeArea(data, color) {
+    const baseline = PAD.top + chartH;
+    const pts = data.map((d, i) => ({ x: xPos(i), y: d.val > 0 ? yPos(d.val) : baseline }));
+    if (!pts.length) return "";
+    let p = `M ${pts[0].x} ${baseline}`;
+    pts.forEach(pt => { p += ` L ${pt.x} ${pt.y}`; });
+    p += ` L ${pts[pts.length-1].x} ${baseline} Z`;
+    return p;
+  }
+
+  // Ticks Y
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => ({ pct: t, val: minVal + (maxVal - minVal) * t }));
+
+  // Labels X (fechas simplificadas)
+  const xLabels = rows.filter((_, i) => {
+    const step = Math.max(1, Math.floor(n / (expandido ? 10 : 5)));
+    return i % step === 0 || i === n-1;
+  });
+
+  return (
+    <div className="card" style={{ padding: "1rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>{titulo}</div>
+        <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: "2px 8px" }}
+          onClick={() => setExpandido(e => !e)}>
+          {expandido ? "⊡ Reducir" : "⊞ Expandir"}
+        </button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <svg width={W} height={H} style={{ display: "block" }}>
+          <defs>
+            {metricas.map((m, mi) => (
+              <linearGradient key={mi} id={"area_"+titulo.replace(/\s/g,"_")+mi} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={m.color} stopOpacity="0.3" />
+                <stop offset="100%" stopColor={m.color} stopOpacity="0.02" />
+              </linearGradient>
+            ))}
+          </defs>
+          {/* Grid lines */}
+          {yTicks.map((t, i) => (
+            <g key={i}>
+              <line x1={PAD.left} y1={yPos(t.val)} x2={PAD.left + chartW} y2={yPos(t.val)}
+                stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 3" />
+              <text x={PAD.left - 4} y={yPos(t.val) + 4} textAnchor="end" fontSize="8" fill="var(--muted)">
+                {t.val > 1000 ? (t.val/1000).toFixed(1)+"k" : t.val > 100 ? Math.round(t.val) : fmtNum(t.val, t.val < 10 ? 1 : 0)}
+              </text>
+            </g>
+          ))}
+          {/* X labels */}
+          {xLabels.map((r, i) => {
+            const idx = rows.indexOf(r);
+            return (
+              <text key={i} x={xPos(idx)} y={H - 4} textAnchor="middle" fontSize="8" fill="var(--muted)">
+                {r.date.slice(5)} {/* MM-DD */}
+              </text>
+            );
+          })}
+          {/* Series */}
+          {series.map((s, si) => (
+            <g key={si}>
+              <path d={makeArea(s.data, s.color)}
+                fill={"url(#area_"+titulo.replace(/\s/g,"_")+si+")"}/>
+              <path d={makePath(s.data)}
+                fill="none" stroke={s.color} strokeWidth={1.5} strokeLinejoin="round" />
+              {/* Puntos */}
+              {s.data.map((d, i) => d.val > 0 ? (
+                <circle key={i} cx={xPos(i)} cy={yPos(d.val)} r={2}
+                  fill={s.color} fillOpacity="0.8" />
+              ) : null)}
+            </g>
+          ))}
+          {/* Eje X */}
+          <line x1={PAD.left} y1={PAD.top + chartH} x2={PAD.left + chartW} y2={PAD.top + chartH}
+            stroke="var(--border)" strokeWidth="1" />
+        </svg>
+      </div>
+      {/* Leyenda */}
+      {metricas.length > 1 && (
+        <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+          {metricas.map((m, mi) => (
+            <div key={mi} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--muted)" }}>
+              <div style={{ width: 16, height: 2, background: m.color, borderRadius: 1 }} />
+              {m.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
+function CplTradingChart({ client }) {
+  const allRows = (client.records || [])
+    .filter(r => r.date <= new Date().toISOString().slice(0,10))
+    .sort((a,b) => a.date.localeCompare(b.date));
+
+  const [intervalo, setIntervalo] = useState(30); // segundos entre updates visuales
+  const [rango, setRango] = useState(30); // días a mostrar
+  const [tick, setTick] = useState(0);
+  const [hovIdx, setHovIdx] = useState(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), intervalo * 1000);
+    return () => clearInterval(timer);
+  }, [intervalo]);
+
+  // Datos: CPL por día
+  const datos = allRows
+    .slice(-rango)
+    .map(r => {
+      const inv = parseFloat(r.inversion) || 0;
+      const res = parseFloat(r.resultados||r.formularios) || 0;
+      return { fecha: r.date, cpl: res > 0 ? inv/res : null, inv, res };
+    })
+    .filter(d => d.cpl !== null);
+
+  const misiones = client.misiones || [];
+  // Agregar datos históricos de misiones anteriores
+  const datosHistoricos = misiones.flatMap(m => (m.records || []).map(r => {
+    const inv = parseFloat(r.inversion) || 0;
+    const res = parseFloat(r.resultados||r.formularios) || 0;
+    return { fecha: r.date, cpl: res > 0 ? inv/res : null, inv, res, mision: m.nombre };
+  }).filter(d => d.cpl !== null));
+
+  const todosDatos = [...datosHistoricos, ...datos].sort((a,b) => a.fecha.localeCompare(b.fecha));
+  const datosVista = rango === 999 ? todosDatos : todosDatos.slice(-rango);
+
+  if (!datosVista.length) return (
+    <div className="card">
+      <div className="card-title">📈 CPL en tiempo real</div>
+      <div className="empty"><div style={{ opacity:.3 }}>📉</div><div style={{ marginTop:6 }}>Sin datos de métricas aún</div></div>
+    </div>
+  );
+
+  const W = 680, H = 200;
+  const PAD = { top: 24, right: 24, bottom: 32, left: 52 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const n = datosVista.length;
+
+  const vals = datosVista.map(d => d.cpl);
+  const maxV = Math.max(...vals) * 1.1 || 1;
+  const minV = Math.min(...vals) * 0.9;
+  const rng  = maxV - minV || 1;
+
+  function xPos(i) { return PAD.left + (i / Math.max(n-1,1)) * cW; }
+  function yPos(v) { return PAD.top + cH - ((v - minV) / rng) * cH; }
+
+  const ultimo = datosVista[n-1];
+  const penultimo = datosVista[n-2];
+  const tendencia = penultimo ? (ultimo.cpl < penultimo.cpl ? "baja" : "sube") : "igual";
+  const colorLinea = tendencia === "baja" ? "#10B981" : "#EF4444"; // verde si baja el costo
+
+  let path = "";
+  datosVista.forEach((d, i) => {
+    path += (i === 0 ? "M " : " L ") + xPos(i) + " " + yPos(d.cpl);
+  });
+  let areaPath = `M ${xPos(0)} ${PAD.top + cH}`;
+  datosVista.forEach((d, i) => { areaPath += ` L ${xPos(i)} ${yPos(d.cpl)}`; });
+  areaPath += ` L ${xPos(n-1)} ${PAD.top + cH} Z`;
+
+  const yTicks = [0, 0.33, 0.67, 1].map(t => minV + rng * t);
+  const xLabels = datosVista.filter((_, i) => {
+    const step = Math.max(1, Math.floor(n / 7));
+    return i % step === 0 || i === n-1;
+  });
+
+  const hovData = hovIdx !== null ? datosVista[hovIdx] : null;
+
+  return (
+    <div className="card">
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+        <div>
+          <div className="card-title" style={{ margin:0 }}>📈 Costo por Lead — Histórico</div>
+          <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>
+            Se actualiza cada {intervalo < 60 ? intervalo+"s" : intervalo/60+"min"} · Último: <strong style={{ color: colorLinea, fontFamily:"var(--mono)" }}>${fmtNum(ultimo.cpl,2)}</strong>
+            {" "}<span style={{ color: colorLinea }}>{tendencia === "baja" ? "▼ bajando" : tendencia === "sube" ? "▲ subiendo" : "→"}</span>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <div className="field" style={{ marginBottom:0 }}>
+            <label style={{ fontSize:10 }}>Intervalo de refresco</label>
+            <select value={intervalo} onChange={e => setIntervalo(Number(e.target.value))} style={{ fontSize:11 }}>
+              <option value={30}>Cada 30s</option>
+              <option value={60}>Cada 1 min</option>
+              <option value={300}>Cada 5 min</option>
+              <option value={3600}>Cada hora</option>
+              <option value={43200}>Cada 12h</option>
+              <option value={86400}>Cada día</option>
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom:0 }}>
+            <label style={{ fontSize:10 }}>Rango</label>
+            <select value={rango} onChange={e => setRango(Number(e.target.value))} style={{ fontSize:11 }}>
+              <option value={7}>7 días</option>
+              <option value={15}>15 días</option>
+              <option value={30}>30 días</option>
+              <option value={60}>60 días</option>
+              <option value={999}>Toda la misión</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <svg width={W} height={H} style={{ display:"block" }}
+          onMouseLeave={() => setHovIdx(null)}>
+          <defs>
+            <linearGradient id="cplGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor={colorLinea} stopOpacity="0.25" />
+              <stop offset="100%" stopColor={colorLinea} stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          {/* Grid */}
+          {yTicks.map((v, i) => (
+            <g key={i}>
+              <line x1={PAD.left} y1={yPos(v)} x2={PAD.left+cW} y2={yPos(v)}
+                stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 3" />
+              <text x={PAD.left-4} y={yPos(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">
+                ${fmtNum(v,2)}
+              </text>
+            </g>
+          ))}
+          {/* X labels */}
+          {xLabels.map((d, i) => (
+            <text key={i} x={xPos(datosVista.indexOf(d))} y={H-4}
+              textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha.slice(5)}</text>
+          ))}
+          {/* Area y línea */}
+          <path d={areaPath} fill="url(#cplGrad)" />
+          <path d={path} fill="none" stroke={colorLinea} strokeWidth="2" strokeLinejoin="round" />
+          {/* Punto final pulsante */}
+          <circle cx={xPos(n-1)} cy={yPos(ultimo.cpl)} r="5"
+            fill={colorLinea} fillOpacity="0.3" stroke={colorLinea} strokeWidth="1.5">
+          </circle>
+          <circle cx={xPos(n-1)} cy={yPos(ultimo.cpl)} r="3" fill={colorLinea} />
+          {/* Hover interaction */}
+          {datosVista.map((d, i) => (
+            <rect key={i} x={xPos(i) - (cW/n/2)} y={PAD.top} width={cW/n || 8} height={cH}
+              fill="transparent" style={{ cursor:"crosshair" }}
+              onMouseEnter={() => setHovIdx(i)} />
+          ))}
+          {/* Tooltip hover */}
+          {hovData && hovIdx !== null && (
+            <g>
+              <line x1={xPos(hovIdx)} y1={PAD.top} x2={xPos(hovIdx)} y2={PAD.top+cH}
+                stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2" />
+              <circle cx={xPos(hovIdx)} cy={yPos(hovData.cpl)} r="4"
+                fill={colorLinea} stroke="var(--bg)" strokeWidth="2" />
+              <rect x={Math.min(xPos(hovIdx)+6, W-140)} y={yPos(hovData.cpl)-36}
+                width={130} height={34} rx="6" fill="var(--surface2)" stroke="var(--border)" />
+              <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)-20}
+                fontSize="10" fill="var(--muted)">{hovData.fecha}</text>
+              <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)-8}
+                fontSize="11" fontWeight="700" fill={colorLinea} fontFamily="var(--mono)">
+                ${fmtNum(hovData.cpl,2)} / lead
+              </text>
+              {hovData.mision && (
+                <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)+4}
+                  fontSize="9" fill="var(--muted)">{hovData.mision}</text>
+              )}
+            </g>
+          )}
+          {/* Eje X */}
+          <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH}
+            stroke="var(--border)" strokeWidth="1" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+
+
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
 // Cambio de contraseña inline desde el perfil admin
 function ChangePasswordInline({ client, onUpdate }) {
@@ -6734,7 +7121,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "cuentas", "contratos", "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
               {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
@@ -6779,10 +7166,20 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
             </div>
           </div>
         )}
-        {tab === "cuentas" && <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />}
-        {tab === "contratos" && <ContratosPanel client={client} onUpdate={handleUpdate} />}
 
-        {tab === "metricas" && <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />}
+        {tab === "metricas" && (
+          <div>
+            <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
+            {client.producto?.startsWith("APOLLO") && (
+              <div style={{ marginTop:"1.5rem" }}>
+                <GraficasMetricas client={client} period={period} from={from} to={to} />
+                <div style={{ marginTop:"1rem" }}>
+                  <CplTradingChart client={client} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {tab === "facebook" && (
           <FacebookPanel client={client} onUpdate={handleUpdate} />
         )}
