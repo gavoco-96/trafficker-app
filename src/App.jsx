@@ -3179,42 +3179,44 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
 // ─── EMBUDO APOLLO ────────────────────────────────────────────────────────────
 function ApolloFunnel({ client, period, from, to }) {
   const records = filterByPeriod(client.records || [], period, from, to);
+  const capturaData = client.capturaConfig?.lastData || {};
+  const allRecords = client.records || [];
 
-  const capturaData = client.capturaConfig?.lastData;
-  // Registros FB: prioridad capturaData → suma formularios
-  const personasFB  = capturaData?.total_form > 0 ? capturaData.total_form
-    : records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.resultados) || parseFloat(r.clientesPotenciales) || 0), 0);
-  // Registros WP: prioridad capturaData → suma personas_wp
-  const personasWP  = capturaData?.total_wp > 0 ? capturaData.total_wp
-    : records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-  // Asistentes = 10% de registros FB (no de WP)
-  const asistentes  = personasFB > 0 ? Math.round(personasFB * 0.10) : 0;
-  const ventas      = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
-  const gasto       = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
+  // Usar el motor de KPIs para obtener los mismos valores que la tabla
+  const getVal = (fuente) => resolverFuente(fuente, allRecords, capturaData);
 
-  const pctCaptura  = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100).toFixed(1) : null;
-  const pctAsist    = personasFB > 0 ? "10%" : null;
-  const pctVentas   = asistentes > 0 && ventas > 0 ? (ventas / asistentes * 100).toFixed(1) : null;
-  const cpa         = ventas > 0 && gasto > 0 ? (gasto / ventas).toFixed(2) : null;
-  const roas        = gasto > 0 && ventas > 0 ? (ventas / gasto).toFixed(2) : null;
+  const personasFB = getVal("sum_resultados") || getVal("cap_total_form");
+  const personasWP = getVal("cap_total_wp") || getVal("sum_personas_wp");
+  const asistentes = personasWP > 0 ? Math.round(personasWP * 0.10) : 0;
+  const ventas     = getVal("sum_ventas");
+  const gasto      = getVal("sum_inversion");
+  const ingreso    = getVal("sum_ingreso");
 
+  const pctCaptura = personasFB > 0 && personasWP > 0 ? (personasWP / personasFB * 100).toFixed(1) : null;
+  const cpaFb      = personasFB > 0 && gasto > 0 ? (gasto / personasFB).toFixed(2) : null;
+  const cpaWp      = personasWP > 0 && gasto > 0 ? (gasto / personasWP).toFixed(2) : null;
+  const roas       = gasto > 0 && ingreso > 0 ? (ingreso / gasto).toFixed(2) : null;
+
+  // Stages dinámicos — solo mostrar los que tienen datos o siempre los 4 principales
   const stages = [
-    { label: "Personas en Facebook",  sub: "Registros en formulario/LP",  val: personasFB,  color: "#004AAD", topW: 300, botW: 240, h: 56 },
-    { label: "Personas en WhatsApp",  sub: pctCaptura ? pctCaptura + "% captura" : "Tasa de captura",  val: personasWP,  color: "#0066cc", topW: 240, botW: 180, h: 48 },
-    { label: "Asistentes a la clase", sub: pctAsist ? pctAsist + "% asistencia" : "Tasa de asistencia", val: asistentes, color: "#FF914D", topW: 180, botW: 120, h: 40 },
-    { label: "Ventas",                sub: pctVentas ? pctVentas + "% conversión" : "Tasa de conversión", val: ventas,    color: "#10B981", topW: 120, botW: 70,  h: 32 },
+    { label: "Personas en Facebook",  sub: "Registros en formulario/LP",                     val: personasFB, color: "#004AAD", topW: 300, botW: 240, h: 56 },
+    { label: "Personas en WhatsApp",  sub: pctCaptura ? pctCaptura + "% captura" : "Tasa de captura", val: personasWP, color: "#0066cc", topW: 240, botW: 180, h: 48 },
+    { label: "Asistentes a la clase", sub: "10% asistencia",                                  val: asistentes, color: "#FF914D", topW: 180, botW: 120, h: 40 },
+    { label: "Ventas",                sub: "Tasa de conversión",                               val: ventas,     color: "#10B981", topW: 120, botW: 70,  h: 32 },
   ];
 
-  const svgW = 320;
+  const svgW = 300;
   const gap = 4;
-  const totalH = stages.reduce((a, s) => a + s.h + gap, 0);
+  // Altura dinámica — exactamente lo que necesitan las etapas sin espacio extra
+  const totalH = stages.reduce((a, s) => a + s.h + gap, 0) - gap;
   const cx = svgW / 2;
 
   return (
-    <div className="card">
+    <div className="card" style={{ height: "100%" }}>
       <div className="card-title">Embudo de la Misión</div>
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <svg width={svgW} height={totalH} viewBox={"0 0 " + svgW + " " + totalH} style={{ flexShrink: 0, display: "block" }}>
+        <svg width={svgW} height={totalH} viewBox={"0 0 " + svgW + " " + totalH}
+          style={{ flexShrink: 0, display: "block" }}>
           <defs>
             {stages.map((s, i) => (
               <linearGradient key={i} id={"afg" + i} x1="0%" y1="0%" x2="0%" y2="100%">
@@ -3242,9 +3244,10 @@ function ApolloFunnel({ client, period, from, to }) {
             );
           })}
         </svg>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 4 }}>
+        {/* Leyenda lateral con los mismos datos que los KPIs */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 4, flex: 1 }}>
           {stages.map((s, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: (stages[i].h + gap) + "px" }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: (s.h + gap) + "px" }}>
               <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color, boxShadow: "0 0 6px " + s.color, flexShrink: 0 }} />
               <div>
                 <div style={{ fontWeight: 700, fontSize: 12, color: s.color }}>{s.label}</div>
@@ -3252,17 +3255,13 @@ function ApolloFunnel({ client, period, from, to }) {
               </div>
             </div>
           ))}
-          {/* Métricas resumen */}
-          <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
-            {cpa && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpa}</span></div>}
-            {roas && <div style={{ fontSize: 11, color: "var(--muted)" }}>ROAS: <span style={{ color: "var(--green)", fontWeight: 700 }}>{roas}x</span></div>}
-            {gasto > 0 && <div style={{ fontSize: 11, color: "var(--muted)" }}>Gasto: <span style={{ fontFamily: "var(--mono)" }}>${gasto.toLocaleString("es-EC")}</span></div>}
+          {/* Métricas resumen alineadas con el final del embudo */}
+          <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+            {cpaFb && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA FB: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpaFb}</span></div>}
+            {cpaWp && <div style={{ fontSize: 11, color: "var(--muted)" }}>CPA WP: <span style={{ color: "var(--accent2)", fontWeight: 700 }}>${cpaWp}</span></div>}
+            {roas && <div style={{ fontSize: 11, color: "var(--muted)" }}>ROAS: <span style={{ color: parseFloat(roas) >= 4 ? "var(--green)" : "var(--amber)", fontWeight: 700 }}>{roas}x</span></div>}
+            {gasto > 0 && <div style={{ fontSize: 11, color: "var(--muted)" }}>Gasto: <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>${fmtNum(gasto, 2)}</span></div>}
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
 const TIPO_AGENDA = [
