@@ -3875,6 +3875,52 @@ function ApolloMetricasPanel({ client, period, from, to }) {
   );
 }
 
+// Tabla de métricas diarias para el cliente — componente separado para evitar IIFEs
+function ClientMetricasTable({ client, period, from, to }) {
+  const { cols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
+  const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
+  const vis = ALL_COLUMNS.filter(c => cols.includes(c.key));
+  return (
+    <div style={{ marginTop:"1rem" }}>
+      <CplTradingChart client={client} />
+      {rows.length > 0 && (
+        <div className="card scroll-x" style={{ marginTop:"1rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
+            <div className="card-title" style={{ margin:0 }}>Métricas diarias</div>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <ColumnSelector cols={cols} onToggle={toggle} />
+              <BotonesExportar
+                headers={vis.map(c => c.label)}
+                rows={rows.map(r => vis.map(c => {
+                  if (c.key === "date") return fmtDate(r.date);
+                  const v = parseFloat(r[c.key]);
+                  return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||"");
+                }))}
+                nombreArchivo="metricas"
+              />
+            </div>
+          </div>
+          <table className="tbl">
+            <thead><tr>{vis.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+            <tbody>
+              {rows.map((r,i) => (
+                <tr key={i}>
+                  {vis.map(c => (
+                    <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
+                      {c.key === "date" ? fmtDate(r.date)
+                        : (() => { const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||""); })()}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HermesClientView({ client, allClients, onUpdate }) {
   const isApollo = client.producto?.startsWith("APOLLO");
   const [subTab, setSubTab] = useState("dashboard");
@@ -3909,55 +3955,7 @@ function HermesClientView({ client, allClients, onUpdate }) {
           </div>
 
           {/* Datos diarios de campañas */}
-          {(client.records || []).length > 0 && (() => {
-            const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
-            const isWA = client.niche === "whatsapp";
-            const isWeb = client.niche === "web";
-            const isLaunch = !isWA && !isWeb;
-            return (
-              <div style={{ marginTop: "1rem" }}>
-                {/* Gráfica CPL tiempo real — primero */}
-                <CplTradingChart client={client} />
-                {/* Tabla con selector de columnas y filtro de período */}
-                {rows.length > 0 && (
-                  <div className="card scroll-x">
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
-                      <div className="card-title" style={{ margin:0 }}>Métricas diarias</div>
-                      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                        <ColumnSelector cols={clientCols} onToggle={clientToggle} />
-                        <BotonesExportar
-                          headers={visClient.map(c => c.label)}
-                          rows={rows.map(r => visClient.map(c => {
-                            const v = r[c.key]; if (!v && v !== 0) return "—";
-                            const n = parseFloat(v); if (isNaN(n)) return v;
-                            return c.prefix ? c.prefix+fmtNum(n,2) : c.suffix ? fmtNum(n,2)+c.suffix : fmtNum(n,0);
-                          }))}
-                          nombreArchivo="metricas"
-                        />
-                      </div>
-                    </div>
-                    <table className="tbl">
-                      <thead><tr>
-                        {visClient.map(c => <th key={c.key}>{c.label}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {rows.map((r,i) => (
-                          <tr key={i}>
-                            {visClient.map(c => (
-                              <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
-                                {c.key === "date" ? fmtDate(r.date)
-                                  : (() => { const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix?c.prefix:"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||""); })()}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          <ClientMetricasTable client={client} period={period} from={from} to={to} />
         </div>
       )}
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={() => {}} readOnly={true} />}
@@ -7286,11 +7284,9 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
   if (!client || !client.id) return <div className="app" style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh" }}><div style={{ color:"var(--muted)" }}>Cargando...</div></div>;
 
   const isApollo = client.producto?.startsWith("APOLLO");
-  const { cols: clientCols, toggle: clientToggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
   const t = buildTotals(client.niche, rows);
   const isWA = client.niche === "whatsapp", isWeb = client.niche === "web", isLaunch = client.niche === "lanzamiento";
-  const visClient = ALL_COLUMNS.filter(c => clientCols.includes(c.key));
   return (
     <div className="app">
       <div className="sidebar">
