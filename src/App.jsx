@@ -3908,33 +3908,48 @@ function HermesClientView({ client, allClients, onUpdate }) {
             const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
             const isWA = client.niche === "whatsapp";
             const isWeb = client.niche === "web";
-            if (!rows.length) return null;
+            const isLaunch = !isWA && !isWeb;
             return (
-              <div className="card scroll-x" style={{ marginTop: "1rem" }}>
-                <div className="card-title">Metricas diarias de campañas</div>
-                <table className="tbl">
-                  <thead><tr>
-                    <th>Fecha</th><th>Inversion</th><th>Alcance</th><th>CPM</th><th>CPC</th><th>CTR</th>
-                    {isWA && <><th>Leads</th><th>Ventas</th><th>Ingresos</th></>}
-                    {isWeb && <><th>Sesiones</th><th>Compras</th><th>Ingresos</th></>}
-                    {!isWA && !isWeb && <><th>Potenciales</th><th>Formularios</th><th>Resultados</th></>}
-                  </tr></thead>
-                  <tbody>
-                    {rows.map((r,i) => (
-                      <tr key={i}>
-                        <td style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{fmtDate(r.date)}</td>
-                        <td>${fmtNum(r.inversion,2)}</td>
-                        <td>{fmtNum(r.alcance)}</td>
-                        <td>${fmtNum(r.cpm,2)}</td>
-                        <td>${fmtNum(r.cpc,2)}</td>
-                        <td>{fmtNum(r.ctr,2)}%</td>
-                        {isWA && <><td>{fmtNum(r.leads)}</td><td>{fmtNum(r.ventas)}</td><td>${fmtNum(r.ingreso,2)}</td></>}
-                        {isWeb && <><td>{fmtNum(r.sesiones)}</td><td>{fmtNum(r.compras)}</td><td>${fmtNum(r.ingreso,2)}</td></>}
-                        {!isWA && !isWeb && <><td>{fmtNum(r.clientesPotenciales)}</td><td>{fmtNum(r.formularios)}</td><td>{fmtNum(r.resultados)}</td></>}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{ marginTop: "1rem" }}>
+                {/* Gráfica CPL tiempo real — primero */}
+                <CplTradingChart client={client} />
+                {/* Tabla con selector de columnas y filtro de período */}
+                {rows.length > 0 && (
+                  <div className="card scroll-x">
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
+                      <div className="card-title" style={{ margin:0 }}>Métricas diarias</div>
+                      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                        <ColumnSelector cols={clientCols} onToggle={clientToggle} />
+                        <BotonesExportar
+                          headers={visClient.map(c => c.label)}
+                          rows={rows.map(r => visClient.map(c => {
+                            const v = r[c.key]; if (!v && v !== 0) return "—";
+                            const n = parseFloat(v); if (isNaN(n)) return v;
+                            return c.prefix ? c.prefix+fmtNum(n,2) : c.suffix ? fmtNum(n,2)+c.suffix : fmtNum(n,0);
+                          }))}
+                          nombreArchivo="metricas"
+                        />
+                      </div>
+                    </div>
+                    <table className="tbl">
+                      <thead><tr>
+                        {visClient.map(c => <th key={c.key}>{c.label}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {rows.map((r,i) => (
+                          <tr key={i}>
+                            {visClient.map(c => (
+                              <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
+                                {c.key === "date" ? fmtDate(r.date)
+                                  : (() => { const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix?c.prefix:"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||""); })()}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -6433,7 +6448,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
 // ─── SISTEMA DE MISIONES HISTÓRICAS ──────────────────────────────────────────
 // Cada misión es un snapshot completo: KPIs, registros, biblioteca, resultados
 
-function MisionesPanel({ client, onUpdate }) {
+function MisionesPanel({ client, onUpdate, readOnly }) {
   const misiones = client.misiones || [];
   const isApollo = client.producto?.startsWith("APOLLO");
   const { show, el: toastEl } = useToast();
@@ -6522,7 +6537,8 @@ function MisionesPanel({ client, onUpdate }) {
     <>
       {toastEl}
       <div>
-        {/* Botón de finalizar misión actual */}
+        {/* Botón de finalizar misión — SOLO para admin */}
+        {!readOnly && (
         <div className="card" style={{ borderColor: "rgba(255,145,77,.3)", marginBottom: "1rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1 }}>
@@ -6554,6 +6570,7 @@ function MisionesPanel({ client, onUpdate }) {
             </div>
           )}
         </div>
+        )} {/* fin !readOnly */}
 
         {/* Historial de misiones */}
         <div className="sec-title" style={{ marginBottom: ".75rem" }}>
@@ -6838,109 +6855,160 @@ function MiniLineChart({ titulo, rows, metricas }) {
 }
 
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
+// ─── GRÁFICA CPL TIEMPO REAL (estilo trading con consulta a Facebook) ─────────
 function CplTradingChart({ client }) {
-  const allRows = (client.records || [])
+  const { token, adAccountId } = client.fbConfig || {};
+  const misiones = client.misiones || [];
+
+  // Datos históricos por día desde registros
+  const histDiario = (client.records || [])
     .filter(r => r.date <= new Date().toISOString().slice(0,10))
-    .sort((a,b) => a.date.localeCompare(b.date));
-
-  const [intervalo, setIntervalo] = useState(30); // segundos entre updates visuales
-  const [rango, setRango] = useState(30); // días a mostrar
-  const [tick, setTick] = useState(0);
-  const [hovIdx, setHovIdx] = useState(null);
-
-  useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), intervalo * 1000);
-    return () => clearInterval(timer);
-  }, [intervalo]);
-
-  // Datos: CPL por día
-  const datos = allRows
-    .slice(-rango)
+    .sort((a,b) => a.date.localeCompare(b.date))
     .map(r => {
       const inv = parseFloat(r.inversion) || 0;
       const res = parseFloat(r.resultados||r.formularios) || 0;
-      return { fecha: r.date, cpl: res > 0 ? inv/res : null, inv, res };
+      return { ts: new Date(r.date).getTime(), fecha: r.date, cpl: res > 0 ? inv/res : null, tipo: "dia" };
     })
     .filter(d => d.cpl !== null);
 
-  const misiones = client.misiones || [];
-  // Agregar datos históricos de misiones anteriores
-  const datosHistoricos = misiones.flatMap(m => (m.records || []).map(r => {
-    const inv = parseFloat(r.inversion) || 0;
-    const res = parseFloat(r.resultados||r.formularios) || 0;
-    return { fecha: r.date, cpl: res > 0 ? inv/res : null, inv, res, mision: m.nombre };
+  // Datos históricos de misiones anteriores
+  const histMisiones = misiones.flatMap(m => (m.records||[]).map(r => {
+    const inv = parseFloat(r.inversion)||0, res = parseFloat(r.resultados||r.formularios)||0;
+    return { ts: new Date(r.date).getTime(), fecha: r.date, cpl: res>0?inv/res:null, tipo:"mision", mision:m.nombre };
   }).filter(d => d.cpl !== null));
 
-  const todosDatos = [...datosHistoricos, ...datos].sort((a,b) => a.fecha.localeCompare(b.fecha));
-  const datosVista = rango === 999 ? todosDatos : todosDatos.slice(-rango);
+  // Puntos en tiempo real — se agregan con cada fetch de FB
+  const [puntosRT, setPuntosRT]   = useState([]);
+  const [intervalo, setIntervalo] = useState(30);
+  const [rango, setRango]         = useState(30);
+  const [loading, setLoading]     = useState(false);
+  const [lastFetch, setLastFetch] = useState(null);
+  const [hovIdx, setHovIdx]       = useState(null);
+  const fetchCount = useRef(0);
 
-  if (!datosVista.length) return (
+  // Fetch de CPL actual desde Facebook Ads API
+  async function fetchCplActual() {
+    if (!token || !adAccountId) return;
+    setLoading(true);
+    const hoy = new Date().toISOString().slice(0,10);
+    try {
+      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error || !json.data?.length) { setLoading(false); return; }
+      const d = json.data[0];
+      const inv = parseFloat(d.spend) || 0;
+      const leads = (d.actions||[]).find(a => a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+      const nLeads = leads ? parseFloat(leads.value) : 0;
+      if (inv > 0 && nLeads > 0) {
+        const cpl = inv / nLeads;
+        const ahora = Date.now();
+        setPuntosRT(prev => {
+          // Max 200 puntos en memoria
+          const nuevo = [...prev, { ts: ahora, fecha: new Date().toLocaleTimeString("es-EC"), cpl, tipo:"rt", inv, nLeads }];
+          return nuevo.slice(-200);
+        });
+        setLastFetch(new Date().toLocaleTimeString("es-EC"));
+        fetchCount.current++;
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  // Auto-fetch cada N segundos
+  useEffect(() => {
+    if (!token || !adAccountId) return;
+    fetchCplActual(); // fetch inmediato
+    const timer = setInterval(fetchCplActual, intervalo * 1000);
+    return () => clearInterval(timer);
+  }, [intervalo, token, adAccountId]);
+
+  // Construir datos a mostrar según rango
+  const todosDiarios = [...histMisiones, ...histDiario].sort((a,b)=>a.ts-b.ts);
+  const diasFiltro = rango === 999 ? todosDiarios : todosDiarios.slice(-rango);
+
+  // Si hay puntos RT y el rango es corto, mostrar RT; si el rango es largo, mostrar histórico
+  const datosVista = puntosRT.length > 0 && rango <= 7
+    ? puntosRT  // modo tiempo real: solo puntos RT
+    : diasFiltro; // modo histórico: puntos diarios
+
+  const modoRT = puntosRT.length > 0 && rango <= 7;
+
+  if (!datosVista.length && !token) return (
     <div className="card">
       <div className="card-title">📈 CPL en tiempo real</div>
-      <div className="empty"><div style={{ opacity:.3 }}>📉</div><div style={{ marginTop:6 }}>Sin datos de métricas aún</div></div>
+      <div style={{ fontSize:12, color:"var(--muted)", padding:"1rem" }}>
+        Configura Facebook Ads en la tab 📘 Facebook para activar el modo tiempo real.
+        El historial por día estará disponible cuando haya registros.
+      </div>
     </div>
   );
 
-  const W = 680, H = 200;
-  const PAD = { top: 24, right: 24, bottom: 32, left: 52 };
+  if (!datosVista.length) return null;
+
+  const W = 680, H = 220;
+  const PAD = { top: 28, right: 24, bottom: 34, left: 56 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
   const n = datosVista.length;
 
   const vals = datosVista.map(d => d.cpl);
-  const maxV = Math.max(...vals) * 1.1 || 1;
-  const minV = Math.min(...vals) * 0.9;
+  const maxV = Math.max(...vals) * 1.15 || 1;
+  const minV = Math.max(0, Math.min(...vals) * 0.85);
   const rng  = maxV - minV || 1;
 
-  function xPos(i) { return PAD.left + (i / Math.max(n-1,1)) * cW; }
-  function yPos(v) { return PAD.top + cH - ((v - minV) / rng) * cH; }
+  function xP(i) { return PAD.left + (i / Math.max(n-1,1)) * cW; }
+  function yP(v) { return PAD.top + cH - ((v - minV) / rng) * cH; }
 
   const ultimo = datosVista[n-1];
-  const penultimo = datosVista[n-2];
-  const tendencia = penultimo ? (ultimo.cpl < penultimo.cpl ? "baja" : "sube") : "igual";
-  const colorLinea = tendencia === "baja" ? "#10B981" : "#EF4444"; // verde si baja el costo
+  const penultimo = n > 1 ? datosVista[n-2] : null;
+  const tendencia = penultimo ? (ultimo.cpl < penultimo.cpl ? "baja" : ultimo.cpl > penultimo.cpl ? "sube" : "igual") : "igual";
+  const colorLinea = tendencia === "baja" ? "#10B981" : tendencia === "sube" ? "#EF4444" : "#FFDE59";
 
-  let path = "";
-  datosVista.forEach((d, i) => {
-    path += (i === 0 ? "M " : " L ") + xPos(i) + " " + yPos(d.cpl);
-  });
-  let areaPath = `M ${xPos(0)} ${PAD.top + cH}`;
-  datosVista.forEach((d, i) => { areaPath += ` L ${xPos(i)} ${yPos(d.cpl)}`; });
-  areaPath += ` L ${xPos(n-1)} ${PAD.top + cH} Z`;
+  let path = datosVista.map((d,i) => (i===0?"M ":"L ") + xP(i) + " " + yP(d.cpl)).join(" ");
+  let area = `M ${xP(0)} ${PAD.top+cH} ` + datosVista.map((d,i) => `L ${xP(i)} ${yP(d.cpl)}`).join(" ") + ` L ${xP(n-1)} ${PAD.top+cH} Z`;
 
-  const yTicks = [0, 0.33, 0.67, 1].map(t => minV + rng * t);
-  const xLabels = datosVista.filter((_, i) => {
-    const step = Math.max(1, Math.floor(n / 7));
-    return i % step === 0 || i === n-1;
-  });
-
-  const hovData = hovIdx !== null ? datosVista[hovIdx] : null;
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => minV + rng*t);
+  const xStep = Math.max(1, Math.floor(n/7));
+  const xLabels = datosVista.filter((_,i) => i%xStep===0 || i===n-1);
 
   return (
-    <div className="card">
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+    <div className="card" style={{ marginBottom:"1rem" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, flexWrap:"wrap", gap:8 }}>
         <div>
-          <div className="card-title" style={{ margin:0 }}>📈 Costo por Lead — Histórico</div>
+          <div className="card-title" style={{ margin:0 }}>
+            📈 Costo por Lead en tiempo real
+            {loading && <span style={{ marginLeft:8, fontSize:10, color:"var(--muted)" }}>⟳</span>}
+            {modoRT && <span style={{ marginLeft:8, fontSize:10, background:"rgba(16,185,129,.15)", color:"var(--green)", padding:"2px 8px", borderRadius:10 }}>● EN VIVO</span>}
+          </div>
           <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>
-            Se actualiza cada {intervalo < 60 ? intervalo+"s" : intervalo/60+"min"} · Último: <strong style={{ color: colorLinea, fontFamily:"var(--mono)" }}>${fmtNum(ultimo.cpl,2)}</strong>
-            {" "}<span style={{ color: colorLinea }}>{tendencia === "baja" ? "▼ bajando" : tendencia === "sube" ? "▲ subiendo" : "→"}</span>
+            {modoRT ? `Actualiza cada ${intervalo<60?intervalo+"s":intervalo/60+"min"} · ${fetchCount.current} lecturas · Última: ${lastFetch||"—"}` : `Historial diario · ${n} días`}
+            {" · "}Último CPL: <strong style={{ color:colorLinea, fontFamily:"var(--mono)" }}>${fmtNum(ultimo.cpl,2)}</strong>
+            {" "}<span style={{ color:colorLinea }}>{tendencia==="baja"?"▼ bajando":tendencia==="sube"?"▲ subiendo":"→ estable"}</span>
           </div>
         </div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+          {token && adAccountId && (
+            <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={fetchCplActual} disabled={loading}>
+              {loading?"Cargando...":"🔄 Actualizar"}
+            </button>
+          )}
           <div className="field" style={{ marginBottom:0 }}>
-            <label style={{ fontSize:10 }}>Intervalo de refresco</label>
+            <label style={{ fontSize:10 }}>Refresco</label>
             <select value={intervalo} onChange={e => setIntervalo(Number(e.target.value))} style={{ fontSize:11 }}>
-              <option value={30}>Cada 30s</option>
-              <option value={60}>Cada 1 min</option>
-              <option value={300}>Cada 5 min</option>
-              <option value={3600}>Cada hora</option>
-              <option value={43200}>Cada 12h</option>
-              <option value={86400}>Cada día</option>
+              <option value={30}>30s</option>
+              <option value={60}>1 min</option>
+              <option value={300}>5 min</option>
+              <option value={3600}>1 hora</option>
+              <option value={43200}>12 horas</option>
+              <option value={86400}>1 día</option>
             </select>
           </div>
           <div className="field" style={{ marginBottom:0 }}>
             <label style={{ fontSize:10 }}>Rango</label>
-            <select value={rango} onChange={e => setRango(Number(e.target.value))} style={{ fontSize:11 }}>
+            <select value={rango} onChange={e => { setRango(Number(e.target.value)); setPuntosRT([]); }} style={{ fontSize:11 }}>
+              <option value={1}>Hoy (RT)</option>
+              <option value={3}>3 días (RT)</option>
               <option value={7}>7 días</option>
               <option value={15}>15 días</option>
               <option value={30}>30 días</option>
@@ -6954,70 +7022,61 @@ function CplTradingChart({ client }) {
         <svg width={W} height={H} style={{ display:"block" }}
           onMouseLeave={() => setHovIdx(null)}>
           <defs>
-            <linearGradient id="cplGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor={colorLinea} stopOpacity="0.25" />
+            <linearGradient id="cplGradRT" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor={colorLinea} stopOpacity="0.3" />
               <stop offset="100%" stopColor={colorLinea} stopOpacity="0.02" />
             </linearGradient>
           </defs>
-          {/* Grid */}
-          {yTicks.map((v, i) => (
+          {yTicks.map((v,i) => (
             <g key={i}>
-              <line x1={PAD.left} y1={yPos(v)} x2={PAD.left+cW} y2={yPos(v)}
-                stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 3" />
-              <text x={PAD.left-4} y={yPos(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">
-                ${fmtNum(v,2)}
-              </text>
+              <line x1={PAD.left} y1={yP(v)} x2={PAD.left+cW} y2={yP(v)} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 3"/>
+              <text x={PAD.left-5} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
             </g>
           ))}
-          {/* X labels */}
-          {xLabels.map((d, i) => (
-            <text key={i} x={xPos(datosVista.indexOf(d))} y={H-4}
-              textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha.slice(5)}</text>
+          {xLabels.map((d,i) => (
+            <text key={i} x={xP(datosVista.indexOf(d))} y={H-4} textAnchor="middle" fontSize="8" fill="var(--muted)">
+              {modoRT ? d.fecha : String(d.fecha).slice(5)}
+            </text>
           ))}
-          {/* Area y línea */}
-          <path d={areaPath} fill="url(#cplGrad)" />
+          <path d={area} fill="url(#cplGradRT)" />
           <path d={path} fill="none" stroke={colorLinea} strokeWidth="2" strokeLinejoin="round" />
-          {/* Punto final pulsante */}
-          <circle cx={xPos(n-1)} cy={yPos(ultimo.cpl)} r="5"
-            fill={colorLinea} fillOpacity="0.3" stroke={colorLinea} strokeWidth="1.5">
-          </circle>
-          <circle cx={xPos(n-1)} cy={yPos(ultimo.cpl)} r="3" fill={colorLinea} />
-          {/* Hover interaction */}
-          {datosVista.map((d, i) => (
-            <rect key={i} x={xPos(i) - (cW/n/2)} y={PAD.top} width={cW/n || 8} height={cH}
-              fill="transparent" style={{ cursor:"crosshair" }}
-              onMouseEnter={() => setHovIdx(i)} />
+          {/* Puntos */}
+          {datosVista.map((d,i) => (
+            <circle key={i} cx={xP(i)} cy={yP(d.cpl)} r={i===n-1?4:2}
+              fill={i===n-1?colorLinea:"var(--surface2)"} stroke={colorLinea} strokeWidth={i===n-1?0:1} />
           ))}
-          {/* Tooltip hover */}
-          {hovData && hovIdx !== null && (
-            <g>
-              <line x1={xPos(hovIdx)} y1={PAD.top} x2={xPos(hovIdx)} y2={PAD.top+cH}
-                stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2" />
-              <circle cx={xPos(hovIdx)} cy={yPos(hovData.cpl)} r="4"
-                fill={colorLinea} stroke="var(--bg)" strokeWidth="2" />
-              <rect x={Math.min(xPos(hovIdx)+6, W-140)} y={yPos(hovData.cpl)-36}
-                width={130} height={34} rx="6" fill="var(--surface2)" stroke="var(--border)" />
-              <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)-20}
-                fontSize="10" fill="var(--muted)">{hovData.fecha}</text>
-              <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)-8}
-                fontSize="11" fontWeight="700" fill={colorLinea} fontFamily="var(--mono)">
-                ${fmtNum(hovData.cpl,2)} / lead
-              </text>
-              {hovData.mision && (
-                <text x={Math.min(xPos(hovIdx)+12, W-134)} y={yPos(hovData.cpl)+4}
-                  fontSize="9" fill="var(--muted)">{hovData.mision}</text>
-              )}
-            </g>
+          {/* Punto final pulsante */}
+          {modoRT && (
+            <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="8"
+              fill={colorLinea} fillOpacity="0.15" stroke={colorLinea} strokeWidth="0" />
           )}
-          {/* Eje X */}
-          <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH}
-            stroke="var(--border)" strokeWidth="1" />
+          {/* Hover */}
+          {datosVista.map((_,i) => (
+            <rect key={i} x={xP(i)-Math.max(cW/n/2,4)} y={PAD.top} width={Math.max(cW/n,8)} height={cH}
+              fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={() => setHovIdx(i)} />
+          ))}
+          {hovIdx !== null && (() => {
+            const d = datosVista[hovIdx];
+            const tx = Math.min(xP(hovIdx)+10, W-148);
+            const ty = Math.max(yP(d.cpl)-48, PAD.top);
+            return (
+              <g>
+                <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2"/>
+                <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="5" fill={colorLinea} stroke="var(--bg)" strokeWidth="2"/>
+                <rect x={tx} y={ty} width={138} height={d.mision?50:38} rx="6" fill="var(--surface2)" stroke={colorLinea} strokeWidth="0.5"/>
+                <text x={tx+8} y={ty+14} fontSize="10" fill="var(--muted)">{modoRT ? d.fecha : d.fecha}</text>
+                <text x={tx+8} y={ty+28} fontSize="12" fontWeight="700" fill={colorLinea} fontFamily="var(--mono)">${fmtNum(d.cpl,2)} / lead</text>
+                {d.mision && <text x={tx+8} y={ty+42} fontSize="9" fill="var(--muted)">{d.mision}</text>}
+              </g>
+            );
+          })()}
+          <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
         </svg>
       </div>
+      {!token && <div style={{ fontSize:11, color:"var(--muted)", marginTop:6 }}>⚠️ Sin token de Facebook — mostrando historial diario sin actualizaciones en tiempo real.</div>}
     </div>
   );
 }
-
 
 
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
@@ -7270,7 +7329,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
           </>}
           {tab === "antecedentes" && (
             <div>
-              <MisionesPanel client={client} onUpdate={onUpdate || (() => {})} />
+              <MisionesPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
               <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
                 <AntecedentesPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
               </div>
