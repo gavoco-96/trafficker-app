@@ -2226,15 +2226,39 @@ function getBannersForClient(banners, clientId) {
 
 // ─── APOLLO PRODUCT ───────────────────────────────────────────────────────────
 
+// Fuentes disponibles para KPIs personalizados
+const KPI_FUENTES = [
+  { id: "sum_resultados",   label: "Registros FB (suma resultados)",     tab: "metricas"  },
+  { id: "sum_formularios",  label: "Formularios (suma formularios)",      tab: "metricas"  },
+  { id: "sum_inversion",    label: "Inversión total",                     tab: "metricas"  },
+  { id: "sum_ventas",       label: "Ventas totales",                      tab: "metricas"  },
+  { id: "sum_ingreso",      label: "Ingresos totales",                    tab: "metricas"  },
+  { id: "sum_alcance",      label: "Alcance total",                       tab: "metricas"  },
+  { id: "sum_personas_wp",  label: "Personas WP (métricas diarias)",      tab: "metricas"  },
+  { id: "cap_total_wp",     label: "Total en WP (Captura WP)",            tab: "captura"   },
+  { id: "cap_total_form",   label: "Total registros FB (Captura WP)",     tab: "captura"   },
+  { id: "cap_pct",          label: "% Captura FB→WP",                     tab: "captura"   },
+  { id: "manual",           label: "Ingreso manual",                      tab: "manual"    },
+];
+
+const KPI_OPS = [
+  { id: "+",  label: "+ Suma"        },
+  { id: "-",  label: "- Resta"       },
+  { id: "*",  label: "× Multiplicar" },
+  { id: "/",  label: "÷ Dividir"     },
+  { id: "%",  label: "% Porcentaje (A/B×100)" },
+];
+
 const APOLLO_KPIS_DEFAULT = [
-  { id: "reg_fb",     nombre: "Registros en Facebook",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "formularios",  hint: "Auto — suma de formularios FB" },
-  { id: "reg_wp",     nombre: "Registros en WhatsApp",    unidad: "personas", historico: "", actual: "", meta: "", metrica: "personas_wp",  hint: "Auto — desde Captura WP o campo personas_wp" },
-  { id: "pct_cap",    nombre: "% de Captura FB→WP",       unidad: "%",        historico: "", actual: "", meta: "70", metrica: "pct_captura_wp", hint: "Auto — calculado desde Captura WP" },
-  { id: "asistentes", nombre: "Asistentes al evento",     unidad: "personas", historico: "", actual: "", meta: "", metrica: "auto_wp",    hint: "Auto — estimado 10% del total en WP" },
-  { id: "oportunidades", nombre: "Oportunidades",         unidad: "personas", historico: "", actual: "", meta: "", metrica: "manual",     hint: "Ingreso manual — ¿Cuántas personas mostraron intención real de compra?" },
-  { id: "ventas",     nombre: "Ventas cerradas",           unidad: "ventas",   historico: "", actual: "", meta: "", metrica: "ventas",       hint: "¿Cuántas ventas se generaron?" },
-  { id: "cpa",        nombre: "CPA",                       unidad: "$",        historico: "", actual: "", meta: "", metrica: "cpa",          hint: "¿Cuánto costó conseguir una venta?" },
-  { id: "roas",       nombre: "ROAS",                      unidad: "x",        historico: "", actual: "", meta: "4", metrica: "roas",        hint: "¿Cuánto dinero regresó por cada dólar invertido?" },
+  { id: "reg_fb",      nombre: "Registros en Facebook",     unidad: "personas", historico: "", actual: "", meta: "",   tipo: "auto",   fuente: "sum_resultados",  hint: "¿Cuántas personas se registraron en el formulario?" },
+  { id: "reg_wp",      nombre: "Registros en WhatsApp",     unidad: "personas", historico: "", actual: "", meta: "",   tipo: "auto",   fuente: "cap_total_wp",    hint: "¿Cuántas personas ingresaron al grupo de WhatsApp?" },
+  { id: "pct_cap",     nombre: "% de Captura",              unidad: "%",        historico: "", actual: "", meta: "70", tipo: "calc",   formula: "cap_total_wp % sum_resultados", hint: "¿Qué % pasó de Facebook a WhatsApp?" },
+  { id: "asistentes",  nombre: "Asistentes al evento",      unidad: "personas", historico: "", actual: "", meta: "",   tipo: "calc",   formula: "cap_total_wp * 0.10", hint: "Estimado: 10% de personas en WP" },
+  { id: "cpa_fb",      nombre: "CPA FB (Costo x Registro)", unidad: "$",        historico: "", actual: "", meta: "",   tipo: "calc",   formula: "sum_inversion / sum_resultados", hint: "Inversión total ÷ Registros en Facebook" },
+  { id: "cpa_wp",      nombre: "CPA WP (Costo x WP)",      unidad: "$",        historico: "", actual: "", meta: "",   tipo: "calc",   formula: "sum_inversion / cap_total_wp",   hint: "Inversión total ÷ Personas en WhatsApp" },
+  { id: "oportunidades",nombre: "Oportunidades",            unidad: "personas", historico: "", actual: "", meta: "",   tipo: "manual", fuente: "manual", hint: "Manual — personas con intención real de compra" },
+  { id: "ventas",      nombre: "Ventas cerradas",           unidad: "ventas",   historico: "", actual: "", meta: "",   tipo: "manual", fuente: "manual", hint: "Manual — ventas generadas al cierre" },
+  { id: "roas",        nombre: "ROAS",                      unidad: "x",        historico: "", actual: "", meta: "4",  tipo: "calc",   formula: "sum_ingreso / sum_inversion",    hint: "Ingresos totales ÷ Inversión total" },
 ];
 
 const APOLLO_FASES = [
@@ -2450,195 +2474,338 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
 }
 
 // ─── KPIs COMPARATIVOS HERMES ─────────────────────────────────────────────────
+// ─── MOTOR DE CÁLCULO DE KPIs ────────────────────────────────────────────────
+function resolverFuente(fuente, records, capturaData) {
+  const r = records || [];
+  const c = capturaData || {};
+  switch(fuente) {
+    case "sum_resultados":  return r.reduce((a,x) => a+(parseFloat(x.resultados)||parseFloat(x.formularios)||0), 0);
+    case "sum_formularios": return r.reduce((a,x) => a+(parseFloat(x.formularios)||0), 0);
+    case "sum_inversion":   return r.reduce((a,x) => a+(parseFloat(x.inversion)||0), 0);
+    case "sum_ventas":      return r.reduce((a,x) => a+(parseFloat(x.ventas)||0), 0);
+    case "sum_ingreso":     return r.reduce((a,x) => a+(parseFloat(x.ingreso)||0), 0);
+    case "sum_alcance":     return r.reduce((a,x) => a+(parseFloat(x.alcance)||0), 0);
+    case "sum_personas_wp": return r.reduce((a,x) => a+(parseFloat(x.personas_wp)||0), 0);
+    case "cap_total_wp":    return c.total_wp || r.reduce((a,x) => a+(parseFloat(x.personas_wp)||0), 0);
+    case "cap_total_form":  return c.total_form || r.reduce((a,x) => a+(parseFloat(x.resultados)||parseFloat(x.formularios)||0), 0);
+    case "cap_pct":         return c.total_form > 0 && c.total_wp > 0 ? c.total_wp/c.total_form*100 : 0;
+    default: return 0;
+  }
+}
+
+function calcularKPI(kpi, records, capturaData) {
+  if (kpi.tipo === "manual") return null; // manual = no calcular
+
+  if (kpi.tipo === "auto") {
+    const val = resolverFuente(kpi.fuente, records, capturaData);
+    return val > 0 ? val : null;
+  }
+
+  if (kpi.tipo === "calc" && kpi.formula) {
+    // Parsear fórmula: "fuente1 op fuente2" o "fuente1 op número"
+    const formula = kpi.formula.trim();
+
+    // Operador %  → porcentaje: A/B*100
+    if (formula.includes(" % ")) {
+      const [a, b] = formula.split(" % ").map(s => s.trim());
+      const va = resolverFuente(a, records, capturaData);
+      const vb = isNaN(parseFloat(b)) ? resolverFuente(b, records, capturaData) : parseFloat(b);
+      return vb > 0 ? va/vb*100 : null;
+    }
+    // Operadores estándar
+    for (const op of ["/","*","-","+"]) {
+      if (formula.includes(` ${op} `)) {
+        const [a, b] = formula.split(` ${op} `).map(s => s.trim());
+        const va = isNaN(parseFloat(a)) ? resolverFuente(a, records, capturaData) : parseFloat(a);
+        const vb = isNaN(parseFloat(b)) ? resolverFuente(b, records, capturaData) : parseFloat(b);
+        if (vb === 0 && op === "/") return null;
+        if (op === "+") return va + vb;
+        if (op === "-") return va - vb;
+        if (op === "*") return va * vb;
+        if (op === "/") return va / vb;
+      }
+    }
+    // Fórmula personalizada con eval seguro
+    try {
+      const expr = formula.replace(/[a-z_]+/g, match => {
+        const val = resolverFuente(match, records, capturaData);
+        return String(val);
+      });
+      const result = Function('"use strict"; return (' + expr + ')')();
+      return isFinite(result) ? result : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function formatKpiVal(val, unidad) {
+  if (val === null || val === undefined || val === "") return "—";
+  const n = parseFloat(val);
+  if (isNaN(n)) return String(val);
+  if (unidad === "$") return "$" + fmtNum(n, 2);
+  if (unidad === "%") return fmtNum(n, 1) + "%";
+  if (unidad === "x") return fmtNum(n, 2) + "x";
+  return fmtNum(n, n < 100 ? 2 : 0);
+}
+
+// ─── CONSTRUCTOR DE KPI PERSONALIZADO ─────────────────────────────────────────
+function KpiBuilder({ onSave, onCancel }) {
+  const [form, setForm] = useState({ nombre: "", unidad: "personas", tipo: "auto", fuente: "sum_resultados", formula: "", formulaA: "", op: "/", formulaB: "", meta: "", hint: "" });
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  function buildFormula() {
+    if (form.tipo === "calc") {
+      if (form.op === "%") return `${form.formulaA} % ${form.formulaB}`;
+      return `${form.formulaA} ${form.op} ${form.formulaB}`;
+    }
+    return "";
+  }
+
+  function save() {
+    if (!form.nombre) return alert("Ingresa el nombre del KPI");
+    const kpi = {
+      id: "kpi_" + Date.now(),
+      nombre: form.nombre,
+      unidad: form.unidad,
+      tipo: form.tipo,
+      fuente: form.tipo === "auto" ? form.fuente : "manual",
+      formula: form.tipo === "calc" ? buildFormula() : "",
+      meta: form.meta,
+      hint: form.hint,
+      historico: "", actual: "",
+    };
+    onSave(kpi);
+  }
+
+  return (
+    <div className="card" style={{ borderColor:"rgba(0,74,173,.4)", marginBottom:"1rem" }}>
+      <div className="card-title">Nuevo KPI personalizado</div>
+      <div className="form-row">
+        <div className="field"><label>Nombre del KPI *</label><input type="text" value={form.nombre} onChange={e => f("nombre", e.target.value)} placeholder="Ej: Tasa de conversión" /></div>
+        <div className="field"><label>Unidad</label>
+          <select value={form.unidad} onChange={e => f("unidad", e.target.value)}>
+            {["personas","ventas","$","%","x","días","leads"].map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="field"><label>Tipo de KPI</label>
+        <div className="period-pills">
+          <button type="button" className={"pill " + (form.tipo==="auto" ? "active" : "")} onClick={() => f("tipo","auto")}>Auto (una fuente)</button>
+          <button type="button" className={"pill " + (form.tipo==="calc" ? "active" : "")} onClick={() => f("tipo","calc")}>Calculado (A op B)</button>
+          <button type="button" className={"pill " + (form.tipo==="manual" ? "active" : "")} onClick={() => f("tipo","manual")}>Manual</button>
+        </div>
+      </div>
+      {form.tipo === "auto" && (
+        <div className="field"><label>Fuente de datos</label>
+          <select value={form.fuente} onChange={e => f("fuente", e.target.value)}>
+            {KPI_FUENTES.filter(f => f.id !== "manual").map(fu => <option key={fu.id} value={fu.id}>{fu.label}</option>)}
+          </select>
+        </div>
+      )}
+      {form.tipo === "calc" && (
+        <div>
+          <div style={{ fontSize:12, color:"var(--muted)", marginBottom:8 }}>Construye la fórmula: <strong>Valor A  Operación  Valor B</strong></div>
+          <div className="form-row" style={{ alignItems:"center", gap:8 }}>
+            <div className="field" style={{ flex:2 }}><label>Valor A</label>
+              <select value={form.formulaA} onChange={e => f("formulaA", e.target.value)}>
+                <option value="">-- Seleccionar --</option>
+                {KPI_FUENTES.filter(fu => fu.id !== "manual").map(fu => <option key={fu.id} value={fu.id}>{fu.label}</option>)}
+              </select>
+            </div>
+            <div className="field" style={{ flex:1 }}><label>Operación</label>
+              <select value={form.op} onChange={e => f("op", e.target.value)}>
+                {KPI_OPS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            </div>
+            <div className="field" style={{ flex:2 }}><label>Valor B (fuente o número)</label>
+              <div style={{ display:"flex", gap:6 }}>
+                <select value={form.formulaB} onChange={e => f("formulaB", e.target.value)} style={{ flex:1 }}>
+                  <option value="">-- Seleccionar --</option>
+                  {KPI_FUENTES.filter(fu => fu.id !== "manual").map(fu => <option key={fu.id} value={fu.id}>{fu.label}</option>)}
+                  <option value="100">100 (constante)</option>
+                  <option value="0.10">0.10 (10%)</option>
+                  <option value="0.30">0.30 (30%)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          {form.formulaA && form.formulaB && (
+            <div style={{ background:"var(--surface2)", borderRadius:8, padding:"8px 12px", fontSize:12, marginTop:4 }}>
+              <strong>Fórmula:</strong> {KPI_FUENTES.find(f=>f.id===form.formulaA)?.label || form.formulaA}
+              {" "}<strong style={{ color:"var(--accent2)" }}>{KPI_OPS.find(o=>o.id===form.op)?.label}</strong>{" "}
+              {KPI_FUENTES.find(f=>f.id===form.formulaB)?.label || form.formulaB}
+              {form.op === "%" && " × 100"}
+            </div>
+          )}
+        </div>
+      )}
+      {form.tipo === "manual" && (
+        <div style={{ fontSize:12, color:"var(--muted)", background:"var(--surface2)", padding:"8px 12px", borderRadius:8 }}>
+          Este KPI se llenará manualmente en la tabla — útil para datos que no están en el sistema.
+        </div>
+      )}
+      <div className="form-row" style={{ marginTop:8 }}>
+        <div className="field"><label>Meta (opcional)</label><input type="text" value={form.meta} onChange={e => f("meta", e.target.value)} placeholder="Ej: 4" /></div>
+        <div className="field"><label>Descripción (opcional)</label><input type="text" value={form.hint} onChange={e => f("hint", e.target.value)} placeholder="¿Qué mide este KPI?" /></div>
+      </div>
+      <div style={{ display:"flex", gap:8, marginTop:8 }}>
+        <button className="btn btn-primary btn-sm" onClick={save}>Agregar KPI</button>
+        <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── PANEL DE KPIs APOLLO / HERMES ────────────────────────────────────────────
 function HermesKpisPanel({ client, onUpdate, readOnly, isApollo }) {
   const hermes = client.hermesData || {};
+  const capturaData = client.capturaConfig?.lastData || {};
+  const records = client.records || [];
   const defaultKpis = isApollo ? APOLLO_KPIS_DEFAULT : HERMES_KPIS_DEFAULT;
-  const kpis = isApollo
-    ? (client.apolloData?.kpisApollo?.length > 0 ? client.apolloData.kpisApollo : defaultKpis)
-    : (hermes.kpisHermes?.length > 0 ? hermes.kpisHermes : defaultKpis);
-  const [editing, setEditing] = useState(false);
-  const [local, setLocal] = useState(kpis);
-  const { show, el: toastEl } = useToast();
 
-  // Sincronizar local cuando cambian los KPIs guardados o el cliente
-  useEffect(() => { setLocal(kpis); }, [client.id, (client.records||[]).length, client.capturaConfig?.lastSync]);
+  // Siempre usar los default de APOLLO si no hay guardados o si los guardados son los viejos
+  const savedKpis = isApollo
+    ? (client.apolloData?.kpisApollo || [])
+    : (hermes.kpisHermes || []);
+  const kpis = savedKpis.length > 0 ? savedKpis : defaultKpis;
+
+  const [editing, setEditing]   = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [local, setLocal]       = useState(kpis);
+  const { show, el: toastEl }   = useToast();
+
+  // Sincronizar cuando cambian datos externos
+  useEffect(() => {
+    setLocal(savedKpis.length > 0 ? savedKpis : defaultKpis);
+  }, [client.id, records.length, capturaData?.total_wp, capturaData?.lastSync]);
 
   function upd(id, k, v) { setLocal(p => p.map(kpi => kpi.id === id ? { ...kpi, [k]: v } : kpi)); }
 
   async function save() {
     const updated = isApollo
-      ? { ...client, apolloData: { ...(client.apolloData || {}), kpisApollo: local } }
+      ? { ...client, apolloData: { ...(client.apolloData||{}), kpisApollo: local } }
       : { ...client, hermesData: { ...hermes, kpisHermes: local } };
     await onUpdate(updated);
-    show("✓ KPIs guardados", "ok");
     setEditing(false);
+    show("✓ KPIs guardados", "ok");
   }
 
-  function calcDelta(hist, act) {
-    const h = parseFloat(hist) || 0;
-    const a = parseFloat(act) || 0;
-    if (!h || !a) return null;
-    const delta = ((a - h) / h * 100).toFixed(1);
-    return { delta, up: a > h };
+  function addKpi(kpi) {
+    setLocal(p => [...p, kpi]);
+    setShowBuilder(false);
+    setEditing(true);
+    show("KPI agregado — guarda para confirmar", "ok");
   }
 
-  // Calcular actual desde datos de metricas diarias
-  function getActualFromRecords(kpiId) {
-    const records = client.records || [];
-    const capturaData = client.capturaConfig?.lastData;
-
-    // APOLLO KPIs
-    if (kpiId === "reg_fb") {
-      // Tomar el TOTAL de la columna resultados/formularios de métricas diarias
-      const totalMetricas = records.reduce((a, r) => a + (parseFloat(r.resultados) || parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-      if (totalMetricas > 0) return String(Math.round(totalMetricas));
-      // Fallback: capturaData
-      if (capturaData?.total_form > 0) return String(capturaData.total_form);
-      return "";
-    }
-    if (kpiId === "reg_wp") {
-      if (capturaData?.total_wp > 0) return String(capturaData.total_wp);
-      const total = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-      return total > 0 ? String(Math.round(total)) : "";
-    }
-    if (kpiId === "pct_cap") {
-      if (capturaData?.total_wp > 0 && capturaData?.total_form > 0)
-        return (capturaData.total_wp / capturaData.total_form * 100).toFixed(1);
-      if (!records.length) return "";
-      const fb = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-      const wp = records.reduce((a, r) => a + (parseFloat(r.personas_wp) || 0), 0);
-      return fb > 0 && wp > 0 ? (wp / fb * 100).toFixed(1) : "";
-    }
-    if (kpiId === "asistentes") {
-      // 10% de registros en Facebook (no de WP)
-      const fbTotal = records.reduce((a, r) => a + (parseFloat(r.resultados) || parseFloat(r.formularios) || parseFloat(r.clientesPotenciales) || 0), 0);
-      if (fbTotal > 0) return String(Math.round(fbTotal * 0.10));
-      if (capturaData?.total_form > 0) return String(Math.round(capturaData.total_form * 0.10));
-      return "";
-    }
-    // oportunidades: manual
-    if (kpiId === "oportunidades") return "";
-    if (kpiId === "ventas") {
-      if (!records.length) return "";
-      const total = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
-      return total > 0 ? String(Math.round(total)) : "";
-    }
-    if (kpiId === "cpa") {
-      if (!records.length) return "";
-      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
-      const ventas = records.reduce((a, r) => a + (parseFloat(r.ventas) || 0), 0);
-      // Para APOLLO: CPA = inversión / ventas
-      if (inv > 0 && ventas > 0) return (inv / ventas).toFixed(2);
-      // Si no hay ventas, usar CPA por registro FB
-      const regs = records.reduce((a, r) => a + (parseFloat(r.formularios) || parseFloat(r.resultados) || 0), 0);
-      return inv > 0 && regs > 0 ? (inv / regs).toFixed(2) : "";
-    }
-    if (kpiId === "roas") {
-      if (!records.length) return "";
-      const inv = records.reduce((a, r) => a + (parseFloat(r.inversion) || 0), 0);
-      const ing = records.reduce((a, r) => a + (parseFloat(r.ingreso) || 0), 0);
-      return inv > 0 && ing > 0 ? (ing / inv).toFixed(2) : "";
-    }
-    // HERMES KPIs
-    if (kpiId === "calidad") {
-      const piezas = hermes.biblioteca || [];
-      if (!piezas.length) return "";
-      const avgIV = piezas.reduce((a, p) => a + calcIV(p, piezas), 0) / piezas.length;
-      return avgIV.toFixed(0);
-    }
-    return "";
+  // Calcular el valor actual para cada KPI
+  function getActual(kpi) {
+    const calc = calcularKPI(kpi, records, capturaData);
+    if (calc !== null) return calc;
+    if (kpi.actual) return parseFloat(kpi.actual) || kpi.actual;
+    return null;
   }
 
   const displayKpis = editing ? local : kpis;
 
-  // KPIs que se calculan automáticamente — siempre usan el valor calculado
-  const AUTO_KPIS = ["reg_fb", "reg_wp", "pct_cap", "asistentes", "cpa", "roas", "calidad"];
-
-  function getDisplayActual(kpi) {
-    const autoVal = getActualFromRecords(kpi.id);
-    if (AUTO_KPIS.includes(kpi.id) && autoVal) return autoVal; // siempre auto
-    if (autoVal) return autoVal; // si hay auto, usarlo
-    return kpi.actual || ""; // fallback al guardado manual
-  }
-
   return (
     <>
       {toastEl}
+      {showBuilder && !readOnly && <KpiBuilder onSave={addKpi} onCancel={() => setShowBuilder(false)} />}
       <div className="card">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-          <div className="card-title" style={{ margin: 0 }}>KPIs — Antes vs. Ahora</div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1rem" }}>
+          <div className="card-title" style={{ margin:0 }}>KPIs — Antes vs. Ahora</div>
           {!readOnly && (
-            <div style={{ display: "flex", gap: 8 }}>
-              {!editing && <button className="btn btn-ghost btn-sm" onClick={() => {
-                const nuevo = { id: "kpi_" + Date.now(), nombre: "Nuevo KPI", unidad: "", historico: "", actual: "", meta: "" };
-                setLocal(p => [...p, nuevo]);
-                setEditing(true);
-              }}>+ KPI</button>}
+            <div style={{ display:"flex", gap:6 }}>
+              {!editing && !showBuilder && <button className="btn btn-ghost btn-sm" onClick={() => setShowBuilder(true)}>+ KPI</button>}
               {editing
                 ? <><button className="btn btn-green btn-sm" onClick={save}>💾 Guardar</button><button className="btn btn-ghost btn-sm" onClick={() => { setLocal(kpis); setEditing(false); }}>Cancelar</button></>
                 : <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>✏️ Editar</button>}
             </div>
           )}
         </div>
-        <table className="kpi-compare-table" style={{ width: "100%" }}>
-          <thead>
-            <tr>
-              <th>KPI</th>
-              <th style={{ color: "var(--red)" }}>Antes</th>
-              <th style={{ color: "var(--accent2)" }}>Ahora</th>
-              <th>Meta</th>
-              <th>Cambio</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayKpis.map(kpi => {
-              const actual = getDisplayActual(kpi);
-              const delta = calcDelta(kpi.historico, actual);
-              return (
-                <tr key={kpi.id}>
-                  <td>
-                    {editing ? (
-                      <div>
-                        <input type="text" value={kpi.nombre} onChange={e => upd(kpi.id, "nombre", e.target.value)} style={{ marginBottom: 4, fontWeight: 600 }} placeholder="Nombre del KPI" />
-                        <input type="text" value={kpi.unidad} onChange={e => upd(kpi.id, "unidad", e.target.value)} style={{ fontSize: 11 }} placeholder="Unidad (%, $, ventas...)" />
-                      </div>
-                    ) : (
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{kpi.nombre}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{kpi.hint || kpi.unidad}</div>
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    {editing
-                      ? <input type="text" value={kpi.historico} onChange={e => upd(kpi.id, "historico", e.target.value)} style={{ width: 80 }} placeholder="0" />
-                      : <span style={{ color: "var(--red)" }}>{kpi.historico || "—"}</span>}
-                  </td>
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    <span style={{ color: "var(--accent2)", fontWeight: 600 }}>{actual || "—"}</span>
-                    {AUTO_KPIS.includes(kpi.id) && actual && <div style={{ fontSize: 10, color: "var(--green)", fontWeight: 600 }}>auto ✓</div>}
-                    {kpi.metrica === "manual" && !actual && <div style={{ fontSize: 10, color: "var(--accent2)", fontWeight: 600 }}>✏️ manual</div>}
-                  </td>
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    {editing
-                      ? <input type="text" value={kpi.meta} onChange={e => upd(kpi.id, "meta", e.target.value)} style={{ width: 80 }} placeholder="meta" />
-                      : kpi.meta || "—"}
-                  </td>
-                  <td>
-                    {editing && <button className="btn btn-danger btn-sm" style={{ padding: "2px 8px" }} onClick={() => setLocal(p => p.filter(k => k.id !== kpi.id))}>×</button>}
-                    {!editing && (delta
-                      ? <span className={delta.up ? "delta-up" : "delta-down"}>{delta.up ? "▲" : "▼"} {Math.abs(delta.delta)}%</span>
-                      : <span className="delta-neutral">—</span>)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="scroll-x">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>KPI</th>
+                <th style={{ color:"var(--red)" }}>ANTES</th>
+                <th style={{ color:"var(--accent2)" }}>AHORA</th>
+                <th>META</th>
+                <th>CAMBIO</th>
+                {editing && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {displayKpis.map(kpi => {
+                const actualVal = getActual(kpi);
+                const actualStr = actualVal !== null ? formatKpiVal(actualVal, kpi.unidad) : (editing && kpi.tipo==="manual" ? "" : "—");
+                const historico = kpi.historico ? formatKpiVal(parseFloat(kpi.historico), kpi.unidad) : "—";
+                const isAuto = kpi.tipo !== "manual" && actualVal !== null;
+                const isManual = kpi.tipo === "manual";
+
+                // Calcular cambio
+                let cambio = null;
+                if (kpi.historico && actualVal !== null) {
+                  const h = parseFloat(kpi.historico);
+                  const a = typeof actualVal === "number" ? actualVal : parseFloat(actualVal);
+                  if (h > 0 && !isNaN(a)) cambio = ((a - h) / h * 100).toFixed(1);
+                }
+
+                return (
+                  <tr key={kpi.id}>
+                    <td>
+                      {editing ? (
+                        <div>
+                          <input type="text" value={kpi.nombre} onChange={e => upd(kpi.id,"nombre",e.target.value)} style={{ fontWeight:600, marginBottom:3 }} />
+                          <input type="text" value={kpi.unidad} onChange={e => upd(kpi.id,"unidad",e.target.value)} style={{ fontSize:11 }} placeholder="unidad" />
+                        </div>
+                      ) : (
+                        <div>
+                          <div style={{ fontWeight:600 }}>{kpi.nombre}</div>
+                          <div style={{ fontSize:11, color:"var(--muted)" }}>{kpi.hint || kpi.unidad}</div>
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ fontFamily:"var(--mono)" }}>
+                      {editing
+                        ? <input type="text" value={kpi.historico||""} onChange={e => upd(kpi.id,"historico",e.target.value)} style={{ width:80 }} placeholder="0" />
+                        : <span style={{ color:"var(--red)" }}>{historico}</span>}
+                    </td>
+                    <td style={{ fontFamily:"var(--mono)" }}>
+                      {isManual && editing
+                        ? <input type="text" value={kpi.actual||""} onChange={e => upd(kpi.id,"actual",e.target.value)} style={{ width:80 }} placeholder="—" />
+                        : (
+                          <div>
+                            <span style={{ color:"var(--accent2)", fontWeight:600 }}>{actualStr}</span>
+                            {isAuto && <div style={{ fontSize:10, color:"var(--green)" }}>auto ✓</div>}
+                            {isManual && !actualVal && <div style={{ fontSize:10, color:"var(--accent2)" }}>✏️ manual</div>}
+                          </div>
+                        )}
+                    </td>
+                    <td style={{ fontFamily:"var(--mono)" }}>
+                      {editing
+                        ? <input type="text" value={kpi.meta||""} onChange={e => upd(kpi.id,"meta",e.target.value)} style={{ width:80 }} placeholder="—" />
+                        : kpi.meta ? formatKpiVal(parseFloat(kpi.meta), kpi.unidad) : "—"}
+                    </td>
+                    <td>
+                      {cambio !== null
+                        ? <span className={parseFloat(cambio) >= 0 ? "delta-up" : "delta-down"}>
+                            {parseFloat(cambio) >= 0 ? "▲" : "▼"} {Math.abs(cambio)}%
+                          </span>
+                        : <span className="delta-neutral">—</span>}
+                    </td>
+                    {editing && <td><button className="btn btn-danger btn-sm" style={{ padding:"2px 8px" }} onClick={() => setLocal(p => p.filter(k => k.id !== kpi.id))}>×</button></td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </>
   );
 }
+
 
 // ─── EMBUDO HERMES - forma real ───────────────────────────────────────────────
 function HermesFunnel({ client, period, from, to }) {
