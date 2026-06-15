@@ -4,5 +4,8 @@
       "path": "/api/cron-send-reports",
       "schedule": "0 13 * * *"
     }
+  ],
+  "rewrites": [
+    { "source": "/r/:slug", "destination": "/api/r/[slug]" }
   ]
 }
