@@ -3877,7 +3877,12 @@ function ApolloMetricasPanel({ client, period, from, to }) {
 
 // Tabla de métricas diarias para el cliente — componente separado para evitar IIFEs
 function ClientMetricasTable({ client, period, from, to, onUpdate }) {
-  const { cols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
+  const isApollo = client.producto?.startsWith("APOLLO");
+  const { cols: rawCols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
+  // Para APOLLO, siempre incluir columnas WP aunque no estén en las preferencias guardadas
+  const cols = isApollo
+    ? [...new Set([...rawCols, "personas_wp", "costo_wp", "pct_captura_wp"])]
+    : rawCols;
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
   const vis = ALL_COLUMNS.filter(c => cols.includes(c.key));
   return (
@@ -6860,25 +6865,23 @@ function MiniLineChart({ titulo, rows, metricas }) {
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
 // ─── GRÁFICA CPL TIEMPO REAL (estilo trading con consulta a Facebook) ─────────
 // ─── GRÁFICA CPL TIEMPO REAL — con persistencia en Supabase ──────────────────
+// ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 function CplTradingChart({ client, onUpdate }) {
   const { token, adAccountId } = client.fbConfig || {};
 
-  // ── Estado ────────────────────────────────────────────────────────────────
-  const [intervalo, setIntervalo] = useState(30);
-  const [rango, setRango]         = useState("hoy");
+  const [rango, setRango]         = useState("24h");
   const [loading, setLoading]     = useState(false);
   const [hovIdx, setHovIdx]       = useState(null);
   const [puntosHoy, setPuntosHoy] = useState(() => {
-    // Cargar puntos del día de hoy desde el cliente al montar
     const hoy = new Date().toISOString().slice(0,10);
-    return (client.cplRtData?.[hoy] || []);
+    return client.cplRtData?.[hoy] || [];
   });
   const fetchCount = useRef(0);
-  const lastCpl    = useRef(null);
+  const INTERVALO  = 30; // segundos fijo en 30s
 
-  // ── Datos históricos por día ───────────────────────────────────────────────
+  // ── Historial diario desde registros ──────────────────────────────────────
   const histDiario = [
-    ...(client.misiones || []).flatMap(m => (m.records||[]).map(r => {
+    ...(client.misiones||[]).flatMap(m => (m.records||[]).map(r => {
       const inv = parseFloat(r.inversion)||0, res = parseFloat(r.resultados||r.formularios)||0;
       return res>0 ? { fecha: r.date, cpl: inv/res, tipo:"mision", mision:m.nombre } : null;
     }).filter(Boolean)),
@@ -6889,29 +6892,25 @@ function CplTradingChart({ client, onUpdate }) {
       }).filter(Boolean)
   ].sort((a,b) => a.fecha.localeCompare(b.fecha));
 
-  // ── Guardar punto en Supabase (dentro del cliente) ────────────────────────
+  // ── Guardar punto en Supabase ─────────────────────────────────────────────
   async function guardarPunto(punto) {
     if (!onUpdate) return;
     const hoy = new Date().toISOString().slice(0,10);
-    const cplRtData = { ...(client.cplRtData || {}) };
-    const puntosDelDia = [...(cplRtData[hoy] || []), punto];
-    // Máx 1440 puntos por día (1 por minuto x 24h)
-    cplRtData[hoy] = puntosDelDia.slice(-1440);
-    // Limpiar días con más de 90 días de antigüedad
-    const limite = new Date(); limite.setDate(limite.getDate() - 90);
-    const limiteStr = limite.toISOString().slice(0,10);
-    Object.keys(cplRtData).forEach(k => { if (k < limiteStr) delete cplRtData[k]; });
-    // Guardar sin refrescar el componente completo — update silencioso
+    const cplRtData = { ...(client.cplRtData||{}) };
+    const puntosDelDia = [...(cplRtData[hoy]||[]), punto].slice(-1440);
+    cplRtData[hoy] = puntosDelDia;
+    const limite = new Date(); limite.setDate(limite.getDate()-90);
+    Object.keys(cplRtData).forEach(k => { if (k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
     try {
       await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-        method: "PATCH", headers: { ...H, Prefer: "return=minimal" },
+        method:"PATCH", headers:{ ...H, Prefer:"return=minimal" },
         body: JSON.stringify({ cplRtData })
       });
-      client.cplRtData = cplRtData; // actualizar referencia local
+      client.cplRtData = cplRtData;
     } catch {}
   }
 
-  // ── Fetch de CPL actual desde Facebook ────────────────────────────────────
+  // ── Fetch de Facebook ─────────────────────────────────────────────────────
   async function fetchCplActual() {
     if (!token || !adAccountId) return;
     setLoading(true);
@@ -6922,26 +6921,15 @@ function CplTradingChart({ client, onUpdate }) {
       const json = await res.json();
       if (!json.error && json.data?.length) {
         const d = json.data[0];
-        const inv = parseFloat(d.spend) || 0;
-        const leadsAction = (d.actions||[]).find(a => a.action_type==="lead" || a.action_type==="onsite_conversion.lead_grouped");
-        const nLeads = leadsAction ? parseFloat(leadsAction.value) : 0;
-        if (inv > 0 && nLeads > 0) {
-          const cpl = inv / nLeads;
+        const inv = parseFloat(d.spend)||0;
+        const la  = (d.actions||[]).find(a => a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+        const nl  = la ? parseFloat(la.value) : 0;
+        if (inv>0 && nl>0) {
+          const cpl   = inv/nl;
           const ahora = Date.now();
-          const punto = {
-            ts: ahora,
-            hora: new Date().toLocaleTimeString("es-EC", { hour:"2-digit", minute:"2-digit", second:"2-digit" }),
-            cpl: parseFloat(cpl.toFixed(4)),
-            inv: parseFloat(inv.toFixed(2)),
-            leads: nLeads
-          };
-          setPuntosHoy(prev => {
-            const nuevo = [...prev, punto].slice(-288); // max 288 puntos (cada 5min x 24h)
-            return nuevo;
-          });
-          lastCpl.current = cpl;
+          const punto = { ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
+          setPuntosHoy(prev => [...prev, punto].slice(-2880));
           fetchCount.current++;
-          // Guardar cada 5 fetchs para no saturar Supabase
           if (fetchCount.current % 5 === 0) guardarPunto(punto);
         }
       }
@@ -6949,191 +6937,219 @@ function CplTradingChart({ client, onUpdate }) {
     setLoading(false);
   }
 
-  // ── Auto-fetch al montar y cada N segundos ─────────────────────────────────
   useEffect(() => {
     if (!token || !adAccountId) return;
     fetchCplActual();
-    const timer = setInterval(fetchCplActual, intervalo * 1000);
-    return () => clearInterval(timer);
-  }, [intervalo, token, adAccountId]);
+    const t = setInterval(fetchCplActual, INTERVALO*1000);
+    return () => clearInterval(t);
+  }, [token, adAccountId]);
 
-  // ── Datos a mostrar según rango ────────────────────────────────────────────
+  // ── Construir datos según rango ───────────────────────────────────────────
   const hoy = new Date().toISOString().slice(0,10);
-  let datosVista = [];
-  let modoRT = false;
-  let labelEjeX = "hora";
+  let datosVista = [], modoRT = false;
 
-  if (rango === "hoy") {
-    // Modo tiempo real: puntos del día actual
-    const puntosGuardados = client.cplRtData?.[hoy] || [];
-    const todosPuntosHoy = [...puntosGuardados, ...puntosHoy]
-      .filter((p,i,a) => a.findIndex(x => x.ts === p.ts) === i) // deduplicar
-      .sort((a,b) => a.ts - b.ts);
-    datosVista = todosPuntosHoy.map(p => ({ ...p, fecha: p.hora || new Date(p.ts).toLocaleTimeString("es-EC", {hour:"2-digit",minute:"2-digit"}) }));
-    modoRT = true;
-  } else if (rango === "ayer") {
+  if (rango === "24h") {
+    // Últimas 24 horas: puntos RT del día actual + ayer si hay
+    const tsCorte = Date.now() - 24*60*60*1000;
     const ayer = new Date(); ayer.setDate(ayer.getDate()-1);
     const ayerStr = ayer.toISOString().slice(0,10);
-    datosVista = (client.cplRtData?.[ayerStr] || [])
-      .map(p => ({ ...p, fecha: p.hora || new Date(p.ts).toLocaleTimeString("es-EC", {hour:"2-digit",minute:"2-digit"}) }));
-  } else if (rango === "7d") {
+    const ptsAyer  = (client.cplRtData?.[ayerStr]||[]).filter(p => p.ts >= tsCorte);
+    const ptsHoy   = [...(client.cplRtData?.[hoy]||[]), ...puntosHoy]
+      .filter((p,i,a) => a.findIndex(x=>x.ts===p.ts)===i);
+    datosVista = [...ptsAyer, ...ptsHoy]
+      .sort((a,b)=>a.ts-b.ts)
+      .map(p => ({ ...p, fecha: new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}) }));
+    modoRT = true;
+  } else if (rango === "1W") {
     datosVista = histDiario.slice(-7).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-    labelEjeX = "fecha";
-  } else if (rango === "30d") {
+  } else if (rango === "1M") {
     datosVista = histDiario.slice(-30).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-    labelEjeX = "fecha";
-  } else if (rango === "mision") {
+  } else if (rango === "1Y") {
+    datosVista = histDiario.slice(-365).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
+  } else if (rango === "Todo") {
     datosVista = histDiario.map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-    labelEjeX = "fecha";
   }
 
-  if (!datosVista.length && !token) return (
-    <div className="card" style={{ marginBottom:"1rem" }}>
-      <div className="card-title">📈 CPL en tiempo real</div>
-      <div style={{ fontSize:12, color:"var(--muted)", padding:"0.5rem" }}>
-        Configura Facebook Ads en la tab 📘 Facebook para activar el monitoreo en tiempo real.
-      </div>
-    </div>
-  );
+  const n     = datosVista.length;
+  const vals  = datosVista.map(d=>d.cpl).filter(v=>v>0);
+  const hasData = vals.length > 0;
 
-  if (!datosVista.length) return (
-    <div className="card" style={{ marginBottom:"1rem" }}>
-      <div className="card-title">📈 CPL en tiempo real</div>
-      <div style={{ fontSize:12, color:"var(--muted)", padding:"0.5rem" }}>
-        {modoRT ? "Esperando primeros datos de hoy..." : "Sin datos para el rango seleccionado."}
-      </div>
-    </div>
-  );
+  // ── Métricas de resumen ────────────────────────────────────────────────────
+  const ultimo   = hasData ? datosVista[n-1] : null;
+  const primero  = hasData ? datosVista[0]   : null;
+  const minCpl   = hasData ? Math.min(...vals) : 0;
+  const maxCpl   = hasData ? Math.max(...vals) : 0;
+  const cambio   = hasData && primero ? ((ultimo.cpl - primero.cpl) / primero.cpl * 100) : 0;
+  const tend     = cambio < 0 ? "baja" : cambio > 0 ? "sube" : "igual";
+  const color    = tend === "baja" ? "#10B981" : tend === "sube" ? "#EF4444" : "#FFDE59";
 
-  // ── Render de la gráfica ───────────────────────────────────────────────────
-  const W = 700, H = 200;
-  const PAD = { top:28, right:24, bottom:34, left:56 };
-  const cW = W - PAD.left - PAD.right;
-  const cH = H - PAD.top - PAD.bottom;
-  const n  = datosVista.length;
+  // ── Dimensiones SVG ───────────────────────────────────────────────────────
+  const W    = 700, H = 240;
+  const PAD  = { top:20, right:16, bottom:60, left:60 };
+  const cW   = W-PAD.left-PAD.right;
+  const cH   = H-PAD.top-PAD.bottom;
 
-  const vals = datosVista.map(d => d.cpl).filter(v => v > 0);
-  if (!vals.length) return null;
-  const maxV = Math.max(...vals) * 1.15;
-  const minV = Math.max(0, Math.min(...vals) * 0.85);
+  const maxV = hasData ? maxCpl * 1.08 : 1;
+  const minV = hasData ? Math.max(0, minCpl * 0.92) : 0;
   const rngV = maxV - minV || 1;
 
   function xP(i) { return PAD.left + (i / Math.max(n-1,1)) * cW; }
-  function yP(v) { return PAD.top + cH - ((v - minV) / rngV) * cH; }
+  function yP(v) { return PAD.top + cH - ((v-minV)/rngV)*cH; }
 
-  const ultimo    = datosVista[n-1];
-  const penultimo = n > 1 ? datosVista[n-2] : null;
-  const tend = penultimo ? (ultimo.cpl < penultimo.cpl ? "baja" : ultimo.cpl > penultimo.cpl ? "sube" : "igual") : "igual";
-  const color = tend === "baja" ? "#10B981" : tend === "sube" ? "#EF4444" : "#FFDE59";
+  const path = hasData ? datosVista.map((d,i) => (i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ") : "";
+  const area = hasData ? `M ${xP(0)} ${PAD.top+cH} `+datosVista.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z` : "";
 
-  const path = datosVista.map((d,i) => (i===0?"M ":"L ") + xP(i)+" "+yP(d.cpl)).join(" ");
-  const area = `M ${xP(0)} ${PAD.top+cH} ` + datosVista.map((d,i) => `L ${xP(i)} ${yP(d.cpl)}`).join(" ") + ` L ${xP(n-1)} ${PAD.top+cH} Z`;
+  const yTicks = hasData ? [0,0.2,0.4,0.6,0.8,1].map(t => minV+rngV*t) : [];
+  const xStep  = hasData ? Math.max(1, Math.floor(n/7)) : 1;
+  const xLabels = hasData ? datosVista.filter((_,i)=>i%xStep===0||i===n-1) : [];
 
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => minV + rngV*t);
-  const xStep  = Math.max(1, Math.floor(n/8));
-  const xLabels = datosVista.filter((_,i) => i%xStep===0 || i===n-1);
+  // Mini sparkline para el resumen inferior (historial completo)
+  const sparkDatos = histDiario.slice(-60);
+  const sparkN = sparkDatos.length;
+  const sparkVals = sparkDatos.map(d=>d.cpl);
+  const sparkMax = sparkVals.length ? Math.max(...sparkVals) : 1;
+  const sparkMin = Math.max(0, sparkVals.length ? Math.min(...sparkVals)*0.9 : 0);
+  const sparkRng = sparkMax - sparkMin || 1;
+  function sxP(i) { return (i/(Math.max(sparkN-1,1)))*W; }
+  function syP(v) { return 30 - ((v-sparkMin)/sparkRng)*28; }
+  const sparkPath = sparkDatos.map((d,i)=>(i===0?"M ":"L ")+sxP(i)+" "+syP(d.cpl)).join(" ");
+
+  const RANGOS = ["24h","1W","1M","1Y","Todo"];
 
   return (
-    <div className="card" style={{ marginBottom:"1rem" }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <div className="card" style={{ marginBottom:"1rem", padding:"1.25rem" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
         <div>
-          <div className="card-title" style={{ margin:0 }}>
-            📈 Costo por Lead — Fluctuación
-            {loading && <span style={{ marginLeft:6, fontSize:10, color:"var(--muted)" }}>⟳</span>}
-            {modoRT && puntosHoy.length > 0 && <span style={{ marginLeft:8, fontSize:10, background:"rgba(16,185,129,.15)", color:"var(--green)", padding:"2px 8px", borderRadius:10 }}>● EN VIVO</span>}
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ fontWeight:700, fontSize:16 }}>Costo por Lead (CPL)</div>
+            {modoRT && puntosHoy.length>0 && <span style={{ fontSize:10, background:"rgba(16,185,129,.15)", color:"var(--green)", padding:"2px 8px", borderRadius:10, fontWeight:600 }}>● EN VIVO</span>}
+            {loading && <span style={{ fontSize:10, color:"var(--muted)" }}>⟳</span>}
           </div>
-          <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>
-            {modoRT
-              ? `Cada ${intervalo<60?intervalo+"s":intervalo/60+"min"} · ${fetchCount.current} lecturas · ${new Date().toLocaleDateString("es-EC")}`
-              : `Historial · ${datosVista.length} puntos`}
-            {" · "}Último: <strong style={{ color, fontFamily:"var(--mono)" }}>${fmtNum(ultimo.cpl,2)}</strong>
-            {" "}<span style={{ color }}>{tend==="baja"?"▼":tend==="sube"?"▲":"→"}</span>
-          </div>
+          {hasData && (
+            <div style={{ display:"flex", alignItems:"baseline", gap:10, marginTop:4 }}>
+              <span style={{ fontSize:28, fontWeight:800, fontFamily:"var(--mono)", color }}>${fmtNum(ultimo.cpl,2)}</span>
+              <span style={{ fontSize:13, color, fontWeight:600 }}>
+                {tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})
+              </span>
+            </div>
+          )}
+          {hasData && (
+            <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>
+              Min: <span style={{ fontFamily:"var(--mono)", color:"var(--green)" }}>${fmtNum(minCpl,2)}</span>
+              {" · "}Max: <span style={{ fontFamily:"var(--mono)", color:"var(--red)" }}>${fmtNum(maxCpl,2)}</span>
+              {modoRT && <span> · {fetchCount.current} lecturas hoy</span>}
+            </div>
+          )}
         </div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
-          {token && adAccountId && <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={fetchCplActual} disabled={loading}>🔄</button>}
-          <div className="field" style={{ marginBottom:0 }}>
-            <label style={{ fontSize:10 }}>Refresco</label>
-            <select value={intervalo} onChange={e => setIntervalo(Number(e.target.value))} style={{ fontSize:11 }}>
-              <option value={30}>30s</option>
-              <option value={60}>1 min</option>
-              <option value={300}>5 min</option>
-              <option value={3600}>1h</option>
-              <option value={43200}>12h</option>
-              <option value={86400}>1 día</option>
-            </select>
-          </div>
-          <div className="field" style={{ marginBottom:0 }}>
-            <label style={{ fontSize:10 }}>Vista</label>
-            <select value={rango} onChange={e => setRango(e.target.value)} style={{ fontSize:11 }}>
-              <option value="hoy">Hoy (tiempo real)</option>
-              <option value="ayer">Ayer</option>
-              <option value="7d">7 días</option>
-              <option value="30d">30 días</option>
-              <option value="mision">Toda la misión</option>
-            </select>
-          </div>
+        {/* Filtros de rango — estilo CoinMarketCap */}
+        <div style={{ display:"flex", gap:4 }}>
+          {RANGOS.map(r => (
+            <button key={r} className="btn btn-ghost btn-sm"
+              style={{ fontSize:11, padding:"3px 10px", background: rango===r ? "var(--accent)" : "transparent",
+                color: rango===r ? "#fff" : "var(--muted)", borderRadius:6, fontWeight: rango===r ? 700 : 400 }}
+              onClick={() => setRango(r)}>{r}</button>
+          ))}
         </div>
       </div>
-      <div style={{ overflowX:"auto" }}>
-        <svg width={W} height={H} style={{ display:"block" }} onMouseLeave={() => setHovIdx(null)}>
-          <defs>
-            <linearGradient id={"cplG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor={color} stopOpacity="0.3"/>
-              <stop offset="100%" stopColor={color} stopOpacity="0.02"/>
-            </linearGradient>
-          </defs>
-          {yTicks.map((v,i) => (
-            <g key={i}>
-              <line x1={PAD.left} y1={yP(v)} x2={PAD.left+cW} y2={yP(v)} stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 3"/>
-              <text x={PAD.left-4} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
-            </g>
-          ))}
-          {xLabels.map((d,i) => (
-            <text key={i} x={xP(datosVista.indexOf(d))} y={H-4} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
-          ))}
-          <path d={area} fill={`url(#cplG_${client.id})`}/>
-          <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
-          {datosVista.map((d,i) => (
-            <circle key={i} cx={xP(i)} cy={yP(d.cpl)} r={i===n-1?4:2}
-              fill={i===n-1?color:"transparent"} stroke={i===n-1?"none":color} strokeWidth="0.5"/>
-          ))}
-          {modoRT && puntosHoy.length > 0 && (
-            <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="8" fill={color} fillOpacity="0.15"/>
-          )}
-          {datosVista.map((_,i) => (
-            <rect key={i} x={xP(i)-Math.max(cW/n/2,3)} y={PAD.top} width={Math.max(cW/n,6)} height={cH}
-              fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={() => setHovIdx(i)}/>
-          ))}
-          {hovIdx !== null && hovIdx < datosVista.length && (
-            <g>
-              {(() => {
-                const d = datosVista[hovIdx];
-                const tx = Math.min(xP(hovIdx)+8, W-150);
-                const ty = Math.max(yP(d.cpl)-52, PAD.top);
-                const h = d.leads ? 56 : 40;
-                return (<>
-                  <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 2"/>
-                  <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="5" fill={color} stroke="var(--bg)" strokeWidth="2"/>
-                  <rect x={tx} y={ty} width={140} height={h} rx="6" fill="var(--surface2)" stroke={color} strokeWidth="0.5"/>
-                  <text x={tx+8} y={ty+14} fontSize="10" fill="var(--muted)">{d.fecha}</text>
-                  <text x={tx+8} y={ty+28} fontSize="13" fontWeight="700" fill={color} fontFamily="var(--mono)">${fmtNum(d.cpl,2)}/lead</text>
-                  {d.leads && <text x={tx+8} y={ty+42} fontSize="9" fill="var(--muted)">{d.leads} leads · ${fmtNum(d.inv||0,2)} gastado</text>}
-                  {d.mision && <text x={tx+8} y={ty+42} fontSize="9" fill="var(--muted)">{d.mision}</text>}
-                </>);
-              })()}
-            </g>
-          )}
-          <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
-        </svg>
-      </div>
-      {/* Info de datos guardados */}
-      {client.cplRtData && (
-        <div style={{ fontSize:10, color:"var(--muted)", marginTop:6, display:"flex", gap:12 }}>
-          <span>📊 {Object.keys(client.cplRtData).length} días con datos guardados</span>
-          <span>📍 {Object.values(client.cplRtData).reduce((a,v) => a+v.length, 0)} puntos totales</span>
+
+      {/* Gráfica principal */}
+      {!hasData ? (
+        <div style={{ height:200, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--muted)", fontSize:12 }}>
+          {token && adAccountId ? "Esperando primeros datos..." : "Configura Facebook Ads para activar el monitoreo"}
+        </div>
+      ) : (
+        <div style={{ overflowX:"auto" }}>
+          <svg width={W} height={H} style={{ display:"block" }} onMouseLeave={() => setHovIdx(null)}>
+            <defs>
+              <linearGradient id={"cplG2_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
+                <stop offset="85%" stopColor={color} stopOpacity="0.02"/>
+              </linearGradient>
+            </defs>
+            {/* Grid horizontal */}
+            {yTicks.map((v,i) => (
+              <g key={i}>
+                <line x1={PAD.left} y1={yP(v)} x2={PAD.left+cW} y2={yP(v)} stroke="rgba(255,255,255,.05)" strokeWidth="1"/>
+                <text x={PAD.left-6} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
+              </g>
+            ))}
+            {/* Labels X */}
+            {xLabels.map((d,i) => (
+              <text key={i} x={xP(datosVista.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
+            ))}
+            {/* Área y línea */}
+            <path d={area} fill={`url(#cplG2_${client.id})`}/>
+            <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
+            {/* Punto actual pulsante */}
+            {modoRT && puntosHoy.length>0 && (
+              <>
+                <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="10" fill={color} fillOpacity="0.1"/>
+                <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="4" fill={color}/>
+              </>
+            )}
+            {/* Línea de precio actual */}
+            <line x1={PAD.left} y1={yP(ultimo.cpl)} x2={PAD.left+cW} y2={yP(ultimo.cpl)}
+              stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"/>
+            <rect x={PAD.left+cW+2} y={yP(ultimo.cpl)-8} width={52} height={16} rx="3" fill={color}/>
+            <text x={PAD.left+cW+28} y={yP(ultimo.cpl)+4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+            {/* Hover */}
+            {datosVista.map((_,i) => (
+              <rect key={i} x={xP(i)-Math.max(cW/n/2,3)} y={PAD.top} width={Math.max(cW/n,6)} height={cH}
+                fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={() => setHovIdx(i)}/>
+            ))}
+            {hovIdx !== null && hovIdx < n && (
+              <g>
+                {(() => {
+                  const d = datosVista[hovIdx];
+                  const tx = hovIdx < n*0.7 ? xP(hovIdx)+10 : xP(hovIdx)-155;
+                  const ty = Math.max(yP(d.cpl)-60, PAD.top);
+                  return (<>
+                    <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="0.8" strokeDasharray="3 2"/>
+                    <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="4" fill={color} stroke="var(--bg)" strokeWidth="2"/>
+                    <rect x={tx} y={ty} width={145} height={d.leads?58:42} rx="8" fill="var(--surface2)" stroke={color} strokeWidth="0.5"/>
+                    <text x={tx+10} y={ty+15} fontSize="10" fill="var(--muted)">{d.fecha}</text>
+                    <text x={tx+10} y={ty+31} fontSize="14" fontWeight="800" fill={color} fontFamily="var(--mono)">${fmtNum(d.cpl,2)}/lead</text>
+                    {d.leads && <text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{Math.round(d.leads)} leads · ${fmtNum(d.inv||0,2)}</text>}
+                    {d.mision && <text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{d.mision}</text>}
+                  </>);
+                })()}
+              </g>
+            )}
+            {/* Eje X */}
+            <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
+          </svg>
         </div>
       )}
+
+      {/* Sparkline histórico inferior — estilo CoinMarketCap */}
+      {sparkDatos.length > 5 && (
+        <div style={{ marginTop:8, borderTop:"1px solid var(--border)", paddingTop:8 }}>
+          <div style={{ fontSize:9, color:"var(--muted)", marginBottom:4 }}>Historial CPL — últimos {sparkN} días</div>
+          <svg width={W} height={34} style={{ display:"block", opacity:.6 }}>
+            <defs>
+              <linearGradient id={"sparkG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#4d9fff" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#4d9fff" stopOpacity="0.02"/>
+              </linearGradient>
+            </defs>
+            <path d={sparkPath+` L ${sxP(sparkN-1)} 30 L ${sxP(0)} 30 Z`} fill={`url(#sparkG_${client.id})`}/>
+            <path d={sparkPath} fill="none" stroke="#4d9fff" strokeWidth="1"/>
+            {/* Indicador de posición actual */}
+            {rango !== "Todo" && sparkN > 0 && (() => {
+              const posActual = rango==="1W" ? sparkN-7 : rango==="1M" ? sparkN-30 : 0;
+              const x = sxP(Math.max(0,posActual));
+              return <rect x={x} y={0} width={sxP(sparkN-1)-x} height={30} fill="rgba(77,159,255,.08)"/>;
+            })()}
+          </svg>
+        </div>
+      )}
+
+      {/* Footer info */}
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:6, fontSize:10, color:"var(--muted)" }}>
+        <span>{client.cplRtData ? `${Object.keys(client.cplRtData).length} días · ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos guardados` : "Sin datos históricos RT aún"}</span>
+        {token && adAccountId && <button className="btn btn-ghost btn-sm" style={{ fontSize:10, padding:"1px 8px" }} onClick={fetchCplActual} disabled={loading}>🔄 Actualizar</button>}
+      </div>
     </div>
   );
 }
