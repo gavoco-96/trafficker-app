@@ -7758,20 +7758,30 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
       </div>
 
       {/* Toggle: Página intermedia */}
-      <div style={{background:"var(--surface2)", borderRadius:10, padding:"12px 16px", marginBottom:"0.75rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
+      <div style={{background:"var(--surface2)", borderRadius:10, padding:"12px 16px", marginBottom:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
         <div>
           <div style={{fontWeight:600, fontSize:13}}>🛡️ Página intermedia</div>
-          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Muestra una landing antes de redirigir. Útil para pixeles de retargeting. <span style={{color:"var(--amber)"}}>Puede reducir conversión directa (ej: WA → Facebook Ads).</span></div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Muestra una landing antes de redirigir. Actívala si usas píxeles de retargeting.</div>
         </div>
         <div onClick={()=>f("usar_landing",!form.usar_landing)} style={{cursor:"pointer", width:44, height:24, borderRadius:12, background:form.usar_landing?"var(--accent)":"var(--border)", position:"relative", transition:"background .2s", flexShrink:0}}>
           <div style={{position:"absolute", top:3, left:form.usar_landing?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s"}}/>
         </div>
       </div>
 
+      {/* Advertencia siempre visible */}
+      <div style={{background:"rgba(255,222,89,.06)", border:"1px solid rgba(255,222,89,.2)", borderRadius:"0 0 10px 10px", padding:"10px 16px", marginBottom:"0.75rem"}}>
+        <div style={{fontSize:11, color:"var(--muted)", lineHeight:1.6}}>
+          <span style={{color:"var(--amber)", fontWeight:600}}>¿Cuándo activarla?</span>{" "}
+          Úsala cuando tengas un <strong style={{color:"var(--text)"}}>píxel de Facebook o TikTok</strong> activo — la landing lo dispara antes de redirigir, lo que te permite hacer retargeting de todos los que hicieron clic.{" "}
+          <span style={{color:"var(--amber)"}}>⚠️ Agrega un paso extra antes de llegar a WhatsApp, lo que puede bajar ligeramente la conversión directa.</span>{" "}
+          Si el link es orgánico o no usas píxeles, <strong style={{color:"var(--text)"}}>déjala apagada</strong> para máxima conversión.
+        </div>
+      </div>
+
       {form.usar_landing && (
         <div style={{borderLeft:"2px solid var(--accent)", paddingLeft:12, marginBottom:"0.75rem"}}>
           <div className="form-row">
-            <div className="field"><label>Título</label><input type="text" value={form.landing_titulo} onChange={e=>f("landing_titulo",e.target.value)} /></div>
+            <div className="field"><label>Título de la landing</label><input type="text" value={form.landing_titulo} onChange={e=>f("landing_titulo",e.target.value)} /></div>
             <div className="field"><label>Descripción</label><input type="text" value={form.landing_descripcion} onChange={e=>f("landing_descripcion",e.target.value)} /></div>
           </div>
           <div className="form-row">
@@ -7781,6 +7791,11 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
           <div className="form-row">
             <div className="field"><label>Pixel Facebook ID</label><input type="text" value={form.pixel_fb} onChange={e=>f("pixel_fb",e.target.value)} placeholder="1234567890" /></div>
             <div className="field"><label>Pixel TikTok ID</label><input type="text" value={form.pixel_tiktok} onChange={e=>f("pixel_tiktok",e.target.value)} placeholder="ABCDEF123456" /></div>
+          </div>
+          {/* Preview branding */}
+          <div style={{marginTop:"0.75rem", background:"var(--bg)", borderRadius:10, padding:"10px 14px", border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11, color:"var(--muted)", marginBottom:6}}>Vista previa del pie de página en la landing:</div>
+            <div style={{fontSize:11, color:"var(--muted)", textAlign:"center", opacity:.7}}>📊 <strong style={{color:"var(--text)"}}>TRAFFICK PRO</strong> by Gavico</div>
           </div>
         </div>
       )}
