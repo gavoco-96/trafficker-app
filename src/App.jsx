@@ -7476,25 +7476,39 @@ function genSlug(len = 6) {
 // CRUD de links en Supabase tabla separada
 const LinksDB = {
   async getAll() {
-    const r = await fetch(`${SUPA_LINKS_URL}?select=*&order=created_at.desc`, { headers: HL });
-    return r.ok ? r.json() : [];
+    try {
+      const r = await fetch(`${SUPA_LINKS_URL}?select=*&order=created_at.desc`, { headers: HL });
+      if (!r.ok) { console.error("LinksDB.getAll error:", r.status, await r.text()); return []; }
+      return await r.json();
+    } catch(e) { console.error("LinksDB.getAll exception:", e); return []; }
   },
   async create(link) {
-    const r = await fetch(SUPA_LINKS_URL, {
-      method: "POST", headers: { ...HL, Prefer: "return=representation" },
-      body: JSON.stringify(link)
-    });
-    const d = await r.json();
-    return d[0] || null;
+    try {
+      const r = await fetch(SUPA_LINKS_URL, {
+        method: "POST", headers: { ...HL, Prefer: "return=representation" },
+        body: JSON.stringify(link)
+      });
+      const txt = await r.text();
+      if (!r.ok) { console.error("LinksDB.create error:", r.status, txt); return { ok: false, error: `HTTP ${r.status}: ${txt}` }; }
+      const d = JSON.parse(txt);
+      return { ok: true, data: d[0] || null };
+    } catch(e) { console.error("LinksDB.create exception:", e); return { ok: false, error: e.message }; }
   },
   async update(id, data) {
-    await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, {
-      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
-      body: JSON.stringify(data)
-    });
+    try {
+      const r = await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, {
+        method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
+        body: JSON.stringify(data)
+      });
+      if (!r.ok) { const txt = await r.text(); console.error("LinksDB.update error:", r.status, txt); return { ok: false, error: txt }; }
+      return { ok: true };
+    } catch(e) { console.error("LinksDB.update exception:", e); return { ok: false, error: e.message }; }
   },
   async delete(id) {
-    await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, { method: "DELETE", headers: HL });
+    try {
+      const r = await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, { method: "DELETE", headers: HL });
+      return { ok: r.ok };
+    } catch(e) { return { ok: false, error: e.message }; }
   }
 };
 
@@ -7526,14 +7540,17 @@ function LinksPanel() {
 
   async function handleSave(linkData) {
     if (editLink) {
-      await LinksDB.update(editLink.id, linkData);
+      const res = await LinksDB.update(editLink.id, linkData);
+      if (!res.ok) return show("❌ Error al actualizar: " + (res.error || "desconocido"), "err");
       show("✓ Link actualizado", "ok");
     } else {
-      await LinksDB.create({ ...linkData, id: "lnk_" + Date.now(), created_at: new Date().toISOString(), total_clicks: 0, clicks: [], active: true });
+      const payload = { ...linkData, id: "lnk_" + Date.now(), created_at: new Date().toISOString(), total_clicks: 0, clicks: [], active: true };
+      const res = await LinksDB.create(payload);
+      if (!res.ok) return show("❌ Error al crear link: " + (res.error || "desconocido"), "err");
       show("✓ Link creado", "ok");
     }
     setShowForm(false); setEditLink(null);
-    cargar();
+    await cargar();
   }
 
   async function toggleActive(link) {
