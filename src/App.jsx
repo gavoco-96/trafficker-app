@@ -6019,6 +6019,213 @@ function extractSheetId(url) {
 }
 
 // RemarketingTable — componente separado para evitar useState ilegal en render
+
+// ─── MÓDULO CALIDAD DE LEAD ────────────────────────────────────────────────────
+function CalidadLeadPanel({ client, onUpdate, readOnly }) {
+  const sheetConfig  = client.capturaConfig || {};
+  const [loading, setLoading]   = useState(false);
+  const [data, setData]         = useState(client.calidadData || null);
+  const [nivelVista, setNivel]  = useState("anuncio");
+  const [sortKey, setSortKey]   = useState("score_prom");
+  const [sortDir, setSortDir]   = useState("desc");
+  const [filtro, setFiltro]     = useState("");
+  const { show, el: toastEl }   = useToast();
+
+  async function cargarCalidad() {
+    const sheetId = extractSheetId(sheetConfig.url || "");
+    const apiKey  = sheetConfig.apiKey || "";
+    if (!sheetId || !apiKey) return show("Configura el Google Sheet en la tab 📊 Captura WP primero", "err");
+    setLoading(true);
+    try {
+      const range = encodeURIComponent("__trafficker_calidad__!A1");
+      const url   = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`;
+      const res   = await fetch(url);
+      const json  = await res.json();
+      if (json.error) { show("Error: " + json.error.message, "err"); setLoading(false); return; }
+      const raw = json.values?.[0]?.[0];
+      if (!raw) { show("Sin datos. Ejecuta 'Análisis completo + Exportar' en el sheet.", "err"); setLoading(false); return; }
+      const parsed = JSON.parse(raw);
+      setData(parsed);
+      await onUpdate({ ...client, calidadData: parsed });
+      show("✓ " + parsed.total_respuestas + " respuestas cargadas · Score " + parsed.score_promedio + "%", "ok");
+    } catch(e) { show("Error: " + e.message, "err"); }
+    setLoading(false);
+  }
+
+  const scoreColor = (s) => s >= 70 ? "var(--green)" : s >= 40 ? "var(--amber)" : "var(--red)";
+  const scoreBg    = (s) => s >= 70 ? "rgba(16,185,129,.15)" : s >= 40 ? "rgba(255,222,89,.15)" : "rgba(239,68,68,.15)";
+
+  const porAnuncio = data?.por_anuncio || [];
+  const filtrados  = porAnuncio
+    .filter(i => !filtro || i.anuncio.toLowerCase().includes(filtro.toLowerCase()))
+    .sort((a,b) => sortDir==="desc" ? b[sortKey]-a[sortKey] : a[sortKey]-b[sortKey]);
+
+  function SortTh({ label, k }) {
+    const active = sortKey === k;
+    return (
+      <th style={{ cursor:"pointer", userSelect:"none", color: active ? "var(--accent2)" : "" }}
+        onClick={() => { if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else { setSortKey(k); setSortDir("desc"); } }}>
+        {label} {active ? (sortDir==="desc"?"▼":"▲") : "⇅"}
+      </th>
+    );
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        {/* Botón sync — solo admin */}
+        {!readOnly && (
+          <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:"1rem", gap:8 }}>
+            <button className="btn btn-primary btn-sm" disabled={loading} onClick={cargarCalidad}>
+              {loading ? "⏳ Cargando..." : "🔄 Sincronizar calidad"}
+            </button>
+          </div>
+        )}
+
+        {!data && (
+          <div className="card" style={{ background:"rgba(255,222,89,.05)", borderColor:"rgba(255,222,89,.2)" }}>
+            <div style={{ fontWeight:600, marginBottom:10 }}>⭐ Cómo configurar Calidad de Lead</div>
+            <div style={{ fontSize:13, color:"var(--muted)", lineHeight:1.8 }}>
+              <div>1. Conecta tu Google Form de encuesta al mismo Google Sheet</div>
+              <div>2. Renombra la hoja de respuestas a <strong>"Encuesta Calidad"</strong></div>
+              <div>3. Asegúrate que haya columnas: <code>telefono</code>, <code>email</code>, <code>score</code></div>
+              <div>4. Ejecuta <strong>🚀 Trafficker Pro → Análisis completo + Exportar</strong> en el sheet</div>
+              <div>5. Regresa aquí y presiona <strong>Sincronizar calidad</strong></div>
+            </div>
+          </div>
+        )}
+
+        {data && (
+          <div>
+            {/* Tarjetas resumen */}
+            <div className="grid4" style={{ marginBottom:"1rem" }}>
+              <div className="card" style={{ padding:"1rem", textAlign:"center" }}>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Respuestas totales</div>
+                <div style={{ fontSize:24, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>{data.total_respuestas}</div>
+              </div>
+              <div className="card" style={{ padding:"1rem", textAlign:"center", background:scoreBg(data.score_promedio) }}>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>Score promedio</div>
+                <div style={{ fontSize:24, fontFamily:"var(--mono)", fontWeight:700, color:scoreColor(data.score_promedio) }}>{data.score_promedio}%</div>
+              </div>
+              <div className="card" style={{ padding:"1rem" }}>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:6 }}>Distribución de calidad</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[["🟢 Alta", data.distribucion?.alta||0, "var(--green)"],
+                    ["🟡 Media", data.distribucion?.media||0, "var(--amber)"],
+                    ["🔴 Baja", data.distribucion?.baja||0, "var(--red)"]].map(([l,v,c])=>(
+                    <div key={l} style={{ textAlign:"center", flex:1 }}>
+                      <div style={{ fontSize:16, fontFamily:"var(--mono)", fontWeight:700, color:c }}>{v}</div>
+                      <div style={{ fontSize:9, color:"var(--muted)" }}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="card" style={{ padding:"1rem" }}>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:6 }}>% Alta calidad</div>
+                {(() => {
+                  const total = data.total_respuestas || 1;
+                  const alta  = data.distribucion?.alta || 0;
+                  const pct   = (alta/total*100).toFixed(1);
+                  return (
+                    <div>
+                      <div style={{ fontSize:22, fontFamily:"var(--mono)", fontWeight:700, color: scoreColor(parseFloat(pct)) }}>{pct}%</div>
+                      <div style={{ background:"var(--surface2)", borderRadius:20, height:6, marginTop:6, overflow:"hidden" }}>
+                        <div style={{ width:pct+"%", height:"100%", background:"var(--green)", borderRadius:20 }}/>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Tabla por anuncio */}
+            <div style={{ display:"flex", gap:8, marginBottom:"1rem", flexWrap:"wrap", alignItems:"center" }}>
+              <div style={{ fontWeight:600, fontSize:13 }}>Calidad por anuncio</div>
+              <div style={{ position:"relative", flex:1, maxWidth:280 }}>
+                <input type="text" value={filtro} onChange={e=>setFiltro(e.target.value)}
+                  placeholder="Buscar anuncio..." style={{ paddingLeft:28, fontSize:12 }} />
+                <span style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)" }}>🔍</span>
+              </div>
+              {filtro && <button className="btn btn-ghost btn-sm" onClick={()=>setFiltro("")}>×</button>}
+              <BotonesExportar
+                headers={["Anuncio","Respuestas","Score Prom.","Alta","Media","Baja","% Alta"]}
+                rows={filtrados.map(i=>[i.anuncio,i.total,i.score_prom+"%",i.alta,i.media,i.baja,i.pct_alta+"%"])}
+                nombreArchivo="calidad_leads"
+              />
+            </div>
+
+            {filtrados.length === 0 ? (
+              <div className="empty"><div style={{opacity:.3,fontSize:24}}>⭐</div><div style={{marginTop:6}}>Sin datos de calidad aún.</div></div>
+            ) : (
+              <div className="card scroll-x">
+                <table className="tbl">
+                  <thead><tr>
+                    <th>#</th>
+                    <SortTh label="Anuncio" k="anuncio" />
+                    <SortTh label="Respuestas" k="total" />
+                    <SortTh label="Score prom." k="score_prom" />
+                    <SortTh label="🟢 Alta" k="alta" />
+                    <SortTh label="🟡 Media" k="media" />
+                    <SortTh label="🔴 Baja" k="baja" />
+                    <SortTh label="% Alta" k="pct_alta" />
+                    <th>Calidad</th>
+                  </tr></thead>
+                  <tbody>
+                    {filtrados.map((item, i) => {
+                      const ranking = i===0?"🥇":i===1?"🥈":i===2?"🥉":"#"+(i+1);
+                      const barW = item.total > 0 ? (item.alta/item.total*100) : 0;
+                      return (
+                        <tr key={i}>
+                          <td style={{ textAlign:"center", fontWeight:700, fontSize:13 }}>{ranking}</td>
+                          <td style={{ fontWeight:500, maxWidth:260, wordBreak:"break-word", fontSize:12 }}>{item.anuncio}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{item.total}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color:scoreColor(item.score_prom) }}>
+                            {item.score_prom}%
+                          </td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)", fontWeight:600 }}>{item.alta}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--amber)" }}>{item.media}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--red)" }}>{item.baja}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:scoreColor(item.pct_alta), fontWeight:600 }}>{item.pct_alta}%</td>
+                          <td style={{ minWidth:100 }}>
+                            <div style={{ display:"flex", gap:2, height:10, borderRadius:4, overflow:"hidden", background:"var(--surface2)" }}>
+                              <div style={{ width:barW+"%", background:"var(--green)" }}/>
+                              <div style={{ width:(item.media/item.total*100)+"%", background:"var(--amber)" }}/>
+                              <div style={{ width:(item.baja/item.total*100)+"%", background:"var(--red)" }}/>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {filtrados.length > 1 && (
+                    <tfoot><tr style={{ fontWeight:600, background:"rgba(255,222,89,.08)" }}>
+                      <td colSpan={2}>TOTAL ({filtrados.length} anuncios)</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{filtrados.reduce((a,i)=>a+i.total,0)}</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:scoreColor(data.score_promedio), fontWeight:700 }}>{data.score_promedio}%</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)" }}>{data.distribucion?.alta||0}</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--amber)" }}>{data.distribucion?.media||0}</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--red)" }}>{data.distribucion?.baja||0}</td>
+                      <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:scoreColor((data.distribucion?.alta||0)/data.total_respuestas*100) }}>
+                        {data.total_respuestas>0?((data.distribucion?.alta||0)/data.total_respuestas*100).toFixed(1):0}%
+                      </td>
+                      <td/>
+                    </tr></tfoot>
+                  )}
+                </table>
+              </div>
+            )}
+
+            <div style={{ fontSize:10, color:"var(--muted)", marginTop:8, textAlign:"right" }}>
+              {!readOnly && <button className="btn btn-ghost btn-sm" style={{fontSize:10}} disabled={loading} onClick={cargarCalidad}>🔄 Actualizar</button>}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ─── PANEL DE NÚMEROS SIN IDENTIFICAR ────────────────────────────────────────
 function SinIdentificarPanel({ data, client, onUpdate }) {
   const sinIdentificar = data?.sinAnuncioIdentificado || [];
@@ -7355,9 +7562,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "programador"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
             </button>
           ))}
         </div>
@@ -7372,6 +7579,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
+        {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
@@ -7463,7 +7671,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura"] : ["estudio"]), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : "📚 Historial"}</div>)}
+          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura", "calidad"] : ["estudio"]), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : v === "calidad" ? "⭐ Calidad" : "📚 Historial"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -7490,6 +7698,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
           {tab === "captura" && !client.capturaConfig?.lastData && (
             <div className="empty"><div style={{ fontSize:28, opacity:.3 }}>📊</div><div style={{ marginTop:8 }}>El análisis de captura estará disponible pronto.</div></div>
           )}
+          {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
