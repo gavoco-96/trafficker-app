@@ -7642,6 +7642,8 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
             <span style={{fontWeight:700, fontSize:14}}>{link.nombre || link.slug}</span>
             {link.grupo && <span style={{fontSize:10, background:"rgba(77,159,255,.15)", color:"#4d9fff", padding:"2px 8px", borderRadius:10}}>{link.grupo}</span>}
             {!activo && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>Inactivo</span>}
+            {link.usar_landing && <span style={{fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"2px 8px", borderRadius:10}}>🛡️ Landing</span>}
+            {link.rotacion_automatica && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>🔄 Rotación</span>}
           </div>
           <div style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--accent)", marginBottom:6}}>{url}</div>
           <div style={{fontSize:11, color:"var(--muted)"}}>
@@ -7688,11 +7690,13 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
     nombre: link?.nombre || "",
     slug: link?.slug || genSlug(),
     grupo: link?.grupo || "",
+    usar_landing: link?.usar_landing ?? false,
     landing_titulo: link?.landing_titulo || "¡Únete al grupo!",
     landing_descripcion: link?.landing_descripcion || "Haz clic para unirte al grupo de WhatsApp",
     landing_imagen: link?.landing_imagen || "",
     pixel_fb: link?.pixel_fb || "",
     pixel_tiktok: link?.pixel_tiktok || "",
+    rotacion_automatica: link?.rotacion_automatica ?? false,
     destinos: link?.destinos || [{ id:"d1", nombre:"Grupo 1", url:"", paises:[], limite_clicks:null, clicks:0, activo:true }],
     notas: link?.notas || "",
   });
@@ -7736,27 +7740,51 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
         <div style={{fontSize:11, color:"var(--accent)", marginTop:4, fontFamily:"var(--mono)"}}>{urlPreview}</div>
       </div>
 
-      {/* Landing page */}
-      <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>Página intermedia (lo que ven los crawlers)</div>
-      <div className="form-row">
-        <div className="field"><label>Título</label><input type="text" value={form.landing_titulo} onChange={e=>f("landing_titulo",e.target.value)} /></div>
-        <div className="field"><label>Descripción</label><input type="text" value={form.landing_descripcion} onChange={e=>f("landing_descripcion",e.target.value)} /></div>
-      </div>
-      <div className="form-row">
-        <div className="field"><label>Imagen URL (og:image)</label><input type="text" value={form.landing_imagen} onChange={e=>f("landing_imagen",e.target.value)} placeholder="https://..." /></div>
+      {/* Toggle: Página intermedia */}
+      <div style={{background:"var(--surface2)", borderRadius:10, padding:"12px 16px", marginBottom:"0.75rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
+        <div>
+          <div style={{fontWeight:600, fontSize:13}}>🛡️ Página intermedia</div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Muestra una landing antes de redirigir. Útil para pixeles de retargeting. <span style={{color:"var(--amber)"}}>Puede reducir conversión directa (ej: WA → Facebook Ads).</span></div>
+        </div>
+        <div onClick={()=>f("usar_landing",!form.usar_landing)} style={{cursor:"pointer", width:44, height:24, borderRadius:12, background:form.usar_landing?"var(--accent)":"var(--border)", position:"relative", transition:"background .2s", flexShrink:0}}>
+          <div style={{position:"absolute", top:3, left:form.usar_landing?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s"}}/>
+        </div>
       </div>
 
-      {/* Pixels */}
-      <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>Pixels de conversión</div>
-      <div className="form-row">
-        <div className="field"><label>Pixel Facebook ID</label><input type="text" value={form.pixel_fb} onChange={e=>f("pixel_fb",e.target.value)} placeholder="1234567890" /></div>
-        <div className="field"><label>Pixel TikTok ID</label><input type="text" value={form.pixel_tiktok} onChange={e=>f("pixel_tiktok",e.target.value)} placeholder="ABCDEF123456" /></div>
+      {form.usar_landing && (
+        <div style={{borderLeft:"2px solid var(--accent)", paddingLeft:12, marginBottom:"0.75rem"}}>
+          <div className="form-row">
+            <div className="field"><label>Título</label><input type="text" value={form.landing_titulo} onChange={e=>f("landing_titulo",e.target.value)} /></div>
+            <div className="field"><label>Descripción</label><input type="text" value={form.landing_descripcion} onChange={e=>f("landing_descripcion",e.target.value)} /></div>
+          </div>
+          <div className="form-row">
+            <div className="field"><label>Imagen URL (og:image)</label><input type="text" value={form.landing_imagen} onChange={e=>f("landing_imagen",e.target.value)} placeholder="https://..." /></div>
+          </div>
+          <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:".75rem 0 .5rem"}}>Pixels de conversión</div>
+          <div className="form-row">
+            <div className="field"><label>Pixel Facebook ID</label><input type="text" value={form.pixel_fb} onChange={e=>f("pixel_fb",e.target.value)} placeholder="1234567890" /></div>
+            <div className="field"><label>Pixel TikTok ID</label><input type="text" value={form.pixel_tiktok} onChange={e=>f("pixel_tiktok",e.target.value)} placeholder="ABCDEF123456" /></div>
+          </div>
+        </div>
+      )}
+
+      {/* Toggle: Rotación automática */}
+      <div style={{background:"var(--surface2)", borderRadius:10, padding:"12px 16px", marginBottom:"0.75rem", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12}}>
+        <div>
+          <div style={{fontWeight:600, fontSize:13}}>🔄 Rotación automática de destinos</div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Distribuye el tráfico entre los destinos activos según orden, país y límites de clicks. Si está OFF, siempre va al primer destino activo.</div>
+        </div>
+        <div onClick={()=>f("rotacion_automatica",!form.rotacion_automatica)} style={{cursor:"pointer", width:44, height:24, borderRadius:12, background:form.rotacion_automatica?"var(--accent)":"var(--border)", position:"relative", transition:"background .2s", flexShrink:0}}>
+          <div style={{position:"absolute", top:3, left:form.rotacion_automatica?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s"}}/>
+        </div>
       </div>
 
       {/* Destinos */}
       <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>
-        Destinos y rotación
-        <span style={{fontSize:11, fontWeight:400, marginLeft:8, textTransform:"none"}}>— Se usan en orden. Puedes segmentar por país o limitar por clicks.</span>
+        Destinos {form.rotacion_automatica ? "y rotación" : ""}
+        <span style={{fontSize:11, fontWeight:400, marginLeft:8, textTransform:"none"}}>
+          {form.rotacion_automatica ? "— Se rotan en orden. Puedes segmentar por país o limitar por clicks." : "— Siempre redirige al primer destino activo."}
+        </span>
       </div>
       {form.destinos.map((d, i) => (
         <div key={d.id} style={{background:"var(--surface2)", borderRadius:10, padding:"12px", marginBottom:8}}>
