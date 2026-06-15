@@ -9209,7 +9209,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -9248,7 +9248,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : "Comandos del Bot"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : view === "links" ? "🔗 Links Enmascarados" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
@@ -9298,6 +9298,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             )}
             {view === "campanas" && (
               <CampanasPanel clients={clients} />
+            )}
+            {view === "links" && (
+              <LinksPanel />
             )}
             {view === "comandos" && (
               <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
