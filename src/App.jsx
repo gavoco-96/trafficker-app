@@ -6926,51 +6926,94 @@ function MiniLineChart({ titulo, rows, metricas }) {
 // ─── GRÁFICA CPL TIEMPO REAL (estilo trading con consulta a Facebook) ─────────
 // ─── GRÁFICA CPL TIEMPO REAL — con persistencia en Supabase ──────────────────
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
+// ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 function CplTradingChart({ client, onUpdate }) {
   const { token, adAccountId } = client.fbConfig || {};
 
-  const [rango, setRango]         = useState("24h");
-  const [loading, setLoading]     = useState(false);
-  const [hovIdx, setHovIdx]       = useState(null);
-  const [puntosHoy, setPuntosHoy] = useState(() => {
+  const [rango, setRango]           = useState("24h");
+  const [loading, setLoading]       = useState(false);
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [hovIdx, setHovIdx]         = useState(null);
+  const [puntosRT, setPuntosRT]     = useState(() => {
+    // Cargar puntos guardados del día de hoy al montar
     const hoy = new Date().toISOString().slice(0,10);
     return client.cplRtData?.[hoy] || [];
   });
   const fetchCount = useRef(0);
-  const INTERVALO  = 30; // segundos fijo en 30s
+  const INTERVALO  = 30;
 
   // ── Historial diario desde registros ──────────────────────────────────────
   const histDiario = [
     ...(client.misiones||[]).flatMap(m => (m.records||[]).map(r => {
-      const inv = parseFloat(r.inversion)||0, res = parseFloat(r.resultados||r.formularios)||0;
-      return res>0 ? { fecha: r.date, cpl: inv/res, tipo:"mision", mision:m.nombre } : null;
+      const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
+      return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"mision", mision:m.nombre} : null;
     }).filter(Boolean)),
-    ...(client.records||[]).filter(r => r.date <= new Date().toISOString().slice(0,10))
+    ...(client.records||[]).filter(r => r.date<=new Date().toISOString().slice(0,10))
       .map(r => {
-        const inv = parseFloat(r.inversion)||0, res = parseFloat(r.resultados||r.formularios)||0;
-        return res>0 ? { fecha: r.date, cpl: inv/res, tipo:"dia" } : null;
+        const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
+        return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"dia"} : null;
       }).filter(Boolean)
-  ].sort((a,b) => a.fecha.localeCompare(b.fecha));
+  ].sort((a,b)=>a.fecha.localeCompare(b.fecha));
 
-  // ── Guardar punto en Supabase ─────────────────────────────────────────────
-  async function guardarPunto(punto) {
-    if (!onUpdate) return;
+  // ── Guardar puntos en Supabase ─────────────────────────────────────────────
+  async function guardarPuntos(nuevosPuntos) {
+    if (!onUpdate || !nuevosPuntos.length) return;
     const hoy = new Date().toISOString().slice(0,10);
-    const cplRtData = { ...(client.cplRtData||{}) };
-    const puntosDelDia = [...(cplRtData[hoy]||[]), punto].slice(-1440);
-    cplRtData[hoy] = puntosDelDia;
+    const cplRtData = {...(client.cplRtData||{})};
+    const existing = cplRtData[hoy] || [];
+    // Deduplicar por ts
+    const mapa = {};
+    [...existing, ...nuevosPuntos].forEach(p => { mapa[p.ts] = p; });
+    cplRtData[hoy] = Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+    // Limpiar >90 días
     const limite = new Date(); limite.setDate(limite.getDate()-90);
-    Object.keys(cplRtData).forEach(k => { if (k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+    Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
     try {
       await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-        method:"PATCH", headers:{ ...H, Prefer:"return=minimal" },
-        body: JSON.stringify({ cplRtData })
+        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+        body: JSON.stringify({cplRtData})
       });
       client.cplRtData = cplRtData;
     } catch {}
   }
 
-  // ── Fetch de Facebook ─────────────────────────────────────────────────────
+  // ── Fetch HISTÓRICO por hora — al montar, trae TODO el día de una vez ─────
+  async function fetchHistoricoHoy() {
+    if (!token || !adAccountId) return;
+    setLoadingHist(true);
+    const hoy = new Date().toISOString().slice(0,10);
+    try {
+      // time_increment=hourly da datos por hora del día
+      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      if (json.error || !json.data?.length) { setLoadingHist(false); return; }
+
+      const puntosPorHora = json.data.map(d => {
+        const inv = parseFloat(d.spend)||0;
+        const la  = (d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+        const nl  = la ? parseFloat(la.value) : 0;
+        if (inv<=0 || nl<=0) return null;
+        // Construir timestamp desde date_start (viene como "2026-06-15 00:00:00")
+        const fechaHora = d.date_start || hoy;
+        const ts = new Date(fechaHora.replace(" ","T")).getTime();
+        const horaStr = new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"});
+        return { ts, hora:horaStr, cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
+      }).filter(Boolean);
+
+      if (puntosPorHora.length > 0) {
+        setPuntosRT(prev => {
+          const mapa = {};
+          [...prev, ...puntosPorHora].forEach(p => { mapa[p.ts]=p; });
+          return Object.values(mapa).sort((a,b)=>a.ts-b.ts);
+        });
+        await guardarPuntos(puntosPorHora);
+      }
+    } catch {}
+    setLoadingHist(false);
+  }
+
+  // ── Fetch en tiempo real cada 30s ─────────────────────────────────────────
   async function fetchCplActual() {
     if (!token || !adAccountId) return;
     setLoading(true);
@@ -6981,234 +7024,230 @@ function CplTradingChart({ client, onUpdate }) {
       const json = await res.json();
       if (!json.error && json.data?.length) {
         const d = json.data[0];
-        const inv = parseFloat(d.spend)||0;
-        const la  = (d.actions||[]).find(a => a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
-        const nl  = la ? parseFloat(la.value) : 0;
+        const inv=parseFloat(d.spend)||0;
+        const la=(d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+        const nl=la?parseFloat(la.value):0;
         if (inv>0 && nl>0) {
-          const cpl   = inv/nl;
-          const ahora = Date.now();
-          const punto = { ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
-          setPuntosHoy(prev => [...prev, punto].slice(-2880));
+          const cpl=inv/nl;
+          const ahora=Date.now();
+          const punto={ ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
+          setPuntosRT(prev => {
+            const mapa={};
+            [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
+            return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+          });
           fetchCount.current++;
-          if (fetchCount.current % 5 === 0) guardarPunto(punto);
+          if (fetchCount.current%5===0) guardarPuntos([punto]);
         }
       }
     } catch {}
     setLoading(false);
   }
 
+  // ── Al montar: cargar histórico del día + iniciar fetch RT ────────────────
   useEffect(() => {
     if (!token || !adAccountId) return;
-    fetchCplActual();
+    fetchHistoricoHoy(); // fetch histórico por hora del día completo
+    fetchCplActual();    // fetch inmediato del valor actual
     const t = setInterval(fetchCplActual, INTERVALO*1000);
     return () => clearInterval(t);
   }, [token, adAccountId]);
 
-  // ── Construir datos según rango ───────────────────────────────────────────
+  // ── Construir datos según rango ────────────────────────────────────────────
   const hoy = new Date().toISOString().slice(0,10);
   let datosVista = [], modoRT = false;
 
   if (rango === "24h") {
-    // Últimas 24 horas: puntos RT del día actual + ayer si hay
-    const tsCorte = Date.now() - 24*60*60*1000;
+    const tsCorte = Date.now()-24*60*60*1000;
     const ayer = new Date(); ayer.setDate(ayer.getDate()-1);
     const ayerStr = ayer.toISOString().slice(0,10);
-    const ptsAyer  = (client.cplRtData?.[ayerStr]||[]).filter(p => p.ts >= tsCorte);
-    const ptsHoy   = [...(client.cplRtData?.[hoy]||[]), ...puntosHoy]
-      .filter((p,i,a) => a.findIndex(x=>x.ts===p.ts)===i);
-    datosVista = [...ptsAyer, ...ptsHoy]
-      .sort((a,b)=>a.ts-b.ts)
-      .map(p => ({ ...p, fecha: new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}) }));
+    const ptsAyer = (client.cplRtData?.[ayerStr]||[]).filter(p=>p.ts>=tsCorte);
+    const ptsHoyGuardados = client.cplRtData?.[hoy]||[];
+    // Merge: guardados + en memoria, deduplicar
+    const mapa={};
+    [...ptsAyer, ...ptsHoyGuardados, ...puntosRT].forEach(p=>{mapa[p.ts]=p;});
+    datosVista = Object.values(mapa).sort((a,b)=>a.ts-b.ts)
+      .filter(p=>p.ts>=tsCorte)
+      .map(p=>({...p, fecha:new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}));
     modoRT = true;
-  } else if (rango === "1W") {
-    datosVista = histDiario.slice(-7).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-  } else if (rango === "1M") {
-    datosVista = histDiario.slice(-30).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-  } else if (rango === "1Y") {
-    datosVista = histDiario.slice(-365).map(d => ({ ...d, fecha: d.fecha.slice(5) }));
-  } else if (rango === "Todo") {
-    datosVista = histDiario.map(d => ({ ...d, fecha: d.fecha.slice(5) }));
+  } else if (rango==="1W") {
+    // Últimos 7 días: combinar puntos RT por día con datos diarios
+    const dias7 = [];
+    for (let i=6; i>=0; i--) {
+      const d=new Date(); d.setDate(d.getDate()-i);
+      const ds=d.toISOString().slice(0,10);
+      const pts=client.cplRtData?.[ds]||[];
+      if (pts.length>0) {
+        // Promediar CPL del día
+        const avgCpl = pts.reduce((a,p)=>a+p.cpl,0)/pts.length;
+        dias7.push({fecha:ds.slice(5), cpl:avgCpl, tipo:"dia_rt"});
+      } else {
+        const hist = histDiario.find(h=>h.fecha===ds);
+        if (hist) dias7.push({...hist, fecha:ds.slice(5)});
+      }
+    }
+    datosVista = dias7;
+  } else if (rango==="1M") {
+    datosVista = histDiario.slice(-30).map(d=>({...d, fecha:d.fecha.slice(5)}));
+  } else if (rango==="1Y") {
+    datosVista = histDiario.slice(-365).map(d=>({...d, fecha:d.fecha.slice(5)}));
+  } else {
+    datosVista = histDiario.map(d=>({...d, fecha:d.fecha.slice(5)}));
   }
 
-  const n     = datosVista.length;
-  const vals  = datosVista.map(d=>d.cpl).filter(v=>v>0);
-  const hasData = vals.length > 0;
+  const n=datosVista.length, vals=datosVista.map(d=>d.cpl).filter(v=>v>0);
+  const hasData=vals.length>0;
+  const ultimo=hasData?datosVista[n-1]:null;
+  const primero=hasData?datosVista[0]:null;
+  const minCpl=hasData?Math.min(...vals):0, maxCpl=hasData?Math.max(...vals):0;
+  const cambio=hasData&&primero?((ultimo.cpl-primero.cpl)/primero.cpl*100):0;
+  const tend=cambio<-0.1?"baja":cambio>0.1?"sube":"igual";
+  const color=tend==="baja"?"#10B981":tend==="sube"?"#EF4444":"#FFDE59";
 
-  // ── Métricas de resumen ────────────────────────────────────────────────────
-  const ultimo   = hasData ? datosVista[n-1] : null;
-  const primero  = hasData ? datosVista[0]   : null;
-  const minCpl   = hasData ? Math.min(...vals) : 0;
-  const maxCpl   = hasData ? Math.max(...vals) : 0;
-  const cambio   = hasData && primero ? ((ultimo.cpl - primero.cpl) / primero.cpl * 100) : 0;
-  const tend     = cambio < 0 ? "baja" : cambio > 0 ? "sube" : "igual";
-  const color    = tend === "baja" ? "#10B981" : tend === "sube" ? "#EF4444" : "#FFDE59";
+  const W=700, H=240, PAD={top:20,right:70,bottom:60,left:60};
+  const cW=W-PAD.left-PAD.right, cH=H-PAD.top-PAD.bottom;
+  const maxV=hasData?maxCpl*1.1:1, minV=hasData?Math.max(0,minCpl*0.9):0, rngV=maxV-minV||1;
+  function xP(i){return PAD.left+(i/Math.max(n-1,1))*cW;}
+  function yP(v){return PAD.top+cH-((v-minV)/rngV)*cH;}
+  const path=hasData?datosVista.map((d,i)=>(i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" "):"";
+  const area=hasData?`M ${xP(0)} ${PAD.top+cH} `+datosVista.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z`:"";
+  const yTicks=hasData?[0,0.2,0.4,0.6,0.8,1].map(t=>minV+rngV*t):[];
+  const xStep=Math.max(1,Math.floor(n/8));
+  const xLabels=hasData?datosVista.filter((_,i)=>i%xStep===0||i===n-1):[];
 
-  // ── Dimensiones SVG ───────────────────────────────────────────────────────
-  const W    = 700, H = 240;
-  const PAD  = { top:20, right:16, bottom:60, left:60 };
-  const cW   = W-PAD.left-PAD.right;
-  const cH   = H-PAD.top-PAD.bottom;
+  // Sparkline inferior
+  const sparkD=histDiario.slice(-60), sN=sparkD.length;
+  const sVals=sparkD.map(d=>d.cpl), sMax=sVals.length?Math.max(...sVals):1, sMin=Math.max(0,sVals.length?Math.min(...sVals)*0.9:0), sRng=sMax-sMin||1;
+  function sxP(i){return(i/Math.max(sN-1,1))*(W-4)+2;}
+  function syP(v){return 28-((v-sMin)/sRng)*24;}
+  const sparkPath=sparkD.map((d,i)=>(i===0?"M ":"L ")+sxP(i)+" "+syP(d.cpl)).join(" ");
 
-  const maxV = hasData ? maxCpl * 1.08 : 1;
-  const minV = hasData ? Math.max(0, minCpl * 0.92) : 0;
-  const rngV = maxV - minV || 1;
-
-  function xP(i) { return PAD.left + (i / Math.max(n-1,1)) * cW; }
-  function yP(v) { return PAD.top + cH - ((v-minV)/rngV)*cH; }
-
-  const path = hasData ? datosVista.map((d,i) => (i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ") : "";
-  const area = hasData ? `M ${xP(0)} ${PAD.top+cH} `+datosVista.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z` : "";
-
-  const yTicks = hasData ? [0,0.2,0.4,0.6,0.8,1].map(t => minV+rngV*t) : [];
-  const xStep  = hasData ? Math.max(1, Math.floor(n/7)) : 1;
-  const xLabels = hasData ? datosVista.filter((_,i)=>i%xStep===0||i===n-1) : [];
-
-  // Mini sparkline para el resumen inferior (historial completo)
-  const sparkDatos = histDiario.slice(-60);
-  const sparkN = sparkDatos.length;
-  const sparkVals = sparkDatos.map(d=>d.cpl);
-  const sparkMax = sparkVals.length ? Math.max(...sparkVals) : 1;
-  const sparkMin = Math.max(0, sparkVals.length ? Math.min(...sparkVals)*0.9 : 0);
-  const sparkRng = sparkMax - sparkMin || 1;
-  function sxP(i) { return (i/(Math.max(sparkN-1,1)))*W; }
-  function syP(v) { return 30 - ((v-sparkMin)/sparkRng)*28; }
-  const sparkPath = sparkDatos.map((d,i)=>(i===0?"M ":"L ")+sxP(i)+" "+syP(d.cpl)).join(" ");
-
-  const RANGOS = ["24h","1W","1M","1Y","Todo"];
+  const RANGOS=["24h","1W","1M","1Y","Todo"];
 
   return (
-    <div className="card" style={{ marginBottom:"1rem", padding:"1.25rem" }}>
+    <div className="card" style={{marginBottom:"1rem",padding:"1.25rem"}}>
       {/* Header */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
         <div>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ fontWeight:700, fontSize:16 }}>Costo por Lead (CPL)</div>
-            {modoRT && puntosHoy.length>0 && <span style={{ fontSize:10, background:"rgba(16,185,129,.15)", color:"var(--green)", padding:"2px 8px", borderRadius:10, fontWeight:600 }}>● EN VIVO</span>}
-            {loading && <span style={{ fontSize:10, color:"var(--muted)" }}>⟳</span>}
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{fontWeight:700,fontSize:16}}>Costo por Lead (CPL)</div>
+            {modoRT && puntosRT.length>0 && <span style={{fontSize:10,background:"rgba(16,185,129,.15)",color:"var(--green)",padding:"2px 8px",borderRadius:10,fontWeight:600}}>● EN VIVO</span>}
+            {(loading||loadingHist) && <span style={{fontSize:10,color:"var(--muted)"}}>{loadingHist?"Cargando historial...":"⟳"}</span>}
           </div>
-          {hasData && (
-            <div style={{ display:"flex", alignItems:"baseline", gap:10, marginTop:4 }}>
-              <span style={{ fontSize:28, fontWeight:800, fontFamily:"var(--mono)", color }}>${fmtNum(ultimo.cpl,2)}</span>
-              <span style={{ fontSize:13, color, fontWeight:600 }}>
-                {tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})
-              </span>
+          {hasData && <>
+            <div style={{display:"flex",alignItems:"baseline",gap:10,marginTop:4}}>
+              <span style={{fontSize:28,fontWeight:800,fontFamily:"var(--mono)",color}}>${fmtNum(ultimo.cpl,2)}</span>
+              <span style={{fontSize:13,color,fontWeight:600}}>{tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})</span>
             </div>
-          )}
-          {hasData && (
-            <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>
-              Min: <span style={{ fontFamily:"var(--mono)", color:"var(--green)" }}>${fmtNum(minCpl,2)}</span>
-              {" · "}Max: <span style={{ fontFamily:"var(--mono)", color:"var(--red)" }}>${fmtNum(maxCpl,2)}</span>
-              {modoRT && <span> · {fetchCount.current} lecturas hoy</span>}
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+              Min: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(minCpl,2)}</span>
+              {" · "}Max: <span style={{fontFamily:"var(--mono)",color:"var(--red)"}}>${fmtNum(maxCpl,2)}</span>
+              {modoRT && <span> · {datosVista.length} puntos del día</span>}
             </div>
-          )}
+          </>}
         </div>
-        {/* Filtros de rango — estilo CoinMarketCap */}
-        <div style={{ display:"flex", gap:4 }}>
-          {RANGOS.map(r => (
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+          {RANGOS.map(r=>(
             <button key={r} className="btn btn-ghost btn-sm"
-              style={{ fontSize:11, padding:"3px 10px", background: rango===r ? "var(--accent)" : "transparent",
-                color: rango===r ? "#fff" : "var(--muted)", borderRadius:6, fontWeight: rango===r ? 700 : 400 }}
-              onClick={() => setRango(r)}>{r}</button>
+              style={{fontSize:11,padding:"3px 10px",background:rango===r?"var(--accent)":"transparent",color:rango===r?"#fff":"var(--muted)",borderRadius:6,fontWeight:rango===r?700:400}}
+              onClick={()=>setRango(r)}>{r}</button>
           ))}
         </div>
       </div>
 
-      {/* Gráfica principal */}
+      {/* Gráfica */}
       {!hasData ? (
-        <div style={{ height:200, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--muted)", fontSize:12 }}>
-          {token && adAccountId ? "Esperando primeros datos..." : "Configura Facebook Ads para activar el monitoreo"}
+        <div style={{height:160,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"var(--muted)",fontSize:12,gap:8}}>
+          {token&&adAccountId ? <>
+            <div>Cargando datos de hoy desde Facebook...</div>
+            <div style={{fontSize:10}}>Los datos se actualizan automáticamente cada 30 segundos</div>
+          </> : "Configura Facebook Ads para activar el monitoreo en tiempo real"}
         </div>
       ) : (
-        <div style={{ overflowX:"auto" }}>
-          <svg width={W} height={H} style={{ display:"block" }} onMouseLeave={() => setHovIdx(null)}>
+        <div style={{overflowX:"auto"}}>
+          <svg width={W} height={H} style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
             <defs>
-              <linearGradient id={"cplG2_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+              <linearGradient id={"cplG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
-                <stop offset="85%" stopColor={color} stopOpacity="0.02"/>
+                <stop offset="90%" stopColor={color} stopOpacity="0.02"/>
               </linearGradient>
             </defs>
-            {/* Grid horizontal */}
-            {yTicks.map((v,i) => (
+            {yTicks.map((v,i)=>(
               <g key={i}>
                 <line x1={PAD.left} y1={yP(v)} x2={PAD.left+cW} y2={yP(v)} stroke="rgba(255,255,255,.05)" strokeWidth="1"/>
-                <text x={PAD.left-6} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
+                <text x={PAD.left-4} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
               </g>
             ))}
-            {/* Labels X */}
-            {xLabels.map((d,i) => (
+            {xLabels.map((d,i)=>(
               <text key={i} x={xP(datosVista.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
             ))}
-            {/* Área y línea */}
-            <path d={area} fill={`url(#cplG2_${client.id})`}/>
+            <path d={area} fill={`url(#cplG_${client.id})`}/>
             <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
-            {/* Punto actual pulsante */}
-            {modoRT && puntosHoy.length>0 && (
-              <>
-                <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="10" fill={color} fillOpacity="0.1"/>
-                <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="4" fill={color}/>
-              </>
-            )}
+            {/* Punto actual */}
+            {hasData && <>
+              <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="10" fill={color} fillOpacity="0.12"/>
+              <circle cx={xP(n-1)} cy={yP(ultimo.cpl)} r="4" fill={color}/>
+            </>}
             {/* Línea de precio actual */}
-            <line x1={PAD.left} y1={yP(ultimo.cpl)} x2={PAD.left+cW} y2={yP(ultimo.cpl)}
-              stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"/>
-            <rect x={PAD.left+cW+2} y={yP(ultimo.cpl)-8} width={52} height={16} rx="3" fill={color}/>
-            <text x={PAD.left+cW+28} y={yP(ultimo.cpl)+4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
-            {/* Hover */}
-            {datosVista.map((_,i) => (
+            {hasData && <>
+              <line x1={PAD.left} y1={yP(ultimo.cpl)} x2={PAD.left+cW} y2={yP(ultimo.cpl)} stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"/>
+              <rect x={PAD.left+cW+4} y={yP(ultimo.cpl)-9} width={58} height={18} rx="4" fill={color}/>
+              <text x={PAD.left+cW+33} y={yP(ultimo.cpl)+4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+            </>}
+            {/* Hover areas */}
+            {datosVista.map((_,i)=>(
               <rect key={i} x={xP(i)-Math.max(cW/n/2,3)} y={PAD.top} width={Math.max(cW/n,6)} height={cH}
-                fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={() => setHovIdx(i)}/>
+                fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={()=>setHovIdx(i)}/>
             ))}
-            {hovIdx !== null && hovIdx < n && (
+            {hovIdx!==null && hovIdx<n && (
               <g>
-                {(() => {
-                  const d = datosVista[hovIdx];
-                  const tx = hovIdx < n*0.7 ? xP(hovIdx)+10 : xP(hovIdx)-155;
-                  const ty = Math.max(yP(d.cpl)-60, PAD.top);
+                {(()=>{
+                  const d=datosVista[hovIdx];
+                  const tx=hovIdx<n*0.7?xP(hovIdx)+8:xP(hovIdx)-153;
+                  const ty=Math.max(yP(d.cpl)-58,PAD.top);
                   return (<>
                     <line x1={xP(hovIdx)} y1={PAD.top} x2={xP(hovIdx)} y2={PAD.top+cH} stroke="var(--muted)" strokeWidth="0.8" strokeDasharray="3 2"/>
                     <circle cx={xP(hovIdx)} cy={yP(d.cpl)} r="4" fill={color} stroke="var(--bg)" strokeWidth="2"/>
                     <rect x={tx} y={ty} width={145} height={d.leads?58:42} rx="8" fill="var(--surface2)" stroke={color} strokeWidth="0.5"/>
                     <text x={tx+10} y={ty+15} fontSize="10" fill="var(--muted)">{d.fecha}</text>
                     <text x={tx+10} y={ty+31} fontSize="14" fontWeight="800" fill={color} fontFamily="var(--mono)">${fmtNum(d.cpl,2)}/lead</text>
-                    {d.leads && <text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{Math.round(d.leads)} leads · ${fmtNum(d.inv||0,2)}</text>}
-                    {d.mision && <text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{d.mision}</text>}
+                    {d.leads&&<text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{Math.round(d.leads)} leads · ${fmtNum(d.inv||0,2)}</text>}
+                    {d.mision&&<text x={tx+10} y={ty+46} fontSize="9" fill="var(--muted)">{d.mision}</text>}
                   </>);
                 })()}
               </g>
             )}
-            {/* Eje X */}
             <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
           </svg>
         </div>
       )}
 
-      {/* Sparkline histórico inferior — estilo CoinMarketCap */}
-      {sparkDatos.length > 5 && (
-        <div style={{ marginTop:8, borderTop:"1px solid var(--border)", paddingTop:8 }}>
-          <div style={{ fontSize:9, color:"var(--muted)", marginBottom:4 }}>Historial CPL — últimos {sparkN} días</div>
-          <svg width={W} height={34} style={{ display:"block", opacity:.6 }}>
+      {/* Sparkline histórico inferior */}
+      {sN>3 && (
+        <div style={{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
+          <div style={{fontSize:9,color:"var(--muted)",marginBottom:4}}>Historial CPL — últimos {sN} días</div>
+          <svg width={W} height={32} style={{display:"block",opacity:.6}}>
             <defs>
-              <linearGradient id={"sparkG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+              <linearGradient id={"spkG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor="#4d9fff" stopOpacity="0.3"/>
                 <stop offset="100%" stopColor="#4d9fff" stopOpacity="0.02"/>
               </linearGradient>
             </defs>
-            <path d={sparkPath+` L ${sxP(sparkN-1)} 30 L ${sxP(0)} 30 Z`} fill={`url(#sparkG_${client.id})`}/>
+            <path d={sparkPath+` L ${sxP(sN-1)} 30 L ${sxP(0)} 30 Z`} fill={`url(#spkG_${client.id})`}/>
             <path d={sparkPath} fill="none" stroke="#4d9fff" strokeWidth="1"/>
-            {/* Indicador de posición actual */}
-            {rango !== "Todo" && sparkN > 0 && (() => {
-              const posActual = rango==="1W" ? sparkN-7 : rango==="1M" ? sparkN-30 : 0;
-              const x = sxP(Math.max(0,posActual));
-              return <rect x={x} y={0} width={sxP(sparkN-1)-x} height={30} fill="rgba(77,159,255,.08)"/>;
+            {/* Zona resaltada del rango seleccionado */}
+            {(()=>{
+              const dias=rango==="1W"?7:rango==="1M"?30:rango==="1Y"?365:0;
+              if(!dias||sN<=dias) return null;
+              const x=sxP(sN-dias);
+              return <rect x={x} y={0} width={sxP(sN-1)-x} height={30} fill="rgba(77,159,255,.1)" rx="2"/>;
             })()}
           </svg>
         </div>
       )}
-
-      {/* Footer info */}
-      <div style={{ display:"flex", justifyContent:"space-between", marginTop:6, fontSize:10, color:"var(--muted)" }}>
-        <span>{client.cplRtData ? `${Object.keys(client.cplRtData).length} días · ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos guardados` : "Sin datos históricos RT aún"}</span>
-        {token && adAccountId && <button className="btn btn-ghost btn-sm" style={{ fontSize:10, padding:"1px 8px" }} onClick={fetchCplActual} disabled={loading}>🔄 Actualizar</button>}
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10,color:"var(--muted)"}}>
+        <span>{client.cplRtData?`${Object.keys(client.cplRtData).length} días guardados · ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos total`:"Sin historial RT aún"}</span>
+        {token&&adAccountId&&<button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px"}} onClick={()=>{fetchHistoricoHoy();fetchCplActual();}} disabled={loading||loadingHist}>🔄</button>}
       </div>
     </div>
   );
