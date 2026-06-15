@@ -7461,6 +7461,452 @@ function CplTradingChart({ client, onUpdate }) {
 }
 
 
+
+// ─── SISTEMA DE LINKS ENMASCARADOS ────────────────────────────────────────────
+
+const SUPA_LINKS_URL = SUPA_URL + "/rest/v1/links";
+const HL = { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json" };
+
+// Generar slug aleatorio único
+function genSlug(len = 6) {
+  const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+  return Array.from({length: len}, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+// CRUD de links en Supabase tabla separada
+const LinksDB = {
+  async getAll() {
+    const r = await fetch(`${SUPA_LINKS_URL}?select=*&order=created_at.desc`, { headers: HL });
+    return r.ok ? r.json() : [];
+  },
+  async create(link) {
+    const r = await fetch(SUPA_LINKS_URL, {
+      method: "POST", headers: { ...HL, Prefer: "return=representation" },
+      body: JSON.stringify(link)
+    });
+    const d = await r.json();
+    return d[0] || null;
+  },
+  async update(id, data) {
+    await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, {
+      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
+      body: JSON.stringify(data)
+    });
+  },
+  async delete(id) {
+    await fetch(`${SUPA_LINKS_URL}?id=eq.${id}`, { method: "DELETE", headers: HL });
+  }
+};
+
+// ─── PANEL PRINCIPAL DE LINKS ──────────────────────────────────
+function LinksPanel() {
+  const [links, setLinks]         = useState([]);
+  const [grupos, setGrupos]       = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showForm, setShowForm]   = useState(false);
+  const [editLink, setEditLink]   = useState(null);
+  const [filtroGrupo, setFiltroG] = useState("todos");
+  const [busqueda, setBusqueda]   = useState("");
+  const [detalle, setDetalle]     = useState(null);
+  const { show, el: toastEl }     = useToast();
+
+  const BASE_URL = window.location.origin;
+
+  async function cargar() {
+    setLoading(true);
+    const data = await LinksDB.getAll();
+    setLinks(data);
+    // Extraer grupos únicos
+    const gs = [...new Set(data.map(l => l.grupo).filter(Boolean))];
+    setGrupos(gs);
+    setLoading(false);
+  }
+
+  useEffect(() => { cargar(); }, []);
+
+  async function handleSave(linkData) {
+    if (editLink) {
+      await LinksDB.update(editLink.id, linkData);
+      show("✓ Link actualizado", "ok");
+    } else {
+      await LinksDB.create({ ...linkData, id: "lnk_" + Date.now(), created_at: new Date().toISOString(), total_clicks: 0, clicks: [], active: true });
+      show("✓ Link creado", "ok");
+    }
+    setShowForm(false); setEditLink(null);
+    cargar();
+  }
+
+  async function toggleActive(link) {
+    await LinksDB.update(link.id, { active: !link.active });
+    show(link.active ? "Link desactivado" : "Link activado", "ok");
+    cargar();
+  }
+
+  async function handleDelete(id) {
+    if (!window.confirm("¿Eliminar este link permanentemente?")) return;
+    await LinksDB.delete(id);
+    show("Link eliminado", "ok");
+    cargar();
+  }
+
+  function copiarLink(slug) {
+    const url = `${BASE_URL}/r/${slug}`;
+    navigator.clipboard.writeText(url);
+    show("✓ Link copiado: " + url, "ok");
+  }
+
+  const linksFiltrados = links
+    .filter(l => filtroGrupo === "todos" || l.grupo === filtroGrupo)
+    .filter(l => !busqueda || l.nombre?.toLowerCase().includes(busqueda.toLowerCase()) || l.slug?.includes(busqueda));
+
+  if (loading) return <div className="empty"><div style={{opacity:.3}}>⏳</div><div>Cargando links...</div></div>;
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        {/* Header */}
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem", flexWrap:"wrap", gap:8}}>
+          <div>
+            <div style={{fontWeight:700, fontSize:18}}>🔗 Links Enmascarados</div>
+            <div style={{fontSize:12, color:"var(--muted)", marginTop:2}}>{links.length} links · Base URL: <code style={{background:"var(--surface2)", padding:"1px 6px", borderRadius:4}}>{BASE_URL}/r/...</code></div>
+          </div>
+          <button className="btn btn-primary" onClick={() => { setEditLink(null); setShowForm(true); }}>+ Nuevo link</button>
+        </div>
+
+        {/* Filtros */}
+        <div style={{display:"flex", gap:8, marginBottom:"1rem", flexWrap:"wrap", alignItems:"center"}}>
+          <div className="period-pills">
+            <button className={"pill "+(filtroGrupo==="todos"?"active":"")} onClick={()=>setFiltroG("todos")}>Todos</button>
+            {grupos.map(g => <button key={g} className={"pill "+(filtroGrupo===g?"active":"")} onClick={()=>setFiltroG(g)}>{g}</button>)}
+          </div>
+          <div style={{position:"relative", flex:1, maxWidth:280}}>
+            <input type="text" value={busqueda} onChange={e=>setBusqueda(e.target.value)}
+              placeholder="Buscar link..." style={{paddingLeft:28, fontSize:12}}/>
+            <span style={{position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)"}}>🔍</span>
+          </div>
+        </div>
+
+        {/* Formulario */}
+        {showForm && <LinkForm link={editLink} onSave={handleSave} onCancel={()=>{setShowForm(false);setEditLink(null);}} baseUrl={BASE_URL} />}
+
+        {/* Lista de links */}
+        {linksFiltrados.length === 0 ? (
+          <div className="empty"><div style={{fontSize:32,opacity:.3}}>🔗</div><div style={{marginTop:8}}>Sin links aún. Crea el primero.</div></div>
+        ) : (
+          <div style={{display:"flex", flexDirection:"column", gap:"0.75rem"}}>
+            {linksFiltrados.map(link => (
+              <LinkCard key={link.id} link={link} baseUrl={BASE_URL}
+                onCopy={()=>copiarLink(link.slug)}
+                onEdit={()=>{setEditLink(link); setShowForm(true);}}
+                onToggle={()=>toggleActive(link)}
+                onDelete={()=>handleDelete(link.id)}
+                onDetalle={()=>setDetalle(detalle?.id===link.id?null:link)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Panel de detalle/analytics */}
+        {detalle && <LinkAnalytics link={detalle} onClose={()=>setDetalle(null)} />}
+      </div>
+    </>
+  );
+}
+
+// ─── TARJETA DE LINK ───────────────────────────────────────────
+function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle }) {
+  const url = `${baseUrl}/r/${link.slug}`;
+  const destinos = link.destinos || [];
+  const clicks = link.total_clicks || 0;
+  const activo = link.active !== false;
+  const ultimoClick = link.ultimo_click ? new Date(link.ultimo_click).toLocaleDateString("es-EC") : "—";
+
+  // Calcular distribución de países
+  const paises = (link.clicks || []).reduce((acc, c) => {
+    if (c.country) acc[c.country] = (acc[c.country]||0)+1;
+    return acc;
+  }, {});
+  const topPais = Object.entries(paises).sort((a,b)=>b[1]-a[1])[0];
+  const topPlataforma = (() => {
+    const plats = (link.clicks||[]).reduce((acc,c) => { if(c.platform) acc[c.platform]=(acc[c.platform]||0)+1; return acc; }, {});
+    return Object.entries(plats).sort((a,b)=>b[1]-a[1])[0];
+  })();
+
+  return (
+    <div className="card" style={{borderLeft: `3px solid ${activo?"var(--accent)":"var(--border)"}`, opacity:activo?1:0.6}}>
+      <div style={{display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap"}}>
+        {/* Info principal */}
+        <div style={{flex:1, minWidth:200}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
+            <span style={{fontWeight:700, fontSize:14}}>{link.nombre || link.slug}</span>
+            {link.grupo && <span style={{fontSize:10, background:"rgba(77,159,255,.15)", color:"#4d9fff", padding:"2px 8px", borderRadius:10}}>{link.grupo}</span>}
+            {!activo && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>Inactivo</span>}
+          </div>
+          <div style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--accent)", marginBottom:6}}>{url}</div>
+          <div style={{fontSize:11, color:"var(--muted)"}}>
+            {destinos.length} destino{destinos.length!==1?"s":""} · Último click: {ultimoClick}
+          </div>
+          {destinos.length > 0 && (
+            <div style={{marginTop:4, fontSize:11, color:"var(--muted)"}}>
+              {destinos.map((d,i) => (
+                <div key={i} style={{display:"flex", gap:6, alignItems:"center", marginTop:2}}>
+                  <span style={{color: d.activo===false?"var(--red)":"var(--green)", fontSize:8}}>●</span>
+                  <span style={{color: "var(--muted)"}}>{d.nombre || "Destino "+(i+1)}</span>
+                  {d.paises?.length > 0 && <span style={{fontSize:9, color:"var(--accent2)"}}>[{d.paises.join(",")}]</span>}
+                  {d.limite_clicks && <span style={{fontSize:9, color:"var(--muted)"}}>{d.clicks||0}/{d.limite_clicks} clicks</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Stats rápidas */}
+        <div style={{display:"flex", gap:16, fontSize:11, textAlign:"center"}}>
+          <div><div style={{fontSize:22, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)"}}>{clicks}</div><div style={{color:"var(--muted)"}}>Clicks</div></div>
+          {topPais && <div><div style={{fontSize:13, fontWeight:600}}>{topPais[0]}</div><div style={{color:"var(--muted)"}}>Top país</div></div>}
+          {topPlataforma && <div><div style={{fontSize:13, fontWeight:600}}>{topPlataforma[0]}</div><div style={{color:"var(--muted)"}}>Top fuente</div></div>}
+        </div>
+
+        {/* Acciones */}
+        <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
+          <button className="btn btn-primary btn-sm" onClick={onCopy} title="Copiar link">📋</button>
+          <button className="btn btn-ghost btn-sm" onClick={onDetalle} title="Ver analytics">📊</button>
+          <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Editar">✏️</button>
+          <button className="btn btn-ghost btn-sm" onClick={onToggle} title={activo?"Desactivar":"Activar"} style={{color:activo?"var(--red)":"var(--green)"}}>{activo?"⏸":"▶"}</button>
+          <button className="btn btn-ghost btn-sm" onClick={onDelete} title="Eliminar" style={{color:"var(--red)"}}>🗑</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FORMULARIO DE LINK ────────────────────────────────────────
+function LinkForm({ link, onSave, onCancel, baseUrl }) {
+  const isEdit = !!link;
+  const [form, setForm] = useState({
+    nombre: link?.nombre || "",
+    slug: link?.slug || genSlug(),
+    grupo: link?.grupo || "",
+    landing_titulo: link?.landing_titulo || "¡Únete al grupo!",
+    landing_descripcion: link?.landing_descripcion || "Haz clic para unirte al grupo de WhatsApp",
+    landing_imagen: link?.landing_imagen || "",
+    pixel_fb: link?.pixel_fb || "",
+    pixel_tiktok: link?.pixel_tiktok || "",
+    destinos: link?.destinos || [{ id:"d1", nombre:"Grupo 1", url:"", paises:[], limite_clicks:null, clicks:0, activo:true }],
+    notas: link?.notas || "",
+  });
+  const f = (k, v) => setForm(p => ({...p, [k]: v}));
+
+  function addDestino() {
+    setForm(p => ({...p, destinos: [...p.destinos, { id:"d"+Date.now(), nombre:"Grupo "+(p.destinos.length+1), url:"", paises:[], limite_clicks:null, clicks:0, activo:true }]}));
+  }
+  function updDestino(id, k, v) {
+    setForm(p => ({...p, destinos: p.destinos.map(d => d.id===id ? {...d, [k]:v} : d)}));
+  }
+  function delDestino(id) {
+    setForm(p => ({...p, destinos: p.destinos.filter(d => d.id!==id)}));
+  }
+
+  function handleSubmit() {
+    if (!form.nombre) return alert("Ingresa un nombre para el link");
+    if (!form.slug) return alert("El slug no puede estar vacío");
+    if (form.destinos.length === 0) return alert("Agrega al menos un destino");
+    if (form.destinos.some(d => !d.url)) return alert("Todos los destinos necesitan una URL");
+    onSave(form);
+  }
+
+  const urlPreview = `${baseUrl}/r/${form.slug}`;
+
+  return (
+    <div className="card" style={{borderColor:"rgba(0,74,173,.3)", marginBottom:"1rem"}}>
+      <div className="card-title">{isEdit?"Editar link":"Nuevo link enmascarado"}</div>
+
+      <div className="form-row">
+        <div className="field"><label>Nombre del link *</label><input type="text" value={form.nombre} onChange={e=>f("nombre",e.target.value)} placeholder="Ej: WA Lanzamiento EC" /></div>
+        <div className="field"><label>Grupo/Categoría</label><input type="text" value={form.grupo} onChange={e=>f("grupo",e.target.value)} placeholder="Ej: Evelyn Cherrez" /></div>
+      </div>
+
+      <div className="field">
+        <label>Slug (parte final del URL)</label>
+        <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          <input type="text" value={form.slug} onChange={e=>f("slug",e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,""))} style={{flex:1, fontFamily:"var(--mono)"}} />
+          <button className="btn btn-ghost btn-sm" onClick={()=>f("slug",genSlug())} title="Generar nuevo slug">🔄</button>
+        </div>
+        <div style={{fontSize:11, color:"var(--accent)", marginTop:4, fontFamily:"var(--mono)"}}>{urlPreview}</div>
+      </div>
+
+      {/* Landing page */}
+      <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>Página intermedia (lo que ven los crawlers)</div>
+      <div className="form-row">
+        <div className="field"><label>Título</label><input type="text" value={form.landing_titulo} onChange={e=>f("landing_titulo",e.target.value)} /></div>
+        <div className="field"><label>Descripción</label><input type="text" value={form.landing_descripcion} onChange={e=>f("landing_descripcion",e.target.value)} /></div>
+      </div>
+      <div className="form-row">
+        <div className="field"><label>Imagen URL (og:image)</label><input type="text" value={form.landing_imagen} onChange={e=>f("landing_imagen",e.target.value)} placeholder="https://..." /></div>
+      </div>
+
+      {/* Pixels */}
+      <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>Pixels de conversión</div>
+      <div className="form-row">
+        <div className="field"><label>Pixel Facebook ID</label><input type="text" value={form.pixel_fb} onChange={e=>f("pixel_fb",e.target.value)} placeholder="1234567890" /></div>
+        <div className="field"><label>Pixel TikTok ID</label><input type="text" value={form.pixel_tiktok} onChange={e=>f("pixel_tiktok",e.target.value)} placeholder="ABCDEF123456" /></div>
+      </div>
+
+      {/* Destinos */}
+      <div style={{fontSize:12, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", margin:"1rem 0 .5rem"}}>
+        Destinos y rotación
+        <span style={{fontSize:11, fontWeight:400, marginLeft:8, textTransform:"none"}}>— Se usan en orden. Puedes segmentar por país o limitar por clicks.</span>
+      </div>
+      {form.destinos.map((d, i) => (
+        <div key={d.id} style={{background:"var(--surface2)", borderRadius:10, padding:"12px", marginBottom:8}}>
+          <div style={{display:"flex", justifyContent:"space-between", marginBottom:8}}>
+            <div style={{fontWeight:600, fontSize:12}}>Destino {i+1}</div>
+            <div style={{display:"flex", gap:6}}>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={()=>updDestino(d.id,"activo",!d.activo)}>{d.activo!==false?"✅ Activo":"❌ Inactivo"}</button>
+              {form.destinos.length > 1 && <button className="btn btn-ghost btn-sm" style={{color:"var(--red)",fontSize:10}} onClick={()=>delDestino(d.id)}>× Eliminar</button>}
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Nombre</label><input type="text" value={d.nombre} onChange={e=>updDestino(d.id,"nombre",e.target.value)} placeholder="Ej: Grupo WhatsApp EC" style={{fontSize:12}}/></div>
+            <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>URL destino *</label><input type="text" value={d.url} onChange={e=>updDestino(d.id,"url",e.target.value)} placeholder="https://chat.whatsapp.com/..." style={{fontSize:12,fontFamily:"var(--mono)"}}/></div>
+          </div>
+          <div className="form-row" style={{marginTop:8}}>
+            <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Países (códigos separados por coma)</label><input type="text" value={(d.paises||[]).join(",")} onChange={e=>updDestino(d.id,"paises",e.target.value.split(",").map(p=>p.trim().toUpperCase()).filter(Boolean))} placeholder="EC,CO,PE — vacío = todos" style={{fontSize:12}}/></div>
+            <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Límite de clicks (vacío = sin límite)</label><input type="number" value={d.limite_clicks||""} onChange={e=>updDestino(d.id,"limite_clicks",e.target.value?parseInt(e.target.value):null)} placeholder="500" style={{fontSize:12}}/></div>
+          </div>
+        </div>
+      ))}
+      <button className="btn btn-ghost btn-sm" onClick={addDestino} style={{marginBottom:"1rem"}}>+ Agregar destino</button>
+
+      <div className="field"><label>Notas internas</label><input type="text" value={form.notas} onChange={e=>f("notas",e.target.value)} placeholder="Uso interno..." /></div>
+
+      <div style={{display:"flex", gap:8, marginTop:8}}>
+        <button className="btn btn-primary" onClick={handleSubmit}>{isEdit?"💾 Guardar cambios":"✅ Crear link"}</button>
+        <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── ANALYTICS DEL LINK ────────────────────────────────────────
+function LinkAnalytics({ link, onClose }) {
+  const clicks = link.clicks || [];
+  const total = link.total_clicks || 0;
+
+  const agrupar = (campo) => clicks.reduce((acc, c) => {
+    const k = c[campo] || "Unknown";
+    acc[k] = (acc[k]||0)+1;
+    return acc;
+  }, {});
+
+  const paises    = Object.entries(agrupar("country")).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const platafs   = Object.entries(agrupar("platform")).sort((a,b)=>b[1]-a[1]);
+  const devices   = Object.entries(agrupar("device")).sort((a,b)=>b[1]-a[1]);
+  const browsers  = Object.entries(agrupar("browser")).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const destStats = Object.entries(agrupar("destino_id")).sort((a,b)=>b[1]-a[1]);
+
+  // Clicks por día (últimos 14 días)
+  const hoy = new Date();
+  const clicksPorDia = Array.from({length:14},(_,i)=>{
+    const d = new Date(hoy); d.setDate(d.getDate()-i);
+    const key = d.toISOString().slice(0,10);
+    return { fecha: key.slice(5), count: clicks.filter(c=>c.ts?.slice(0,10)===key).length };
+  }).reverse();
+
+  const maxDay = Math.max(...clicksPorDia.map(d=>d.count),1);
+
+  function BarsSimple({ data, total }) {
+    return (
+      <div style={{display:"flex", flexDirection:"column", gap:6}}>
+        {data.map(([label, count]) => (
+          <div key={label} style={{display:"flex", gap:8, alignItems:"center", fontSize:12}}>
+            <div style={{width:100, color:"var(--muted)", textAlign:"right", fontSize:11, flexShrink:0}}>{label}</div>
+            <div style={{flex:1, background:"var(--surface2)", borderRadius:20, height:8, overflow:"hidden"}}>
+              <div style={{width:(count/Math.max(...data.map(d=>d[1]),1)*100)+"%", height:"100%", background:"var(--accent)", borderRadius:20}}/>
+            </div>
+            <div style={{fontFamily:"var(--mono)", fontWeight:600, width:32, textAlign:"right"}}>{count}</div>
+            <div style={{color:"var(--muted)", fontSize:10, width:36}}>{total>0?(count/total*100).toFixed(0)+"%":""}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{marginTop:"1rem", borderColor:"rgba(0,74,173,.3)"}}>
+      <div style={{display:"flex", justifyContent:"space-between", marginBottom:"1rem"}}>
+        <div className="card-title" style={{margin:0}}>📊 Analytics — {link.nombre}</div>
+        <button className="btn btn-ghost btn-sm" onClick={onClose}>× Cerrar</button>
+      </div>
+
+      {total === 0 ? (
+        <div className="empty"><div style={{opacity:.3}}>📊</div><div style={{marginTop:6}}>Sin clicks aún.</div></div>
+      ) : (
+        <div>
+          {/* Resumen */}
+          <div className="grid4" style={{marginBottom:"1rem"}}>
+            {[["Total clicks", total, "var(--accent2)"],["Países", Object.keys(agrupar("country")).length, "var(--text)"],["Dispositivos", Object.keys(agrupar("device")).length, "var(--text)"],["Fuentes", Object.keys(agrupar("platform")).length, "var(--text)"]].map(([l,v,c])=>(
+              <div key={l} className="card" style={{padding:"1rem",textAlign:"center"}}>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>{l}</div>
+                <div style={{fontSize:22,fontFamily:"var(--mono)",fontWeight:700,color:c}}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Gráfica de días */}
+          <div style={{marginBottom:"1.5rem"}}>
+            <div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>Clicks últimos 14 días</div>
+            <div style={{display:"flex", gap:3, alignItems:"flex-end", height:60}}>
+              {clicksPorDia.map((d,i)=>(
+                <div key={i} style={{flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
+                  <div style={{width:"100%", background:"var(--accent)", borderRadius:"3px 3px 0 0", height:Math.max(d.count/maxDay*52,d.count>0?4:0)+"px", opacity:d.count>0?1:0.2}}/>
+                  <div style={{fontSize:8,color:"var(--muted)",transform:"rotate(-45deg)",transformOrigin:"center",whiteSpace:"nowrap"}}>{d.fecha}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid2" style={{gap:"1.5rem"}}>
+            {paises.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por país</div><BarsSimple data={paises} total={total}/></div>}
+            {platafs.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por plataforma</div><BarsSimple data={platafs} total={total}/></div>}
+            {devices.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por dispositivo</div><BarsSimple data={devices} total={total}/></div>}
+            {browsers.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por navegador</div><BarsSimple data={browsers} total={total}/></div>}
+          </div>
+
+          {/* Por destino */}
+          {destStats.length>1 && (
+            <div style={{marginTop:"1rem"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Clicks por destino</div>
+              {destStats.map(([id,count])=>{
+                const d = (link.destinos||[]).find(x=>x.id===id);
+                return (
+                  <div key={id} style={{display:"flex",gap:8,alignItems:"center",fontSize:12,marginBottom:6}}>
+                    <div style={{flex:1,color:"var(--muted)"}}>{d?.nombre||id}</div>
+                    <div style={{fontFamily:"var(--mono)",fontWeight:600}}>{count}</div>
+                    <div style={{fontSize:10,color:"var(--muted)",width:36}}>{total>0?(count/total*100).toFixed(0)+"%":""}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Export */}
+          <div style={{marginTop:"1rem",display:"flex",justifyContent:"flex-end"}}>
+            <BotonesExportar
+              headers={["Fecha/Hora","País","Ciudad","Plataforma","Dispositivo","OS","Navegador","Destino"]}
+              rows={clicks.map(c=>[c.ts?.slice(0,19)||"",c.country||"",c.city||"",c.platform||"",c.device||"",c.os||"",c.browser||"",c.destino_url||""])}
+              nombreArchivo={"clicks_"+link.slug}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
 // Cambio de contraseña inline desde el perfil admin
 function ChangePasswordInline({ client, onUpdate }) {
