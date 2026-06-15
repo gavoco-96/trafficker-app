@@ -123,6 +123,8 @@ function buildLandingPage(link, destino) {
     .btn:hover{background:#20b85a;transform:translateY(-2px);box-shadow:0 8px 24px rgba(37,211,102,.3)}
     .btn svg{width:22px;height:22px}
     .footer{margin-top:20px;font-size:12px;color:#4b5563}
+    .branding{margin-top:12px;font-size:11px;color:#374151;letter-spacing:.04em}
+    .branding strong{color:#4b5563}
   </style>
 </head>
 <body>
@@ -135,9 +137,9 @@ function buildLandingPage(link, destino) {
       Unirse ahora
     </a>
     <div class="footer">Enlace seguro</div>
+    <div class="branding">📊 <strong>TRAFFICK PRO</strong> by Gavico</div>
   </div>
   <script>
-    // Redirigir automáticamente después de 1.5s si el usuario no hace clic
     setTimeout(() => { document.getElementById('cta').click(); }, 1500);
   </script>
 </body>
@@ -149,18 +151,16 @@ export default async function handler(req, res) {
   const { slug } = req.query;
   if (!slug) return res.status(400).send("Bad request");
 
-  // Bloquear crawlers conocidos
   const ua = req.headers["user-agent"] || "";
   const isCrawler = /facebookexternalhit|twitterbot|googlebot|bingbot|linkedinbot|slackbot|preview|crawl|spider/i.test(ua);
 
-  // Obtener el link de Supabase
   const link = await getLink(slug);
 
   if (!link || !link.active) {
     return res.status(404).send("Link no encontrado");
   }
 
-  // Si es un crawler, mostrar la landing sin redirigir
+  // Si es crawler, mostrar landing para que los bots lean los meta tags
   if (isCrawler) {
     const destinos = link.destinos || [];
     const primerDestino = destinos[0]?.url || "https://wa.me";
@@ -168,7 +168,7 @@ export default async function handler(req, res) {
     return res.status(200).send(buildLandingPage(link, primerDestino));
   }
 
-  // ── Obtener IP y geolocalización ─────────────────────────────
+  // ── Geo + UA ──────────────────────────────────────────────────
   const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
     || req.headers["x-real-ip"]
     || req.socket?.remoteAddress
@@ -180,41 +180,48 @@ export default async function handler(req, res) {
   const platform = detectPlatform(ua, referer);
   const ts = new Date().toISOString();
 
-  // ── Segmentación geográfica ───────────────────────────────────
+  // ── Elegir destino ────────────────────────────────────────────
   const destinos = link.destinos || [];
   let destinoElegido = null;
+  const usarRotacion = link.rotacion_automatica === true;
 
-  // 1. Buscar destino específico para el país del usuario
-  const destinoPais = destinos.find(d =>
-    d.activo !== false &&
-    d.paises?.some(p => p.toLowerCase() === geo.countryCode.toLowerCase())
-  );
-  if (destinoPais) destinoElegido = destinoPais;
+  if (usarRotacion) {
+    // 1. Buscar destino específico para el país del usuario
+    const destinoPais = destinos.find(d =>
+      d.activo !== false &&
+      d.paises?.some(p => p.toLowerCase() === geo.countryCode.toLowerCase())
+    );
+    if (destinoPais) destinoElegido = destinoPais;
 
-  // 2. Si no hay destino por país, usar rotación por clicks
-  if (!destinoElegido) {
-    const destinosActivos = destinos.filter(d => d.activo !== false);
-    for (const d of destinosActivos) {
-      const clicksActuales = d.clicks || 0;
-      const limiteClicks = d.limite_clicks || 99999;
-      if (clicksActuales < limiteClicks) {
-        destinoElegido = d;
-        break;
+    // 2. Si no hay por país, rotar por clicks entre los activos con cupo
+    if (!destinoElegido) {
+      const destinosActivos = destinos.filter(d => d.activo !== false);
+      for (const d of destinosActivos) {
+        const clicksActuales = d.clicks || 0;
+        const limiteClicks = d.limite_clicks || 99999;
+        if (clicksActuales < limiteClicks) {
+          destinoElegido = d;
+          break;
+        }
+      }
+      // Si todos llenaron su límite, usar el último activo
+      if (!destinoElegido && destinosActivos.length > 0) {
+        destinoElegido = destinosActivos[destinosActivos.length - 1];
       }
     }
-    // Si todos llenaron su límite, usar el último
-    if (!destinoElegido && destinosActivos.length > 0) {
-      destinoElegido = destinosActivos[destinosActivos.length - 1];
-    }
+  } else {
+    // Sin rotación: siempre el primer destino activo
+    destinoElegido = destinos.find(d => d.activo !== false) || destinos[0] || null;
   }
 
   if (!destinoElegido) {
     return res.status(404).send("No hay destinos disponibles");
   }
 
-  // ── Registrar el click ────────────────────────────────────────
+  // ── Registrar click ───────────────────────────────────────────
   const click = {
-    ts, ip: ip.slice(0, 15), // no guardar IP completa por privacidad
+    ts,
+    ip: ip.slice(0, 15),
     country: geo.country,
     countryCode: geo.countryCode,
     city: geo.city,
@@ -225,7 +232,6 @@ export default async function handler(req, res) {
     destino_url: destinoElegido.url
   };
 
-  // Actualizar clicks totales y del destino elegido
   const clicks = link.clicks || [];
   clicks.push(click);
 
@@ -236,16 +242,25 @@ export default async function handler(req, res) {
     return d;
   });
 
-  // Guardar async (no esperamos para no demorar la redirección)
   updateLink(link.id, {
     destinos: nuevosDestinos,
-    clicks: clicks.slice(-5000), // máx 5000 clicks en histórico
+    clicks: clicks.slice(-5000),
     total_clicks: (link.total_clicks || 0) + 1,
     ultimo_click: ts
   }).catch(() => {});
 
-  // ── Redirigir a la landing intermedia ────────────────────────
-  res.setHeader("Content-Type", "text/html");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  return res.status(200).send(buildLandingPage(link, destinoElegido.url));
+  // ── Redirigir: con o sin landing ─────────────────────────────
+  const usarLanding = link.usar_landing === true;
+
+  if (usarLanding) {
+    // Mostrar página intermedia con píxeles y botón
+    res.setHeader("Content-Type", "text/html");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    return res.status(200).send(buildLandingPage(link, destinoElegido.url));
+  } else {
+    // Redirect directo — máxima conversión
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Location", destinoElegido.url);
+    return res.status(302).end();
+  }
 }
