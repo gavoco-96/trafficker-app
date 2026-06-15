@@ -2389,9 +2389,33 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
   const hermes = client.hermesData || {};
   const momentos = hermes.momentos || {};
   const duracion = isApollo ? (client.apolloData?.duracion || 21) : 15;
-  const dias = Math.min(getDiasTranscurridos(client), duracion);
-  const pct = (dias / duracion) * 100;
+  const [editMode, setEditMode] = useState(false);
+  const [editFecha, setEditFecha] = useState("");
+  const [editDuracion, setEditDuracion] = useState(duracion);
   const { show, el: toastEl } = useToast();
+
+  // Calcular días usando fecha manual del apolloData si existe, sino desde contratos
+  const fechaManual = client.apolloData?.fechaInicioMision;
+  const fechaBase = fechaManual || (client.contratos?.[0]?.fechaInicio) || "";
+  const diasBrutos = fechaBase
+    ? Math.max(0, Math.floor((new Date() - new Date(fechaBase + "T00:00:00")) / 86400000))
+    : getDiasTranscurridos(client);
+  const dias = Math.min(diasBrutos, duracion);
+  const pct = (dias / duracion) * 100;
+
+  async function guardarAjuste() {
+    const updated = {
+      ...client,
+      apolloData: {
+        ...(client.apolloData || {}),
+        fechaInicioMision: editFecha || fechaBase,
+        duracion: parseInt(editDuracion) || duracion,
+      }
+    };
+    await onUpdate(updated);
+    setEditMode(false);
+    show("✓ Ajuste guardado", "ok");
+  }
 
   async function toggleMomento(id) {
     if (readOnly) return;
@@ -2430,8 +2454,34 @@ function HermesProgressBar({ client, onUpdate, readOnly }) {
           <div style={{ fontWeight: 700, fontSize: 15, color: isApollo ? "#4d9fff" : "var(--accent2)", letterSpacing: ".05em" }}>
             {isApollo ? "🚀 APOLLO" : "✦ HERMES"} — Dia {dias} de {duracion}
           </div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>{Math.round(pct)}% completado</div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{Math.round(pct)}% completado</div>
+            {!readOnly && isApollo && (
+              <button className="btn btn-ghost btn-sm" style={{ fontSize:10, padding:"2px 8px" }}
+                onClick={() => { setEditMode(e=>!e); setEditFecha(fechaBase); setEditDuracion(duracion); }}>
+                {editMode ? "× Cerrar" : "⚙️ Ajustar"}
+              </button>
+            )}
+          </div>
         </div>
+        {/* Panel de ajuste de fase */}
+        {editMode && !readOnly && (
+          <div style={{ background:"rgba(0,74,173,.08)", border:"1px solid rgba(0,74,173,.2)", borderRadius:8, padding:"10px 12px", marginBottom:8 }}>
+            <div style={{ fontSize:11, color:"var(--muted)", marginBottom:8 }}>Ajusta la fecha de inicio y duración de la misión para que la barra refleje la fase correcta.</div>
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end" }}>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>Fecha inicio de misión</label>
+                <input type="date" value={editFecha} onChange={e => setEditFecha(e.target.value)} style={{ fontSize:12 }} />
+              </div>
+              <div className="field" style={{ marginBottom:0 }}>
+                <label style={{ fontSize:11 }}>Duración total (días)</label>
+                <input type="number" min="1" max="90" value={editDuracion} onChange={e => setEditDuracion(e.target.value)} style={{ width:80, fontSize:12 }} />
+              </div>
+              <button className="btn btn-primary btn-sm" onClick={guardarAjuste}>💾 Guardar</button>
+            </div>
+            {fechaBase && <div style={{ fontSize:10, color:"var(--muted)", marginTop:6 }}>Fecha actual: {fechaBase} · Días transcurridos: {diasBrutos}</div>}
+          </div>
+        )}
         <div className="hermes-track" style={isApollo ? { background: "linear-gradient(90deg,#000510 0%,#001a3d 50%,#000c20 100%)" } : {}}>
           <div className="hermes-stars" />
           <div className="hermes-fill" style={{ width: `${pct}%`, background: isApollo ? "linear-gradient(90deg,rgba(0,74,173,.4),rgba(77,159,255,.2))" : undefined }} />
@@ -3913,6 +3963,9 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
                   {vis.map(c => (
                     <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
                       {c.key === "date" ? fmtDate(r.date)
+                        : c.key === "costo_wp" ? (()=>{ const wp=parseFloat(r.personas_wp)||0,inv=parseFloat(r.inversion)||0; return wp>0&&inv>0?"$"+fmtNum(inv/wp,2):"—"; })()
+                        : c.key === "pct_captura_wp" ? (()=>{ const wp=parseFloat(r.personas_wp)||0,fb=parseFloat(r.formularios||r.resultados||r.clientesPotenciales)||0; return wp>0&&fb>0?fmtNum(wp/fb*100,1)+"%":"—"; })()
+                        : c.key === "cpa" ? (()=>{ const res=parseFloat(r.resultados||r.formularios)||0,inv=parseFloat(r.inversion)||0; return res>0&&inv>0?"$"+fmtNum(inv/res,2):"—"; })()
                         : (() => { const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||""); })()}
                     </td>
                   ))}
@@ -5560,7 +5613,7 @@ function buildReportMessage(client, records) {
 // Reporte APOLLO — formato gasto diario exacto para lanzamientos
 function buildReportApollo(client, records) {
   if (!records || !records.length) return null;
-  const r = records[records.length - 1]; // último registro
+  const r = records[records.length - 1];
   const fecha = r.date ? new Date(r.date + "T12:00:00").toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
   const gasto = parseFloat(r.inversion) || 0;
@@ -5570,19 +5623,26 @@ function buildReportApollo(client, records) {
   const costoWP = personasWP > 0 ? gasto / personasWP : 0;
   const captura = personasFB > 0 && personasWP > 0 ? ((personasWP / personasFB) * 100) : 0;
 
-  // Campañas activas ese día
+  // Fase actual de la misión
+  const duracion = client.apolloData?.duracion || 21;
+  const fechaBase = client.apolloData?.fechaInicioMision || client.contratos?.[0]?.fechaInicio || "";
+  const diasMision = fechaBase ? Math.max(0, Math.floor((new Date() - new Date(fechaBase + "T00:00:00")) / 86400000)) : 0;
+  const faseIdx = Math.min(Math.floor((diasMision / duracion) * APOLLO_FASES.length), APOLLO_FASES.length - 1);
+  const faseActual = APOLLO_FASES[faseIdx];
+
   const campanas = r.campanas ? `\n📡 *Campañas activas:*\n${r.campanas.split(",").map(c => `• ${c.trim()}`).join("\n")}` : "";
   const notas = r.notas_dia ? `\n📝 ${r.notas_dia}` : "";
 
   let msg = `🚀 *GASTO DIARIO — ${client.name}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━\n`;
   msg += `📅 Fecha: ${fecha}\n`;
+  if (faseActual) msg += `${faseActual.icono} Fase: *${faseActual.nombre}* (Día ${diasMision} de ${duracion})\n`;
   msg += `💵 Gasto: $${fmtNum(gasto, 2)}\n`;
   msg += `👥 Personas en FB/LP: ${fmtNum(personasFB)}\n`;
   msg += `📱 Personas en WP: ${fmtNum(personasWP)}\n`;
   msg += `💰 Costo en FB/LP: $${fmtNum(costoFB, 2)}\n`;
   msg += `💰 Costo en WP: $${fmtNum(costoWP, 2)}\n`;
-  msg += `📊 % de Captura: ${fmtNum(captura, 2)}\n`;
+  msg += `📊 % de Captura: ${fmtNum(captura, 2)}%\n`;
   if (r.cpm) msg += `🎯 CPM: $${fmtNum(r.cpm, 2)} | CPC: $${fmtNum(r.cpc || 0, 2)} | CTR: ${fmtNum(r.ctr || 0, 2)}%\n`;
   msg += campanas;
   msg += notas;
