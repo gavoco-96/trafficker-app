@@ -7582,7 +7582,7 @@ function GruposPanel() {
 
       {/* Tabs */}
       <div style={{display:"flex",gap:8,marginBottom:"1.5rem",borderBottom:"1px solid var(--border)",paddingBottom:12}}>
-        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes automáticos"]].map(([k,l])=>(
+        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes automáticos"],["remarketing","🎯 Remarketing"]].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,background:tab===k?"var(--accent)":"var(--surface2)",color:tab===k?"#fff":"var(--muted)"}}>
             {l}
           </button>
@@ -7744,6 +7744,139 @@ function GruposPanel() {
               </div>
             )}
           </div>
+
+          <button className="btn" style={{alignSelf:"flex-start"}} onClick={guardarConfig} disabled={saving}>
+            {saving ? "Guardando..." : "💾 Guardar configuración"}
+          </button>
+        </div>
+      )}
+
+      {/* ── TAB REMARKETING ── */}
+      {tab === "remarketing" && config && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+
+          {/* Toggle principal */}
+          <div style={{background:"var(--surface2)",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:15}}>🎯 Remarketing activo</div>
+              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Envía mensajes automáticos a leads que llenaron el formulario pero no entraron al grupo</div>
+            </div>
+            <div onClick={()=>setConfig({...config,remarketing_activo:!config.remarketing_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.remarketing_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:config.remarketing_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+            </div>
+          </div>
+
+          {config.remarketing_activo && (<>
+
+            {/* Mensaje 1 */}
+            <div className="card" style={{padding:"20px 24px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#fff",flexShrink:0}}>1</div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14}}>Primer mensaje</div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>Se envía si el lead no entra al grupo en el tiempo definido</div>
+                </div>
+              </div>
+              <div className="form-row" style={{marginBottom:12}}>
+                <div className="field" style={{maxWidth:180}}>
+                  <label>Enviar después de (minutos)</label>
+                  <input type="number" min="1" value={config.remarketing_msg1_min||10} onChange={e=>setConfig({...config,remarketing_msg1_min:parseInt(e.target.value)||10})} />
+                </div>
+                <div className="field">
+                  <label>Tipo de media</label>
+                  <select value={config.remarketing_msg1_media_tipo||""} onChange={e=>setConfig({...config,remarketing_msg1_media_tipo:e.target.value||null})}>
+                    <option value="">Solo texto</option>
+                    <option value="imagen">🖼️ Imagen</option>
+                    <option value="video">🎥 Video</option>
+                  </select>
+                </div>
+              </div>
+              {config.remarketing_msg1_media_tipo && (
+                <div className="field" style={{marginBottom:12}}>
+                  <label>URL de imagen o video</label>
+                  <input type="text" value={config.remarketing_msg1_media_url||""} onChange={e=>setConfig({...config,remarketing_msg1_media_url:e.target.value})} placeholder="https://..." />
+                </div>
+              )}
+              <div className="field">
+                <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{link}"}</span></label>
+                <textarea value={config.remarketing_msg1_texto||""} onChange={e=>setConfig({...config,remarketing_msg1_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre} 👋, vimos que te registraste pero aún no te has unido al grupo. Aquí tienes el link: {link}"/>
+              </div>
+              <div style={{marginTop:10,padding:"8px 12px",background:"rgba(77,159,255,.06)",borderRadius:8,fontSize:12,color:"var(--muted)"}}>
+                💡 Este mensaje se envía al WhatsApp privado del lead, no al grupo.
+              </div>
+            </div>
+
+            {/* Mensaje 2 */}
+            <div className="card" style={{padding:"20px 24px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:"var(--surface2)",border:"2px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"var(--muted)",flexShrink:0}}>2</div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14}}>Segundo mensaje</div>
+                    <div style={{fontSize:12,color:"var(--muted)"}}>Recordatorio final — solo si aún no entró</div>
+                  </div>
+                </div>
+                <div onClick={()=>setConfig({...config,remarketing_msg2_activo:!config.remarketing_msg2_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.remarketing_msg2_activo?"var(--green)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                  <div style={{position:"absolute",top:3,left:config.remarketing_msg2_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+                </div>
+              </div>
+              {config.remarketing_msg2_activo && (
+                <>
+                  <div className="form-row" style={{marginBottom:12}}>
+                    <div className="field" style={{maxWidth:180}}>
+                      <label>Enviar después de (horas)</label>
+                      <input type="number" min="1" value={config.remarketing_msg2_horas||24} onChange={e=>setConfig({...config,remarketing_msg2_horas:parseInt(e.target.value)||24})} />
+                    </div>
+                    <div className="field">
+                      <label>Tipo de media</label>
+                      <select value={config.remarketing_msg2_media_tipo||""} onChange={e=>setConfig({...config,remarketing_msg2_media_tipo:e.target.value||null})}>
+                        <option value="">Solo texto</option>
+                        <option value="imagen">🖼️ Imagen</option>
+                        <option value="video">🎥 Video</option>
+                      </select>
+                    </div>
+                  </div>
+                  {config.remarketing_msg2_media_tipo && (
+                    <div className="field" style={{marginBottom:12}}>
+                      <label>URL de imagen o video</label>
+                      <input type="text" value={config.remarketing_msg2_media_url||""} onChange={e=>setConfig({...config,remarketing_msg2_media_url:e.target.value})} placeholder="https://..." />
+                    </div>
+                  )}
+                  <div className="field">
+                    <label>Mensaje</label>
+                    <textarea value={config.remarketing_msg2_texto||""} onChange={e=>setConfig({...config,remarketing_msg2_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, es tu última oportunidad de unirte 🚀 {link}"/>
+                  </div>
+                  <div style={{marginTop:10,padding:"8px 12px",background:"rgba(255,222,89,.06)",borderRadius:8,fontSize:12,color:"var(--amber)"}}>
+                    ⚠️ Recomendamos no enviar más de 2 mensajes para evitar que el número sea reportado como spam.
+                  </div>
+                </>
+              )}
+              {!config.remarketing_msg2_activo && (
+                <div style={{fontSize:12,color:"var(--muted)",padding:"8px 0"}}>Activa el segundo mensaje si quieres enviar un recordatorio final a las {config.remarketing_msg2_horas||24} horas.</div>
+              )}
+            </div>
+
+            {/* Resumen visual del flujo */}
+            <div style={{background:"var(--surface2)",borderRadius:10,padding:"14px 18px"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Flujo de remarketing</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,flexWrap:"wrap"}}>
+                <span style={{padding:"4px 10px",background:"rgba(77,159,255,.15)",color:"var(--accent)",borderRadius:20}}>Lead llena formulario</span>
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:20}}>{config.remarketing_msg1_min||10} min</span>
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"rgba(16,185,129,.15)",color:"var(--green)",borderRadius:20}}>Mensaje 1</span>
+                {config.remarketing_msg2_activo && (<>
+                  <span style={{color:"var(--muted)"}}>→</span>
+                  <span style={{padding:"4px 10px",background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:20}}>{config.remarketing_msg2_horas||24}h</span>
+                  <span style={{color:"var(--muted)"}}>→</span>
+                  <span style={{padding:"4px 10px",background:"rgba(16,185,129,.15)",color:"var(--green)",borderRadius:20}}>Mensaje 2</span>
+                </>)}
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"rgba(239,68,68,.1)",color:"var(--red)",borderRadius:20}}>Si entra al grupo → se cancela ✓</span>
+              </div>
+            </div>
+
+          </>)}
 
           <button className="btn" style={{alignSelf:"flex-start"}} onClick={guardarConfig} disabled={saving}>
             {saving ? "Guardando..." : "💾 Guardar configuración"}
