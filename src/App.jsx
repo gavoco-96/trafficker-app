@@ -7512,6 +7512,248 @@ const LinksDB = {
   }
 };
 
+// ─── PANEL DE GRUPOS WHATSAPP ──────────────────────────────────
+const SUPA_GRUPOS_URL  = `${SUPABASE_URL}/rest/v1/wa_grupos`;
+const SUPA_CONFIG_URL  = `${SUPABASE_URL}/rest/v1/wa_config`;
+const BOT_URL          = import.meta.env.VITE_BOT_URL || "";
+
+function GruposPanel() {
+  const [grupos, setGrupos]       = useState([]);
+  const [config, setConfig]       = useState(null);
+  const [tab, setTab]             = useState("grupos"); // grupos | mensajes
+  const [loading, setLoading]     = useState(true);
+  const [saving, setSaving]       = useState(false);
+  const [toast, setToast]         = useState(null);
+  const [editGrupo, setEditGrupo] = useState(null);
+
+  const show = (msg, tipo="ok") => { setToast({msg,tipo}); setTimeout(()=>setToast(null),3500); };
+
+  async function cargar() {
+    setLoading(true);
+    try {
+      const [g, c] = await Promise.all([
+        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
+        fetch(`${SUPA_CONFIG_URL}?id=eq.global&select=*`, { headers: HL }).then(r=>r.json())
+      ]);
+      setGrupos(Array.isArray(g) ? g : []);
+      setConfig(c?.[0] || {});
+    } catch(e) { show("Error cargando datos", "err"); }
+    setLoading(false);
+  }
+
+  useEffect(() => { cargar(); }, []);
+
+  async function guardarConfig() {
+    setSaving(true);
+    try {
+      const r = await fetch(`${SUPA_CONFIG_URL}?id=eq.global`, {
+        method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
+        body: JSON.stringify({ ...config, actualizado_en: new Date().toISOString() })
+      });
+      if (!r.ok) throw new Error("Error guardando");
+      // Invalidar cache del bot
+      if (BOT_URL) await fetch(`${BOT_URL}/config/refresh`, { method: "POST" }).catch(()=>{});
+      show("✓ Configuración guardada");
+    } catch(e) { show("❌ Error: " + e.message, "err"); }
+    setSaving(false);
+  }
+
+  async function actualizarGrupo(id, data) {
+    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${id}`, {
+      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
+      body: JSON.stringify(data)
+    });
+    cargar();
+  }
+
+  const estadoColor = { activo:"var(--green)", lleno:"var(--amber)", pausado:"var(--muted)", archivado:"var(--border)" };
+
+  return (
+    <div style={{padding:"1.5rem", maxWidth:900, margin:"0 auto"}}>
+      {toast && <div style={{position:"fixed",top:20,right:20,zIndex:9999,background:toast.tipo==="err"?"var(--red)":"var(--green)",color:"#fff",padding:"10px 20px",borderRadius:10,fontWeight:600,fontSize:13}}>{toast.msg}</div>}
+
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.5rem"}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>💬 Grupos WhatsApp</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Gestiona tus grupos y mensajes automáticos</div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={cargar}>🔄 Actualizar</button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:8,marginBottom:"1.5rem",borderBottom:"1px solid var(--border)",paddingBottom:12}}>
+        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes automáticos"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,background:tab===k?"var(--accent)":"var(--surface2)",color:tab===k?"#fff":"var(--muted)"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB GRUPOS ── */}
+      {tab === "grupos" && (
+        <div>
+          {loading ? <div style={{color:"var(--muted)",textAlign:"center",padding:"3rem"}}>Cargando grupos...</div> : (
+            grupos.length === 0 ? (
+              <div style={{textAlign:"center",padding:"3rem",color:"var(--muted)"}}>
+                <div style={{fontSize:40,marginBottom:12}}>💬</div>
+                <div style={{fontWeight:600,marginBottom:8}}>No hay grupos sincronizados</div>
+                <div style={{fontSize:13}}>Conecta el bot de WhatsApp y los grupos aparecerán aquí automáticamente.</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {grupos.map(g => (
+                  <div key={g.id} className="card" style={{padding:"16px 20px"}}>
+                    {editGrupo?.id === g.id ? (
+                      // Modo edición
+                      <div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Nombre</label>
+                            <input type="text" value={editGrupo.nombre||""} onChange={e=>setEditGrupo({...editGrupo,nombre:e.target.value})} />
+                          </div>
+                          <div className="field">
+                            <label>Límite de miembros</label>
+                            <input type="number" value={editGrupo.limite_miembros||""} onChange={e=>setEditGrupo({...editGrupo,limite_miembros:e.target.value?parseInt(e.target.value):null})} placeholder="Sin límite" />
+                          </div>
+                        </div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Estado</label>
+                            <select value={editGrupo.estado||"activo"} onChange={e=>setEditGrupo({...editGrupo,estado:e.target.value})}>
+                              <option value="activo">Activo</option>
+                              <option value="pausado">Pausado</option>
+                              <option value="archivado">Archivado</option>
+                            </select>
+                          </div>
+                          <div className="field">
+                            <label>Link enmascarado ID (opcional)</label>
+                            <input type="text" value={editGrupo.link_id||""} onChange={e=>setEditGrupo({...editGrupo,link_id:e.target.value})} placeholder="lnk_..." />
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button className="btn btn-sm" onClick={async()=>{ await actualizarGrupo(g.id,editGrupo); setEditGrupo(null); show("✓ Grupo actualizado"); }}>Guardar</button>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo(null)}>Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      // Vista normal
+                      <div style={{display:"flex",alignItems:"center",gap:16}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                            <span style={{fontWeight:700,fontSize:15}}>{g.nombre || g.jid}</span>
+                            <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,background:`${estadoColor[g.estado] || "var(--border)"}22`,color:estadoColor[g.estado] || "var(--muted)"}}>{g.estado || "activo"}</span>
+                            {g.link_id && <span style={{fontSize:11,background:"rgba(77,159,255,.15)",color:"var(--accent)",padding:"2px 8px",borderRadius:10}}>🔗 Link vinculado</span>}
+                          </div>
+                          <div style={{fontSize:12,color:"var(--muted)"}}>
+                            <span style={{marginRight:16}}>👥 <strong style={{color:"var(--text)"}}>{g.miembros_count || 0}</strong>{g.limite_miembros ? ` / ${g.limite_miembros}` : " miembros"}</span>
+                            <span>Sync: {g.ultima_sync ? new Date(g.ultima_sync).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"}) : "—"}</span>
+                          </div>
+                          {g.limite_miembros && (
+                            <div style={{marginTop:8,height:4,borderRadius:4,background:"var(--border)",overflow:"hidden"}}>
+                              <div style={{height:"100%",borderRadius:4,background:g.miembros_count>=g.limite_miembros?"var(--red)":g.miembros_count/g.limite_miembros>0.8?"var(--amber)":"var(--green)",width:`${Math.min(100,Math.round((g.miembros_count||0)/g.limite_miembros*100))}%`,transition:"width .3s"}} />
+                            </div>
+                          )}
+                        </div>
+                        <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo({...g})}>✏️ Editar</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* ── TAB MENSAJES AUTOMÁTICOS ── */}
+      {tab === "mensajes" && config && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+
+          {/* Bienvenida */}
+          <div className="card" style={{padding:"20px 24px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>👋 Mensaje de bienvenida</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Se envía al privado cuando alguien entra a un grupo</div>
+              </div>
+              <div onClick={()=>setConfig({...config,bienvenida_activo:!config.bienvenida_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.bienvenida_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.bienvenida_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.bienvenida_activo && (
+              <div>
+                <div className="field" style={{marginBottom:12}}>
+                  <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} para el nombre, {"{grupo}"} para el nombre del grupo</span></label>
+                  <textarea value={config.bienvenida_texto||""} onChange={e=>setConfig({...config,bienvenida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, bienvenido/a al grupo 👋&#10;&#10;Aquí encontrarás..."/>
+                </div>
+                <div className="form-row">
+                  <div className="field">
+                    <label>URL de imagen o video (opcional)</label>
+                    <input type="text" value={config.bienvenida_media_url||""} onChange={e=>setConfig({...config,bienvenida_media_url:e.target.value})} placeholder="https://..." />
+                  </div>
+                  <div className="field">
+                    <label>Tipo de media</label>
+                    <select value={config.bienvenida_media_tipo||""} onChange={e=>setConfig({...config,bienvenida_media_tipo:e.target.value||null})}>
+                      <option value="">Solo texto</option>
+                      <option value="imagen">🖼️ Imagen</option>
+                      <option value="video">🎥 Video</option>
+                    </select>
+                  </div>
+                </div>
+                {config.bienvenida_media_url && config.bienvenida_media_tipo === "imagen" && (
+                  <div style={{marginTop:8}}>
+                    <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>Vista previa:</div>
+                    <img src={config.bienvenida_media_url} alt="preview" style={{maxWidth:200,borderRadius:8,border:"1px solid var(--border)"}} onError={e=>e.target.style.display="none"} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Despedida */}
+          <div className="card" style={{padding:"20px 24px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>👋 Mensaje de despedida</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Se envía al privado cuando alguien sale de un grupo</div>
+              </div>
+              <div onClick={()=>setConfig({...config,despedida_activo:!config.despedida_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.despedida_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.despedida_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.despedida_activo && (
+              <div>
+                <div className="field" style={{marginBottom:12}}>
+                  <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{grupo}"}</span></label>
+                  <textarea value={config.despedida_texto||""} onChange={e=>setConfig({...config,despedida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hasta luego {nombre} 👋&#10;&#10;Fue un placer tenerte con nosotros..."/>
+                </div>
+                <div className="form-row">
+                  <div className="field">
+                    <label>URL de imagen o video (opcional)</label>
+                    <input type="text" value={config.despedida_media_url||""} onChange={e=>setConfig({...config,despedida_media_url:e.target.value})} placeholder="https://..." />
+                  </div>
+                  <div className="field">
+                    <label>Tipo de media</label>
+                    <select value={config.despedida_media_tipo||""} onChange={e=>setConfig({...config,despedida_media_tipo:e.target.value||null})}>
+                      <option value="">Solo texto</option>
+                      <option value="imagen">🖼️ Imagen</option>
+                      <option value="video">🎥 Video</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button className="btn" style={{alignSelf:"flex-start"}} onClick={guardarConfig} disabled={saving}>
+            {saving ? "Guardando..." : "💾 Guardar configuración"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── PANEL PRINCIPAL DE LINKS ──────────────────────────────────
 function LinksPanel() {
   const [links, setLinks]         = useState([]);
@@ -9269,7 +9511,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "grupos", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : v === "grupos" ? "💬 Grupos WA" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -9361,6 +9603,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             )}
             {view === "links" && (
               <LinksPanel />
+            )}
+            {view === "grupos" && (
+              <GruposPanel />
             )}
             {view === "comandos" && (
               <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
