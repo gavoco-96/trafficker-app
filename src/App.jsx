@@ -7514,25 +7514,103 @@ const LinksDB = {
 
 // ─── SELECTOR DE GRUPOS ───────────────────────────────────────
 function GruposSelector({ grupos, seleccionados, onChange, label }) {
+  const [abierto, setAbierto]   = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+  const ref = useRef();
+
+  // Cerrar al hacer clic fuera
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   const toggle = (jid) => {
     if (seleccionados.includes(jid)) onChange(seleccionados.filter(j=>j!==jid));
     else onChange([...seleccionados, jid]);
   };
+
+  const filtrados = grupos.filter(g =>
+    (g.nombre||g.jid).toLowerCase().includes(busqueda.toLowerCase()) ||
+    (g.etiquetas||[]).some(et=>et.toLowerCase().includes(busqueda.toLowerCase()))
+  );
+
+  const nombresSeleccionados = seleccionados.map(jid => {
+    const g = grupos.find(x=>x.jid===jid);
+    return g?.nombre || jid;
+  });
+
   return (
-    <div style={{marginBottom:12}}>
-      <label style={{display:"block",fontSize:12,fontWeight:600,marginBottom:6,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>{label} <span style={{fontWeight:400,textTransform:"none"}}>— vacío = todos los grupos</span></label>
-      {grupos.length === 0 ? (
-        <div style={{fontSize:12,color:"var(--muted)",padding:"8px 0"}}>No hay grupos sincronizados aún</div>
-      ) : (
-        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-          {grupos.map(g=>{
-            const sel = seleccionados.includes(g.jid);
-            return (
-              <div key={g.jid} onClick={()=>toggle(g.jid)} style={{padding:"4px 12px",borderRadius:20,fontSize:12,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"rgba(77,159,255,.15)":"transparent",color:sel?"var(--accent)":"var(--muted)",transition:"all .15s"}}>
-                {g.nombre||g.jid} {g.etiquetas?.length ? `(${g.etiquetas.join(", ")})` : ""}
-              </div>
-            );
-          })}
+    <div style={{marginBottom:12,position:"relative"}} ref={ref}>
+      <label style={{display:"block",fontSize:12,fontWeight:600,marginBottom:6,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>
+        {label} <span style={{fontWeight:400,textTransform:"none"}}>— vacío = todos los grupos</span>
+      </label>
+
+      {/* Trigger */}
+      <div onClick={()=>setAbierto(!abierto)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--surface2)",border:`1px solid ${abierto?"var(--accent)":"var(--border)"}`,borderRadius:8,cursor:"pointer",minHeight:38,gap:8}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4,flex:1}}>
+          {seleccionados.length === 0
+            ? <span style={{fontSize:13,color:"var(--muted)"}}>Todos los grupos</span>
+            : nombresSeleccionados.slice(0,3).map((n,i)=>(
+                <span key={i} style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:"rgba(77,159,255,.2)",color:"var(--accent)"}}>{n}</span>
+              ))
+          }
+          {seleccionados.length > 3 && (
+            <span style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:"var(--border)",color:"var(--muted)"}}>+{seleccionados.length-3} más</span>
+          )}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+          {seleccionados.length > 0 && (
+            <span style={{fontSize:11,background:"var(--accent)",color:"#fff",borderRadius:10,padding:"1px 7px",fontWeight:700}}>{seleccionados.length}</span>
+          )}
+          <span style={{color:"var(--muted)",fontSize:12,transition:"transform .2s",display:"inline-block",transform:abierto?"rotate(180deg)":"rotate(0deg)"}}>▼</span>
+        </div>
+      </div>
+
+      {/* Dropdown */}
+      {abierto && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:999,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,.4)",marginTop:4,overflow:"hidden"}}>
+          {/* Búsqueda */}
+          <div style={{padding:"8px 10px",borderBottom:"1px solid var(--border)"}}>
+            <input
+              autoFocus
+              type="text"
+              value={busqueda}
+              onChange={e=>setBusqueda(e.target.value)}
+              placeholder="Buscar grupo o etiqueta..."
+              style={{width:"100%",fontSize:13,background:"transparent",border:"none",outline:"none",color:"var(--text)"}}
+            />
+          </div>
+
+          {/* Acciones rápidas */}
+          <div style={{display:"flex",gap:6,padding:"6px 10px",borderBottom:"1px solid var(--border)"}}>
+            <button onClick={()=>onChange(grupos.map(g=>g.jid))} style={{fontSize:11,padding:"2px 8px",borderRadius:10,border:"1px solid var(--border)",background:"none",cursor:"pointer",color:"var(--muted)"}}>Seleccionar todos</button>
+            <button onClick={()=>onChange([])} style={{fontSize:11,padding:"2px 8px",borderRadius:10,border:"1px solid var(--border)",background:"none",cursor:"pointer",color:"var(--muted)"}}>Limpiar</button>
+          </div>
+
+          {/* Lista */}
+          <div style={{maxHeight:240,overflowY:"auto"}}>
+            {filtrados.length === 0
+              ? <div style={{padding:"12px",fontSize:13,color:"var(--muted)",textAlign:"center"}}>Sin resultados</div>
+              : filtrados.map(g => {
+                  const sel = seleccionados.includes(g.jid);
+                  return (
+                    <div key={g.jid} onClick={()=>toggle(g.jid)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",cursor:"pointer",background:sel?"rgba(77,159,255,.08)":"transparent",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+                      <div style={{width:16,height:16,borderRadius:4,border:`2px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"var(--accent)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        {sel && <span style={{color:"#fff",fontSize:10,lineHeight:1}}>✓</span>}
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:sel?600:400,color:sel?"var(--text)":"var(--muted)"}}>{g.nombre||g.jid}</div>
+                        {g.etiquetas?.length > 0 && (
+                          <div style={{fontSize:11,color:"var(--amber)",marginTop:1}}>{g.etiquetas.join(" · ")}</div>
+                        )}
+                      </div>
+                      <div style={{fontSize:11,color:"var(--muted)"}}>👥 {g.miembros_count||0}</div>
+                    </div>
+                  );
+                })
+            }
+          </div>
         </div>
       )}
     </div>
