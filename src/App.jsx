@@ -7515,7 +7515,100 @@ const LinksDB = {
 // ─── PANEL DE GRUPOS WHATSAPP ──────────────────────────────────
 const SUPA_GRUPOS_URL  = `${SUPA_URL}/rest/v1/wa_grupos`;
 const SUPA_CONFIG_URL  = `${SUPA_URL}/rest/v1/wa_config`;
+const SUPA_STORAGE_URL = `${SUPA_URL}/storage/v1/object/wa-media`;
+const SUPA_PUBLIC_URL  = `${SUPA_URL}/storage/v1/object/public/wa-media`;
 const BOT_URL          = import.meta.env.VITE_BOT_URL || "";
+
+// ─── COMPONENTE DE UPLOAD DE MEDIA ────────────────────────────
+function MediaUpload({ value, tipo, onChangeUrl, onChangeTipo, label = "Media" }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError]         = useState(null);
+  const inputRef                  = React.useRef();
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validar tipo
+    const esImagen = file.type.startsWith("image/");
+    const esVideo  = file.type.startsWith("video/");
+    if (!esImagen && !esVideo) { setError("Solo se permiten imágenes y videos"); return; }
+
+    // Validar tamaño — imágenes max 5MB, videos max 50MB
+    const maxMB = esVideo ? 50 : 5;
+    if (file.size > maxMB * 1024 * 1024) { setError(`Máximo ${maxMB}MB para ${esVideo?"videos":"imágenes"}`); return; }
+
+    setUploading(true);
+    setError(null);
+
+    try {
+      const ext      = file.name.split(".").pop();
+      const nombre   = `${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
+      const r = await fetch(`${SUPA_STORAGE_URL}/${nombre}`, {
+        method: "POST",
+        headers: { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": file.type },
+        body: file
+      });
+      if (!r.ok) { const t = await r.text(); throw new Error(t); }
+      const url = `${SUPA_PUBLIC_URL}/${nombre}`;
+      onChangeUrl(url);
+      onChangeTipo(esVideo ? "video" : "imagen");
+    } catch(e) {
+      setError("Error subiendo archivo: " + e.message);
+    }
+    setUploading(false);
+  }
+
+  function limpiar() { onChangeUrl(""); onChangeTipo(""); if (inputRef.current) inputRef.current.value = ""; }
+
+  return (
+    <div style={{marginBottom:12}}>
+      <label style={{display:"block",fontSize:12,fontWeight:600,marginBottom:6,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>{label}</label>
+
+      {/* Preview si hay archivo */}
+      {value && tipo === "imagen" && (
+        <div style={{marginBottom:8,position:"relative",display:"inline-block"}}>
+          <img src={value} alt="preview" style={{maxWidth:200,maxHeight:120,borderRadius:8,border:"1px solid var(--border)",display:"block"}} onError={e=>e.target.style.display="none"} />
+          <button onClick={limpiar} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:"50%",background:"var(--red)",border:"none",color:"#fff",cursor:"pointer",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        </div>
+      )}
+      {value && tipo === "video" && (
+        <div style={{marginBottom:8,display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"var(--surface2)",borderRadius:8}}>
+          <span style={{fontSize:20}}>🎥</span>
+          <span style={{fontSize:12,color:"var(--text)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{value.split("/").pop()}</span>
+          <button onClick={limpiar} style={{background:"none",border:"none",color:"var(--red)",cursor:"pointer",fontSize:16}}>✕</button>
+        </div>
+      )}
+
+      {/* Área de upload */}
+      <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+        <div style={{flex:1}}>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/mp4,video/mov,video/avi"
+            onChange={handleFile}
+            style={{display:"none"}}
+            id={`upload_${label}`}
+          />
+          <label htmlFor={`upload_${label}`} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",background:"var(--surface2)",border:"1px dashed var(--border)",borderRadius:8,cursor:uploading?"not-allowed":"pointer",fontSize:13,color:"var(--muted)",transition:"border-color .2s"}}>
+            {uploading ? "⏳ Subiendo..." : "📎 Subir imagen o video"}
+          </label>
+        </div>
+        <span style={{fontSize:11,color:"var(--muted)",paddingTop:10}}>o</span>
+        <input
+          type="text"
+          value={value||""}
+          onChange={e=>{ onChangeUrl(e.target.value); if(e.target.value) onChangeTipo(e.target.value.match(/\.(mp4|mov|avi|webm)$/i)?"video":"imagen"); }}
+          placeholder="Pegar URL..."
+          style={{flex:2,fontSize:13}}
+        />
+      </div>
+      {error && <div style={{marginTop:6,fontSize:12,color:"var(--red)"}}>{error}</div>}
+      <div style={{marginTop:4,fontSize:11,color:"var(--muted)"}}>Imágenes: JPG, PNG, GIF (máx 5MB) · Videos: MP4 (máx 50MB)</div>
+    </div>
+  );
+}
 
 function GruposPanel() {
   const [grupos, setGrupos]       = useState([]);
@@ -7686,26 +7779,7 @@ function GruposPanel() {
                   <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} para el nombre, {"{grupo}"} para el nombre del grupo</span></label>
                   <textarea value={config.bienvenida_texto||""} onChange={e=>setConfig({...config,bienvenida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, bienvenido/a al grupo 👋&#10;&#10;Aquí encontrarás..."/>
                 </div>
-                <div className="form-row">
-                  <div className="field">
-                    <label>URL de imagen o video (opcional)</label>
-                    <input type="text" value={config.bienvenida_media_url||""} onChange={e=>setConfig({...config,bienvenida_media_url:e.target.value})} placeholder="https://..." />
-                  </div>
-                  <div className="field">
-                    <label>Tipo de media</label>
-                    <select value={config.bienvenida_media_tipo||""} onChange={e=>setConfig({...config,bienvenida_media_tipo:e.target.value||null})}>
-                      <option value="">Solo texto</option>
-                      <option value="imagen">🖼️ Imagen</option>
-                      <option value="video">🎥 Video</option>
-                    </select>
-                  </div>
-                </div>
-                {config.bienvenida_media_url && config.bienvenida_media_tipo === "imagen" && (
-                  <div style={{marginTop:8}}>
-                    <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>Vista previa:</div>
-                    <img src={config.bienvenida_media_url} alt="preview" style={{maxWidth:200,borderRadius:8,border:"1px solid var(--border)"}} onError={e=>e.target.style.display="none"} />
-                  </div>
-                )}
+                <MediaUpload label="Imagen o video" value={config.bienvenida_media_url||""} tipo={config.bienvenida_media_tipo||""} onChangeUrl={v=>setConfig({...config,bienvenida_media_url:v})} onChangeTipo={v=>setConfig({...config,bienvenida_media_tipo:v})} />
               </div>
             )}
           </div>
@@ -7727,20 +7801,7 @@ function GruposPanel() {
                   <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{grupo}"}</span></label>
                   <textarea value={config.despedida_texto||""} onChange={e=>setConfig({...config,despedida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hasta luego {nombre} 👋&#10;&#10;Fue un placer tenerte con nosotros..."/>
                 </div>
-                <div className="form-row">
-                  <div className="field">
-                    <label>URL de imagen o video (opcional)</label>
-                    <input type="text" value={config.despedida_media_url||""} onChange={e=>setConfig({...config,despedida_media_url:e.target.value})} placeholder="https://..." />
-                  </div>
-                  <div className="field">
-                    <label>Tipo de media</label>
-                    <select value={config.despedida_media_tipo||""} onChange={e=>setConfig({...config,despedida_media_tipo:e.target.value||null})}>
-                      <option value="">Solo texto</option>
-                      <option value="imagen">🖼️ Imagen</option>
-                      <option value="video">🎥 Video</option>
-                    </select>
-                  </div>
-                </div>
+                <MediaUpload label="Imagen o video" value={config.despedida_media_url||""} tipo={config.despedida_media_tipo||""} onChangeUrl={v=>setConfig({...config,despedida_media_url:v})} onChangeTipo={v=>setConfig({...config,despedida_media_tipo:v})} />
               </div>
             )}
           </div>
@@ -7782,21 +7843,8 @@ function GruposPanel() {
                   <label>Enviar después de (minutos)</label>
                   <input type="number" min="1" value={config.remarketing_msg1_min||10} onChange={e=>setConfig({...config,remarketing_msg1_min:parseInt(e.target.value)||10})} />
                 </div>
-                <div className="field">
-                  <label>Tipo de media</label>
-                  <select value={config.remarketing_msg1_media_tipo||""} onChange={e=>setConfig({...config,remarketing_msg1_media_tipo:e.target.value||null})}>
-                    <option value="">Solo texto</option>
-                    <option value="imagen">🖼️ Imagen</option>
-                    <option value="video">🎥 Video</option>
-                  </select>
-                </div>
               </div>
-              {config.remarketing_msg1_media_tipo && (
-                <div className="field" style={{marginBottom:12}}>
-                  <label>URL de imagen o video</label>
-                  <input type="text" value={config.remarketing_msg1_media_url||""} onChange={e=>setConfig({...config,remarketing_msg1_media_url:e.target.value})} placeholder="https://..." />
-                </div>
-              )}
+              <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg1_media_url||""} tipo={config.remarketing_msg1_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg1_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg1_media_tipo:v})} />
               <div className="field">
                 <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{link}"}</span></label>
                 <textarea value={config.remarketing_msg1_texto||""} onChange={e=>setConfig({...config,remarketing_msg1_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre} 👋, vimos que te registraste pero aún no te has unido al grupo. Aquí tienes el link: {link}"/>
@@ -7827,21 +7875,8 @@ function GruposPanel() {
                       <label>Enviar después de (horas)</label>
                       <input type="number" min="1" value={config.remarketing_msg2_horas||24} onChange={e=>setConfig({...config,remarketing_msg2_horas:parseInt(e.target.value)||24})} />
                     </div>
-                    <div className="field">
-                      <label>Tipo de media</label>
-                      <select value={config.remarketing_msg2_media_tipo||""} onChange={e=>setConfig({...config,remarketing_msg2_media_tipo:e.target.value||null})}>
-                        <option value="">Solo texto</option>
-                        <option value="imagen">🖼️ Imagen</option>
-                        <option value="video">🎥 Video</option>
-                      </select>
-                    </div>
                   </div>
-                  {config.remarketing_msg2_media_tipo && (
-                    <div className="field" style={{marginBottom:12}}>
-                      <label>URL de imagen o video</label>
-                      <input type="text" value={config.remarketing_msg2_media_url||""} onChange={e=>setConfig({...config,remarketing_msg2_media_url:e.target.value})} placeholder="https://..." />
-                    </div>
-                  )}
+                  <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg2_media_url||""} tipo={config.remarketing_msg2_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg2_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg2_media_tipo:v})} />
                   <div className="field">
                     <label>Mensaje</label>
                     <textarea value={config.remarketing_msg2_texto||""} onChange={e=>setConfig({...config,remarketing_msg2_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, es tu última oportunidad de unirte 🚀 {link}"/>
