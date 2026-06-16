@@ -7775,7 +7775,17 @@ function GruposPanel() {
           <div style={{fontSize:20,fontWeight:700}}>💬 Grupos WhatsApp</div>
           <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Gestiona tus grupos y mensajes automáticos</div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={cargar}>🔄 Actualizar</button>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn btn-ghost btn-sm" onClick={async()=>{
+            try {
+              const r = await fetch(`${BOT_URL}/sync/grupos`,{method:"POST"});
+              const d = await r.json();
+              if(d.ok) { show(`✓ ${d.grupos} grupos sincronizados`); cargar(); }
+              else show("❌ " + (d.error||"Error"), "err");
+            } catch(e){ show("❌ Bot no disponible","err"); }
+          }}>🔄 Forzar sync</button>
+          <button className="btn btn-ghost btn-sm" onClick={cargar}>↻ Actualizar</button>
+        </div>
       </div>
 
       {/* Tabs */}
