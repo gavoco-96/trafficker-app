@@ -7512,6 +7512,33 @@ const LinksDB = {
   }
 };
 
+// ─── SELECTOR DE GRUPOS ───────────────────────────────────────
+function GruposSelector({ grupos, seleccionados, onChange, label }) {
+  const toggle = (jid) => {
+    if (seleccionados.includes(jid)) onChange(seleccionados.filter(j=>j!==jid));
+    else onChange([...seleccionados, jid]);
+  };
+  return (
+    <div style={{marginBottom:12}}>
+      <label style={{display:"block",fontSize:12,fontWeight:600,marginBottom:6,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>{label} <span style={{fontWeight:400,textTransform:"none"}}>— vacío = todos los grupos</span></label>
+      {grupos.length === 0 ? (
+        <div style={{fontSize:12,color:"var(--muted)",padding:"8px 0"}}>No hay grupos sincronizados aún</div>
+      ) : (
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {grupos.map(g=>{
+            const sel = seleccionados.includes(g.jid);
+            return (
+              <div key={g.jid} onClick={()=>toggle(g.jid)} style={{padding:"4px 12px",borderRadius:20,fontSize:12,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"rgba(77,159,255,.15)":"transparent",color:sel?"var(--accent)":"var(--muted)",transition:"all .15s"}}>
+                {g.nombre||g.jid} {g.etiquetas?.length ? `(${g.etiquetas.join(", ")})` : ""}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── PANEL DE GRUPOS WHATSAPP ──────────────────────────────────
 const SUPA_GRUPOS_URL  = `${SUPA_URL}/rest/v1/wa_grupos`;
 const SUPA_CONFIG_URL  = `${SUPA_URL}/rest/v1/wa_config`;
@@ -7675,7 +7702,7 @@ function GruposPanel() {
 
       {/* Tabs */}
       <div style={{display:"flex",gap:8,marginBottom:"1.5rem",borderBottom:"1px solid var(--border)",paddingBottom:12}}>
-        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes automáticos"],["remarketing","🎯 Remarketing"]].map(([k,l])=>(
+        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes"],["remarketing","🎯 Remarketing"],["conexion","📡 Conexión WA"]].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,background:tab===k?"var(--accent)":"var(--surface2)",color:tab===k?"#fff":"var(--muted)"}}>
             {l}
           </button>
@@ -7723,6 +7750,21 @@ function GruposPanel() {
                             <input type="text" value={editGrupo.link_id||""} onChange={e=>setEditGrupo({...editGrupo,link_id:e.target.value})} placeholder="lnk_..." />
                           </div>
                         </div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Etiquetas <span style={{fontWeight:400,color:"var(--muted)"}}>— separadas por coma (ej: nuevos, VIP)</span></label>
+                            <input type="text" value={(editGrupo.etiquetas||[]).join(", ")} onChange={e=>setEditGrupo({...editGrupo,etiquetas:e.target.value.split(",").map(t=>t.trim()).filter(Boolean)})} placeholder="nuevos, activos, VIP..." />
+                          </div>
+                          <div className="field">
+                            <label>Grupo de respaldo <span style={{fontWeight:400,color:"var(--muted)"}}>— se activa si este cae</span></label>
+                            <select value={editGrupo.grupo_respaldo_id||""} onChange={e=>setEditGrupo({...editGrupo,grupo_respaldo_id:e.target.value||null})}>
+                              <option value="">Sin respaldo</option>
+                              {grupos.filter(og=>og.id!==editGrupo.id).map(og=>(
+                                <option key={og.id} value={og.id}>{og.nombre||og.jid}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
                         <div style={{display:"flex",gap:8}}>
                           <button className="btn btn-sm" onClick={async()=>{ await actualizarGrupo(g.id,editGrupo); setEditGrupo(null); show("✓ Grupo actualizado"); }}>Guardar</button>
                           <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo(null)}>Cancelar</button>
@@ -7732,15 +7774,21 @@ function GruposPanel() {
                       // Vista normal
                       <div style={{display:"flex",alignItems:"center",gap:16}}>
                         <div style={{flex:1}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                             <span style={{fontWeight:700,fontSize:15}}>{g.nombre || g.jid}</span>
                             <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,background:`${estadoColor[g.estado] || "var(--border)"}22`,color:estadoColor[g.estado] || "var(--muted)"}}>{g.estado || "activo"}</span>
-                            {g.link_id && <span style={{fontSize:11,background:"rgba(77,159,255,.15)",color:"var(--accent)",padding:"2px 8px",borderRadius:10}}>🔗 Link vinculado</span>}
+                            {g.alerta_activa && <span style={{fontSize:11,background:"rgba(239,68,68,.15)",color:"var(--red)",padding:"2px 8px",borderRadius:10}}>🔴 Caído</span>}
+                            {g.link_id && <span style={{fontSize:11,background:"rgba(77,159,255,.15)",color:"var(--accent)",padding:"2px 8px",borderRadius:10}}>🔗 Link</span>}
+                            {g.grupo_respaldo_id && <span style={{fontSize:11,background:"rgba(16,185,129,.1)",color:"var(--green)",padding:"2px 8px",borderRadius:10}}>🛡️ Respaldo</span>}
+                            {(g.etiquetas||[]).map(et=>(
+                              <span key={et} style={{fontSize:11,background:"rgba(255,222,89,.1)",color:"var(--amber)",padding:"2px 8px",borderRadius:10}}>{et}</span>
+                            ))}
                           </div>
                           <div style={{fontSize:12,color:"var(--muted)"}}>
                             <span style={{marginRight:16}}>👥 <strong style={{color:"var(--text)"}}>{g.miembros_count || 0}</strong>{g.limite_miembros ? ` / ${g.limite_miembros}` : " miembros"}</span>
-                            <span>Sync: {g.ultima_sync ? new Date(g.ultima_sync).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"}) : "—"}</span>
+                            <span style={{marginRight:16}}>Check: {g.ultimo_check ? new Date(g.ultimo_check).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"}) : "—"}</span>
                           </div>
+                          {g.alerta_activa && <div style={{fontSize:12,color:"var(--red)",marginTop:4}}>{g.alerta_mensaje}</div>}
                           {g.limite_miembros && (
                             <div style={{marginTop:8,height:4,borderRadius:4,background:"var(--border)",overflow:"hidden"}}>
                               <div style={{height:"100%",borderRadius:4,background:g.miembros_count>=g.limite_miembros?"var(--red)":g.miembros_count/g.limite_miembros>0.8?"var(--amber)":"var(--green)",width:`${Math.min(100,Math.round((g.miembros_count||0)/g.limite_miembros*100))}%`,transition:"width .3s"}} />
@@ -7775,6 +7823,7 @@ function GruposPanel() {
             </div>
             {config.bienvenida_activo && (
               <div>
+                <GruposSelector grupos={grupos} seleccionados={config.grupos_bienvenida||[]} onChange={v=>setConfig({...config,grupos_bienvenida:v})} label="Aplicar a estos grupos" />
                 <div className="field" style={{marginBottom:12}}>
                   <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} para el nombre, {"{grupo}"} para el nombre del grupo</span></label>
                   <textarea value={config.bienvenida_texto||""} onChange={e=>setConfig({...config,bienvenida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, bienvenido/a al grupo 👋&#10;&#10;Aquí encontrarás..."/>
@@ -7797,6 +7846,7 @@ function GruposPanel() {
             </div>
             {config.despedida_activo && (
               <div>
+                <GruposSelector grupos={grupos} seleccionados={config.grupos_despedida||[]} onChange={v=>setConfig({...config,grupos_despedida:v})} label="Aplicar a estos grupos" />
                 <div className="field" style={{marginBottom:12}}>
                   <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{grupo}"}</span></label>
                   <textarea value={config.despedida_texto||""} onChange={e=>setConfig({...config,despedida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hasta luego {nombre} 👋&#10;&#10;Fue un placer tenerte con nosotros..."/>
@@ -7843,6 +7893,7 @@ function GruposPanel() {
                   <label>Enviar después de (minutos)</label>
                   <input type="number" min="1" value={config.remarketing_msg1_min||10} onChange={e=>setConfig({...config,remarketing_msg1_min:parseInt(e.target.value)||10})} />
                 </div>
+              <GruposSelector grupos={grupos} seleccionados={config.grupos_remarketing1||[]} onChange={v=>setConfig({...config,grupos_remarketing1:v})} label="Aplicar a leads de estos grupos" />
               </div>
               <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg1_media_url||""} tipo={config.remarketing_msg1_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg1_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg1_media_tipo:v})} />
               <div className="field">
@@ -7875,6 +7926,7 @@ function GruposPanel() {
                       <label>Enviar después de (horas)</label>
                       <input type="number" min="1" value={config.remarketing_msg2_horas||24} onChange={e=>setConfig({...config,remarketing_msg2_horas:parseInt(e.target.value)||24})} />
                     </div>
+                  <GruposSelector grupos={grupos} seleccionados={config.grupos_remarketing2||[]} onChange={v=>setConfig({...config,grupos_remarketing2:v})} label="Aplicar a leads de estos grupos" />
                   </div>
                   <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg2_media_url||""} tipo={config.remarketing_msg2_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg2_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg2_media_tipo:v})} />
                   <div className="field">
@@ -7918,6 +7970,69 @@ function GruposPanel() {
           </button>
         </div>
       )}
+
+      {/* ── TAB CONEXIÓN WA ── */}
+      {tab === "conexion" && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+          <div className="card" style={{padding:"24px",textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:12}}>📡</div>
+            <div style={{fontWeight:700,fontSize:16,marginBottom:8}}>Vincular WhatsApp</div>
+            <div style={{fontSize:13,color:"var(--muted)",marginBottom:24}}>Escanea el QR desde WhatsApp → Dispositivos vinculados → Vincular dispositivo</div>
+            <iframe
+              src={`${BOT_URL}/qr`}
+              style={{width:"100%",height:420,border:"none",borderRadius:12,background:"var(--bg)"}}
+              title="QR WhatsApp"
+            />
+            <div style={{marginTop:16,display:"flex",gap:8,justifyContent:"center"}}>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{ const el = document.querySelector("iframe"); if(el) el.src=el.src; }}>🔄 Refrescar QR</button>
+              <a href={`${BOT_URL}/health`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">🔍 Estado del bot</a>
+            </div>
+          </div>
+
+          {/* Alertas activas */}
+          <AlertasPanel />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PANEL DE ALERTAS ─────────────────────────────────────────
+const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
+
+function AlertasPanel() {
+  const [alertas, setAlertas] = useState([]);
+
+  async function cargar() {
+    const data = await fetch(`${SUPA_ALERTAS_URL}?leida=eq.false&order=creado_en.desc&limit=20`, { headers: HL }).then(r=>r.json()).catch(()=>[]);
+    setAlertas(Array.isArray(data) ? data : []);
+  }
+
+  async function marcarLeida(id) {
+    await fetch(`${SUPA_ALERTAS_URL}?id=eq.${id}`, { method:"PATCH", headers:{...HL,Prefer:"return=minimal"}, body:JSON.stringify({leida:true}) });
+    cargar();
+  }
+
+  useEffect(() => { cargar(); const t = setInterval(cargar, 30000); return ()=>clearInterval(t); }, []);
+
+  if (!alertas.length) return (
+    <div style={{textAlign:"center",padding:"1.5rem",color:"var(--muted)",fontSize:13}}>✅ Sin alertas activas</div>
+  );
+
+  return (
+    <div>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>🔔 Alertas activas ({alertas.length})</div>
+      {alertas.map(a => (
+        <div key={a.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px",background:a.tipo==="grupo_caido"?"rgba(239,68,68,.08)":"rgba(16,185,129,.08)",borderRadius:10,marginBottom:8,border:`1px solid ${a.tipo==="grupo_caido"?"rgba(239,68,68,.2)":"rgba(16,185,129,.2)"}`}}>
+          <div style={{fontSize:20,flexShrink:0}}>{a.tipo==="grupo_caido"?"🔴":a.tipo==="grupo_recuperado"?"🟢":"🟡"}</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{a.nombre_grupo}</div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>{a.mensaje}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{new Date(a.creado_en).toLocaleString("es-ES")}</div>
+          </div>
+          <button onClick={()=>marcarLeida(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:16,padding:4}}>✕</button>
+        </div>
+      ))}
     </div>
   );
 }
