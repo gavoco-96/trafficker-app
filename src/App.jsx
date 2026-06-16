@@ -7523,7 +7523,7 @@ const BOT_URL          = import.meta.env.VITE_BOT_URL || "";
 function MediaUpload({ value, tipo, onChangeUrl, onChangeTipo, label = "Media" }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError]         = useState(null);
-  const inputRef                  = React.useRef();
+  const inputRef = useRef();
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
