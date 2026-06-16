@@ -7513,8 +7513,8 @@ const LinksDB = {
 };
 
 // ─── PANEL DE GRUPOS WHATSAPP ──────────────────────────────────
-const SUPA_GRUPOS_URL  = `${SUPABASE_URL}/rest/v1/wa_grupos`;
-const SUPA_CONFIG_URL  = `${SUPABASE_URL}/rest/v1/wa_config`;
+const SUPA_GRUPOS_URL  = `${SUPA_URL}/rest/v1/wa_grupos`;
+const SUPA_CONFIG_URL  = `${SUPA_URL}/rest/v1/wa_config`;
 const BOT_URL          = import.meta.env.VITE_BOT_URL || "";
 
 function GruposPanel() {
