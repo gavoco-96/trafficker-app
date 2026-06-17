@@ -6807,38 +6807,48 @@ function RemarketingTable({ data, readOnly }) {
   function descargar(tipo) {
     const items = (data.niveles?.[nivelRem] || []).filter(i => i.pendientes > 0);
     const fecha = new Date().toISOString().slice(0,10);
+    // Contactos pendientes con nombre (calculados por app) o solo teléfonos (script)
+    const contactos = data.contactosPendientes || (data.telefonosPendientes||[]).map(t=>({tel:t,nombre:""}));
+    const tieneNombre = contactos.some(c => c.nombre);
+
     if (tipo === "telefonos_csv") {
-      // CSV con columna teléfono — listo para subir a cualquier plataforma de masivos
-      const tels = data.telefonosPendientes || [];
-      if (!tels.length) {
-        alert("Ejecuta 'Exportar para Trafficker Pro' en tu Google Sheet para incluir los números.");
-        return;
-      }
-      const csv = "telefono\n" + tels.join("\n");
-      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+      if (!contactos.length) { alert("Sincroniza los datos primero para generar la lista."); return; }
+      // CSV: columnas nombre (si hay) + telefono — números como texto plano, sin fórmulas
+      const header = tieneNombre ? "Nombre,Telefono" : "Telefono";
+      const filas = contactos.map(c => {
+        // Prefijo \t fuerza texto en Excel para preservar el número completo
+        const telTexto = `\t${c.tel}`;
+        return tieneNombre ? `"${c.nombre}",${telTexto}` : telTexto;
+      });
+      const csv = header + "\n" + filas.join("\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `telefonos_remarketing_${fecha}.csv`; a.click();
+      a.download = `remarketing_contactos_${fecha}.csv`; a.click();
+
     } else if (tipo === "telefonos_txt") {
-      // Solo números separados por comas — formato universal para masivos
-      const tels = data.telefonosPendientes || [];
-      if (!tels.length) { alert("Ejecuta el script en Google Sheets primero."); return; }
-      const blob = new Blob([tels.join(",")], { type: "text/plain;charset=utf-8;" });
+      if (!contactos.length) { alert("Sincroniza los datos primero para generar la lista."); return; }
+      // TXT: número completo por línea — listo para copiar y pegar en cualquier plataforma masivos
+      const blob = new Blob([contactos.map(c => c.tel).join("\n")], { type: "text/plain;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `telefonos_remarketing_${fecha}.txt`; a.click();
+      a.download = `remarketing_telefonos_${fecha}.txt`; a.click();
+
     } else if (tipo === "csv") {
-      // CSV con análisis por nivel — separado por comas
-      let csv = `${nivelRem},Registros FB,Personas WP,Pendientes WP,% Captura\n`;
+      // Resumen analítico por nivel (campaña/conjunto/anuncio)
+      let csv = `${nivelRem},Registros FB,Personas WP,Pendientes,% Captura\n`;
       items.forEach(i => { csv += `"${i.nombre}",${i.total_form},${i.total_wp},${i.pendientes},${i.pct_captura}%\n`; });
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `remarketing_${nivelRem}_${fecha}.csv`; a.click();
+      a.download = `remarketing_analisis_${nivelRem}_${fecha}.csv`; a.click();
+
     } else {
-      let html = `<table><tr><th>${nivelRem}</th><th>Reg. FB</th><th>En WP</th><th>Pendientes</th><th>% Captura</th></tr>`;
+      // Excel: resumen analítico como tabla HTML — sin fórmulas
+      let html = `<html><head><meta charset="UTF-8"></head><body><table>`;
+      html += `<tr><th>${nivelRem}</th><th>Reg. FB</th><th>En WP</th><th>Pendientes</th><th>% Captura</th></tr>`;
       items.forEach(i => { html += `<tr><td>${i.nombre}</td><td>${i.total_form}</td><td>${i.total_wp}</td><td>${i.pendientes}</td><td>${i.pct_captura}%</td></tr>`; });
-      html += "</table>";
-      const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+      html += "</table></body></html>";
+      const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `remarketing_${nivelRem}_${fecha}.xls`; a.click();
+      a.download = `remarketing_analisis_${nivelRem}_${fecha}.xls`; a.click();
     }
   }
 
@@ -7009,14 +7019,18 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
     const colTelFB = headerFB.findIndex(h => h.includes("tel") || h.includes("phone") || h.includes("numero") || h.includes("número") || h.includes("whatsapp") || h.includes("celular"));
     const telColFB = colTelFB >= 0 ? colTelFB : 0;
 
+    // Detectar columna de nombre en FB
+    const colNombreFB = headerFB.findIndex(h => h.includes("nombre") || h.includes("name") || h.includes("apellido"));
+
     // Procesar cada registro FB
     const mapaP = {};
-    const pendientesRem = [];
+    const pendientesRem = []; // { tel, nombre }
     for (let i = 1; i < rowsFB.length; i++) {
       const row = rowsFB[i];
       const tel = row?.[telColFB];
       if (!tel) continue;
       const telNorm = String(tel).replace(/[\s\-\(\)\+\.]/g, "");
+      const nombre = colNombreFB >= 0 ? (row[colNombreFB] || "") : "";
       const pais = detectarPais(telNorm);
       if (!mapaP[pais]) mapaP[pais] = { total_form: 0, total_wp: 0 };
       mapaP[pais].total_form++;
@@ -7027,7 +7041,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
       if (estaEnWP) {
         mapaP[pais].total_wp++;
       } else {
-        pendientesRem.push(telNorm);
+        pendientesRem.push({ tel: telNorm, nombre });
       }
     }
 
@@ -7048,6 +7062,8 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
       total_remarketing: total_remarketing_calculado,
       total_wp: telWPSet.size,
       total_form: rowsFB.length - 1,
+      telefonosPendientes: pendientesRem.map(p => p.tel),         // compatibilidad
+      contactosPendientes: pendientesRem,                          // { tel, nombre } — para export con nombre
       _paisesCalculadosEnApp: true,
     };
   }
