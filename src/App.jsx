@@ -5898,10 +5898,10 @@ function FacebookPanel({ client, onUpdate }) {
     const todas = [];
     for (const cuenta of activas) {
       try {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,spend_cap,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE","PAUSED"]}]&limit=50&access_token=${token}`;
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]&limit=50&access_token=${token}`;
         const res = await fetch(url);
         const d = await res.json();
-        if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre})));
+        if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre, _cuentaId: cuenta.id})));
       } catch {}
     }
     setCampaigns(todas);
@@ -6201,42 +6201,55 @@ function FacebookPanel({ client, onUpdate }) {
         )}
         {loadingCamp && <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>⟳ Consultando Facebook Ads...</div>}
         {campaigns && campaigns.length === 0 && (
-          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>Sin campañas activas o pausadas.</div>
+          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>Sin campañas activas en este momento.</div>
         )}
-        {campaigns && campaigns.length > 0 && (
-          <div className="scroll-x">
-            <table className="tbl">
-              <thead><tr>
-                {cuentas.length>1 && <th>Cuenta</th>}
-                <th>Campaña</th>
-                <th>Estado</th>
-                <th>Objetivo</th>
-                <th style={{textAlign:"right"}}>Presupuesto</th>
-              </tr></thead>
-              <tbody>
-                {campaigns.map((c,i) => (
-                  <tr key={i}>
-                    {cuentas.length>1 && <td style={{fontSize:11,color:"var(--muted)"}}>{c._cuenta}</td>}
-                    <td style={{fontWeight:500,fontSize:12,maxWidth:280,wordBreak:"break-word"}}>{c.name}</td>
-                    <td>
-                      <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,
-                        background:c.status==="ACTIVE"?"rgba(16,185,129,.15)":"rgba(255,222,89,.1)",
-                        color:c.status==="ACTIVE"?"var(--green)":"var(--amber)"}}>
-                        {c.status==="ACTIVE"?"● Activa":"⏸ Pausada"}
-                      </span>
-                    </td>
-                    <td style={{fontSize:11,color:"var(--muted)"}}>{(c.objective||"").replace(/_/g," ").toLowerCase()}</td>
-                    <td style={{fontFamily:"var(--mono)",textAlign:"right",fontSize:12}}>
-                      {c.daily_budget ? "$"+fmtNum(parseFloat(c.daily_budget)/100,2)+"/día"
-                        : c.lifetime_budget ? "$"+fmtNum(parseFloat(c.lifetime_budget)/100,2)+" total"
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {campaigns && campaigns.length > 0 && (() => {
+          // Agrupar por cuenta
+          const grupos = cuentas
+            .map(c => ({ cuenta: c, items: campaigns.filter(x => x._cuentaId === c.id) }))
+            .filter(g => g.items.length > 0);
+          return (
+            <div className="scroll-x">
+              {grupos.map((g, gi) => (
+                <div key={gi} style={{marginBottom: gi < grupos.length-1 ? 16 : 0}}>
+                  {/* Encabezado de cuenta — solo si hay más de una */}
+                  {cuentas.filter(c=>c.adAccountId).length > 1 && (
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--accent2)",textTransform:"uppercase",
+                      letterSpacing:".06em",padding:"4px 0 8px",borderBottom:"1px solid var(--border)",marginBottom:8}}>
+                      📊 {g.cuenta.nombre} · {g.items.length} campaña{g.items.length!==1?"s":""} activa{g.items.length!==1?"s":""}
+                    </div>
+                  )}
+                  <table className="tbl">
+                    <thead><tr>
+                      <th>Campaña</th>
+                      <th>Objetivo</th>
+                      <th style={{textAlign:"right"}}>Presupuesto</th>
+                    </tr></thead>
+                    <tbody>
+                      {g.items.map((c,i) => (
+                        <tr key={i}>
+                          <td style={{fontWeight:500,fontSize:12,maxWidth:400,wordBreak:"break-word"}}>
+                            <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"var(--green)",marginRight:8,flexShrink:0}}/>
+                            {c.name}
+                          </td>
+                          <td style={{fontSize:11,color:"var(--muted)"}}>{(c.objective||"").replace(/_/g," ").toLowerCase()}</td>
+                          <td style={{fontFamily:"var(--mono)",textAlign:"right",fontSize:12}}>
+                            {c.daily_budget ? "$"+fmtNum(parseFloat(c.daily_budget)/100,2)+"/día"
+                              : c.lifetime_budget ? "$"+fmtNum(parseFloat(c.lifetime_budget)/100,2)+" total"
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:10,textAlign:"right"}}>
+                {campaigns.length} campaña{campaigns.length!==1?"s":""} activa{campaigns.length!==1?"s":""} en total
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Guardar + nota token */}
