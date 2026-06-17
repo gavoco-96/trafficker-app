@@ -6919,24 +6919,163 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
   const [viewTab, setViewTab]   = useState("anuncios"); // anuncios | paises | remarketing
   const { show, el: toastEl }   = useToast();
 
+  // ── Nombres configurables de hojas ───────────────────────────────────────
+  const [hojaFB, setHojaFB] = useState(sheetConfig.hojaFB || "Registros");
+  const [hojaWP, setHojaWP] = useState(sheetConfig.hojaWP || "Miembros WP");
+  const [showHojas, setShowHojas] = useState(false);
+
+  // ── Tabla de prefijos de país ─────────────────────────────────────────────
+  const PREFIJOS_PAIS = [
+    { prefix:"593", pais:"🇪🇨 Ecuador" },
+    { prefix:"57",  pais:"🇨🇴 Colombia" },
+    { prefix:"51",  pais:"🇵🇪 Perú" },
+    { prefix:"52",  pais:"🇲🇽 México" },
+    { prefix:"54",  pais:"🇦🇷 Argentina" },
+    { prefix:"56",  pais:"🇨🇱 Chile" },
+    { prefix:"58",  pais:"🇻🇪 Venezuela" },
+    { prefix:"502", pais:"🇬🇹 Guatemala" },
+    { prefix:"503", pais:"🇸🇻 El Salvador" },
+    { prefix:"504", pais:"🇭🇳 Honduras" },
+    { prefix:"505", pais:"🇳🇮 Nicaragua" },
+    { prefix:"506", pais:"🇨🇷 Costa Rica" },
+    { prefix:"507", pais:"🇵🇦 Panamá" },
+    { prefix:"591", pais:"🇧🇴 Bolivia" },
+    { prefix:"595", pais:"🇵🇾 Paraguay" },
+    { prefix:"598", pais:"🇺🇾 Uruguay" },
+    { prefix:"53",  pais:"🇨🇺 Cuba" },
+    { prefix:"1",   pais:"🇺🇸 EEUU/Canadá" },
+    { prefix:"34",  pais:"🇪🇸 España" },
+    { prefix:"55",  pais:"🇧🇷 Brasil" },
+  ];
+
+  function detectarPais(telefono) {
+    if (!telefono) return "Otro";
+    // Limpiar: quitar espacios, guiones, paréntesis, +
+    const limpio = String(telefono).replace(/[\s\-\(\)\+\.]/g, "");
+    // Ordenar prefijos de mayor a menor longitud para evitar falsos positivos
+    const sorted = [...PREFIJOS_PAIS].sort((a,b) => b.prefix.length - a.prefix.length);
+    for (const { prefix, pais } of sorted) {
+      if (limpio.startsWith(prefix)) return pais;
+    }
+    return "Otro";
+  }
+
+  // Lee una hoja de Google Sheets y devuelve todas las filas como arrays
+  async function leerHoja(sheetId, nombre, key) {
+    try {
+      const range = encodeURIComponent(`'${nombre}'!A:Z`);
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${key}`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) return null;
+      return json.values || [];
+    } catch { return null; }
+  }
+
+  // Calcula países y remarketing leyendo hojas directamente
+  async function calcularPaisesYRemarketing(sheetId, key, parsedBase) {
+    // Leer hoja de WP (números que SÍ entraron)
+    const rowsWP = await leerHoja(sheetId, hojaWP, key);
+    if (!rowsWP || rowsWP.length < 2) return parsedBase;
+
+    // Detectar columna de teléfono en WP (buscar encabezado que contenga "tel" o "phone" o "numero" o "whatsapp")
+    const headerWP = rowsWP[0].map(h => String(h).toLowerCase());
+    const colTelWP = headerWP.findIndex(h => h.includes("tel") || h.includes("phone") || h.includes("numero") || h.includes("número") || h.includes("whatsapp") || h.includes("celular"));
+    const telColWP = colTelWP >= 0 ? colTelWP : 0; // fallback columna A
+
+    // Construir set de teléfonos normalizados en WP
+    const telWPSet = new Set();
+    for (let i = 1; i < rowsWP.length; i++) {
+      const tel = rowsWP[i]?.[telColWP];
+      if (tel) telWPSet.add(String(tel).replace(/[\s\-\(\)\+\.]/g, ""));
+    }
+
+    // Leer hoja de FB (formularios/registros)
+    const rowsFB = await leerHoja(sheetId, hojaFB, key);
+    if (!rowsFB || rowsFB.length < 2) {
+      // Sin hoja FB, calcular países solo desde WP
+      const mapaP = {};
+      telWPSet.forEach(tel => {
+        const p = detectarPais(tel);
+        if (!mapaP[p]) mapaP[p] = { total_form: 0, total_wp: 0 };
+        mapaP[p].total_wp++;
+      });
+      const paises = Object.entries(mapaP).map(([pais, v]) => ({ pais, ...v, pct_captura: v.total_form > 0 ? parseFloat((v.total_wp/v.total_form*100).toFixed(1)) : 100 }));
+      return { ...parsedBase, paises };
+    }
+
+    // Detectar columna de teléfono en FB
+    const headerFB = rowsFB[0].map(h => String(h).toLowerCase());
+    const colTelFB = headerFB.findIndex(h => h.includes("tel") || h.includes("phone") || h.includes("numero") || h.includes("número") || h.includes("whatsapp") || h.includes("celular"));
+    const telColFB = colTelFB >= 0 ? colTelFB : 0;
+
+    // Procesar cada registro FB
+    const mapaP = {};
+    const pendientesRem = [];
+    for (let i = 1; i < rowsFB.length; i++) {
+      const row = rowsFB[i];
+      const tel = row?.[telColFB];
+      if (!tel) continue;
+      const telNorm = String(tel).replace(/[\s\-\(\)\+\.]/g, "");
+      const pais = detectarPais(telNorm);
+      if (!mapaP[pais]) mapaP[pais] = { total_form: 0, total_wp: 0 };
+      mapaP[pais].total_form++;
+      // Verificar si está en WP
+      const estaEnWP = telWPSet.has(telNorm) ||
+        // También probar sin prefijo de país (por si hay diferencia de formato)
+        [...telWPSet].some(wpTel => wpTel.endsWith(telNorm.slice(-9)) || telNorm.endsWith(wpTel.slice(-9)));
+      if (estaEnWP) {
+        mapaP[pais].total_wp++;
+      } else {
+        pendientesRem.push(telNorm);
+      }
+    }
+
+    const paises = Object.entries(mapaP)
+      .map(([pais, v]) => ({
+        pais,
+        total_form: v.total_form,
+        total_wp: v.total_wp,
+        pct_captura: v.total_form > 0 ? parseFloat((v.total_wp/v.total_form*100).toFixed(1)) : 0
+      }))
+      .sort((a,b) => b.total_form - a.total_form);
+
+    const total_remarketing_calculado = pendientesRem.length;
+
+    return {
+      ...parsedBase,
+      paises,
+      total_remarketing: total_remarketing_calculado,
+      total_wp: telWPSet.size,
+      total_form: rowsFB.length - 1,
+      _paisesCalculadosEnApp: true,
+    };
+  }
+
   async function cargarDatos() {
     const sheetId = extractSheetId(sheetUrl);
     if (!sheetId) return show("URL de Google Sheet inválida", "err");
     if (!apiKey)  return show("Ingresa tu Google Sheets API Key", "err");
     setLoading(true);
     try {
+      // 1. Leer el JSON del Apps Script (análisis por anuncio/campaña/conjunto)
       const range = encodeURIComponent("__trafficker_api__!A1");
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${apiKey}`;
       const res  = await fetch(url);
       const json = await res.json();
       if (json.error) { show("Error de Google API: " + json.error.message, "err"); setLoading(false); return; }
       const raw = json.values?.[0]?.[0];
-      if (!raw) { show("Sin datos. Ejecuta Exportar para Trafficker Pro primero.", "err"); setLoading(false); return; }
-      const parsed = JSON.parse(raw);
+      if (!raw) { show("Sin datos del script. Ejecuta 'Exportar para Trafficker Pro' primero.", "err"); setLoading(false); return; }
+      let parsed = JSON.parse(raw);
+
+      // 2. Calcular países y remarketing leyendo las hojas directamente
+      show("⏳ Calculando países y remarketing...", "ok");
+      parsed = await calcularPaisesYRemarketing(sheetId, apiKey, parsed);
+
       setData(parsed);
-      const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, lastData: parsed, lastSync: new Date().toISOString() } };
+      const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, hojaFB, hojaWP, lastData: parsed, lastSync: new Date().toISOString() } };
       await onUpdate(updated);
-      show("✓ " + parsed.total_wp + " en WP · " + parsed.total_con_match + " identificados · " + parsed.total_remarketing + " para remarketing", "ok");
+      show(`✓ ${parsed.total_wp} en WP · ${parsed.total_con_match||"?"} identificados · ${parsed.total_remarketing} para remarketing`, "ok");
     } catch(e) { show("Error: " + e.message, "err"); }
     setLoading(false);
   }
@@ -6984,7 +7123,29 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               <button className="btn btn-primary btn-sm" disabled={loading} onClick={cargarDatos}>{loading ? "⏳ Cargando..." : "🔄 Sincronizar datos"}</button>
               <button className="btn btn-ghost btn-sm" onClick={guardarConfig}>💾 Guardar config</button>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>setShowHojas(v=>!v)}>
+                ⚙️ {showHojas ? "Ocultar" : "Nombres de hojas"}
+              </button>
             </div>
+            {showHojas && (
+              <div style={{marginTop:12,padding:"12px 14px",background:"rgba(0,74,173,.06)",borderRadius:8,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Hoja de Registros FB (formularios)</div>
+                  <input type="text" value={hojaFB} onChange={e=>setHojaFB(e.target.value)}
+                    placeholder="Ej: Registros, Formulario, Leads FB..."
+                    style={{width:"100%",fontSize:12}} />
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Hoja de Miembros WP (teléfonos)</div>
+                  <input type="text" value={hojaWP} onChange={e=>setHojaWP(e.target.value)}
+                    placeholder="Ej: Miembros WP, WhatsApp, Contactos..."
+                    style={{width:"100%",fontSize:12}} />
+                </div>
+                <div style={{gridColumn:"1/-1",fontSize:10,color:"var(--muted)"}}>
+                  💡 Estos nombres deben coincidir exactamente con las pestañas de tu Google Sheet. La app leerá estas hojas para calcular países y remarketing directamente.
+                </div>
+              </div>
+            )}
             {sheetConfig.lastSync && <div style={{ fontSize:11, color:"var(--muted)", marginTop:8 }}>Última sync: {new Date(sheetConfig.lastSync).toLocaleString("es-EC")}</div>}
           </div>
         )}
