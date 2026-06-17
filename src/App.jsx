@@ -7313,13 +7313,39 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
         {/* DATOS */}
         {data && (
           <div>
+            {/* ── Semáforo de salud ─────────────────────────────────────────── */}
+            {(() => {
+              const pct = data.total_form > 0 ? (data.total_wp/data.total_form*100) : 0;
+              const rem = data.total_remarketing || 0;
+              const [ico, msg, bg, border] = pct >= 70
+                ? ["✅", `Captura saludable — ${pct.toFixed(1)}% de leads entraron a WP`, "rgba(16,185,129,.08)", "rgba(16,185,129,.25)"]
+                : pct >= 50
+                ? ["⚠️", `Captura media — ${rem.toLocaleString()} personas sin entrar a WP`, "rgba(255,222,89,.07)", "rgba(255,222,89,.3)"]
+                : ["🔴", `Captura baja — ${rem.toLocaleString()} personas sin entrar a WP`, "rgba(239,68,68,.07)", "rgba(239,68,68,.25)"];
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:10,background:bg,border:`1px solid ${border}`,marginBottom:"1rem",fontSize:13}}>
+                  <span style={{fontSize:18}}>{ico}</span>
+                  <span style={{fontWeight:600}}>{msg}</span>
+                  <span style={{marginLeft:"auto",fontSize:10,color:"var(--muted)"}}>
+                    {sheetConfig.lastSync ? `Sync: ${new Date(sheetConfig.lastSync).toLocaleString("es-EC")}` : "Sin sync"}
+                  </span>
+                  {readOnly && (
+                    <button className="btn btn-ghost btn-sm" style={{fontSize:11,whiteSpace:"nowrap"}}
+                      disabled={loading} onClick={cargarDatos}>
+                      {loading ? "⟳" : "🔄 Actualizar"}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Resumen 4 tarjetas */}
             <div className="grid4" style={{ marginBottom:"1rem" }}>
               {[
                 ["Personas en WP", data.total_wp, "var(--green)"],
                 ["Registros en FB", data.total_form, "#4d9fff"],
                 ["% Captura global", data.total_form > 0 ? (data.total_wp/data.total_form*100).toFixed(1)+"%" : "—", "var(--accent2)"],
-                ["Para remarketing", data.total_remarketing || 0, "var(--orange)"],
+                ...(!readOnly ? [["Para remarketing", data.total_remarketing || 0, "var(--orange)"]] : []),
               ].map(([label, val, color]) => (
                 <div key={label} className="card" style={{ textAlign:"center", padding:"1rem" }}>
                   <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>{label}</div>
@@ -7327,6 +7353,71 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                 </div>
               ))}
             </div>
+
+            {/* ── Gráfica de tendencia de captura por anuncio ───────────────── */}
+            {(() => {
+              const anuncios = (data.niveles?.anuncio || [])
+                .filter(i => i.total_form >= 5)
+                .sort((a,b) => b.total_form - a.total_form)
+                .slice(0, 8);
+              if (anuncios.length < 2) return null;
+              const W = 600, H = 140;
+              const PAD = { top:16, right:16, bottom:32, left:36 };
+              const cW = W-PAD.left-PAD.right, cH = H-PAD.top-PAD.bottom;
+              const maxF = Math.max(...anuncios.map(a=>a.total_form),1);
+              const barW = Math.floor(cW / anuncios.length) - 4;
+              return (
+                <div className="card" style={{padding:"1rem",marginBottom:"1rem"}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:10,textTransform:"uppercase",letterSpacing:".05em"}}>
+                    📈 Tendencia de captura por anuncio
+                  </div>
+                  <div style={{overflowX:"auto"}}>
+                    <svg width={W} height={H} style={{display:"block",minWidth:W}}>
+                      {/* Líneas de referencia 50% y 70% */}
+                      {[50,70,100].map(ref => {
+                        const y = PAD.top + cH - (ref/100)*cH;
+                        return (
+                          <g key={ref}>
+                            <line x1={PAD.left} y1={y} x2={PAD.left+cW} y2={y}
+                              stroke={ref===70?"rgba(16,185,129,.3)":ref===50?"rgba(255,222,89,.3)":"rgba(255,255,255,.06)"}
+                              strokeWidth="0.8" strokeDasharray="4 3"/>
+                            <text x={PAD.left-4} y={y+3} fontSize="8" fill="var(--muted)" textAnchor="end">{ref}%</text>
+                          </g>
+                        );
+                      })}
+                      {/* Barras */}
+                      {anuncios.map((a, i) => {
+                        const x = PAD.left + i*(barW+4) + 2;
+                        const pct = a.pct_captura || 0;
+                        const hBar = Math.max((pct/100)*cH, 2);
+                        const y = PAD.top + cH - hBar;
+                        const color = pct>=70?"var(--green)":pct>=50?"var(--amber)":"var(--red)";
+                        // Barra de fondo (total FB)
+                        const hFB = Math.max((a.total_form/maxF)*cH*0.85, 2);
+                        const yFB = PAD.top + cH - hFB;
+                        return (
+                          <g key={i}>
+                            <rect x={x} y={yFB} width={barW} height={hFB}
+                              fill="rgba(255,255,255,.04)" rx="2"/>
+                            <rect x={x} y={y} width={barW} height={hBar}
+                              fill={color} fillOpacity=".85" rx="2"/>
+                            <text x={x+barW/2} y={y-3} textAnchor="middle" fontSize="8"
+                              fontWeight="700" fill={color}>{pct}%</text>
+                            <text x={x+barW/2} y={PAD.top+cH+14} textAnchor="middle" fontSize="7"
+                              fill="var(--muted)">{a.nombre.slice(0,8)}</text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                  <div style={{display:"flex",gap:16,marginTop:6,fontSize:10,color:"var(--muted)"}}>
+                    <span><span style={{color:"var(--green)"}}>■</span> ≥70% óptimo</span>
+                    <span><span style={{color:"var(--amber)"}}>■</span> 50-70% aceptable</span>
+                    <span><span style={{color:"var(--red)"}}>■</span> &lt;50% mejorar</span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Tabs de vista */}
             <div className="period-pills" style={{ marginBottom:"1rem" }}>
@@ -7339,8 +7430,8 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                   ⚠️ Sin identificar ({data.sinAnuncioIdentificado.length})
                 </button>
               )}
+              {/* Remarketing — solo admin, nunca visible para el cliente */}
               {!readOnly && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing || 0})</button>}
-              {readOnly && data.total_remarketing > 0 && <button className={"pill " + (viewTab==="remarketing" ? "active" : "")} onClick={() => setViewTab("remarketing")}>🎯 Remarketing ({data.total_remarketing})</button>}
             </div>
 
             {/* Vista por anuncio/conjunto/campaña */}
@@ -7485,8 +7576,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
             )}
 
             {/* Footer */}
-            <div style={{ fontSize:11, color:"var(--muted)", marginTop:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span>Datos del: {sheetConfig.lastSync ? new Date(sheetConfig.lastSync).toLocaleString("es-EC") : "—"}</span>
+            <div style={{ fontSize:11, color:"var(--muted)", marginTop:12, display:"flex", justifyContent:"flex-end" }}>
               {!readOnly && <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} disabled={loading} onClick={cargarDatos}>🔄 Actualizar</button>}
             </div>
           </div>
