@@ -1295,6 +1295,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
   const [sortDir, setSortDir] = useState("desc");
   const [busqueda, setBusqueda] = useState("");
   const [vistaTab, setVistaTab] = useState("diario"); // diario | campanas
+  const [adminHovRow, setAdminHovRow] = useState(null);
   const { cols, toggle: toggleCol } = useColPrefs(client, isWA, isWeb);
   const visibleCols = ALL_COLUMNS.filter(c => cols.includes(c.key));
 
@@ -1433,16 +1434,16 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
             {sortedRows.map((r, i) => {
               const isEdit = editingRow === i;
               return (
-                <tr key={i} style={isEdit ? { background: "rgba(124,58,237,.06)" } : {}}>
-                  {visibleCols.map(c => (
-                    <td key={c.key} style={c.key === "date" ? { fontFamily: "var(--mono)", fontSize: 12 } : {}}>
+                <tr key={i} style={{...(isEdit ? { background: "rgba(124,58,237,.06)" } : {}), position:"relative"}}
+                  onMouseEnter={()=>!isEdit&&setAdminHovRow(i)} onMouseLeave={()=>setAdminHovRow(null)}>
+                  {visibleCols.map((c,ci) => (
+                    <td key={c.key} style={{...(c.key === "date" ? { fontFamily: "var(--mono)", fontSize: 12 } : {}), position:"relative"}}>
                       {isEdit
                         ? c.key === "date"
                           ? <input type="date" value={editForm.date} onChange={e => ef("date", e.target.value)} style={{ width: 130, fontSize: 12 }} />
                           : <EditNum editForm={editForm} fk={c.key} prefix={c.prefix} onChange={ef} />
                         : (() => {
                             if (c.key === "date") return fmtDate(r[c.key]);
-                            // Métricas calculadas automáticamente
                             if (c.key === "cpa") {
                               const res = r.resultados || r.formularios || r.leads || 0;
                               const inv = r.inversion || 0;
@@ -1471,6 +1472,39 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
                             return fmtNum(n, 0);
                           })()
                       }
+                      {/* Tooltip en primera columna visible */}
+                      {ci===0 && adminHovRow===i && !isEdit && (()=>{
+                        const inv=parseFloat(r.inversion)||0;
+                        const leads=parseFloat(r.resultados||r.formularios||r.leads)||0;
+                        const ventas=parseFloat(r.ventas)||0;
+                        const ingreso=parseFloat(r.ingreso)||0;
+                        const alcance=parseFloat(r.alcance)||0;
+                        const cpl=leads>0&&inv>0?inv/leads:0;
+                        const roas=inv>0&&ingreso>0?ingreso/inv:0;
+                        const prevRow=i>0?sortedRows[i-1]:null;
+                        const prevCpl=prevRow?(()=>{const pi=parseFloat(prevRow.inversion)||0,pl=parseFloat(prevRow.resultados||prevRow.formularios||prevRow.leads)||0;return pl>0&&pi>0?pi/pl:0;})():0;
+                        const cplDelta=cpl>0&&prevCpl>0?((cpl-prevCpl)/prevCpl*100):null;
+                        return (
+                          <div style={{position:"absolute",left:0,bottom:"calc(100% + 6px)",zIndex:300,
+                            background:"rgba(10,15,30,.97)",border:"1px solid var(--border)",borderRadius:10,
+                            padding:"12px 14px",minWidth:230,boxShadow:"0 8px 32px rgba(0,0,0,.6)",pointerEvents:"none",whiteSpace:"nowrap"}}>
+                            <div style={{fontSize:11,fontWeight:700,color:"var(--accent2)",marginBottom:8}}>{fmtDate(r.date)}</div>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 12px",marginBottom:6}}>
+                              {inv>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Inversión</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>${fmtNum(inv,2)}</span></>}
+                              {alcance>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Alcance</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(alcance)}</span></>}
+                              {leads>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Leads</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:"var(--accent2)"}}>{fmtNum(leads)}</span></>}
+                              {cpl>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>CPL</span>
+                                <span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:cplDelta!==null&&cplDelta<0?"var(--green)":"var(--red)"}}>
+                                  ${fmtNum(cpl,2)}{cplDelta!==null&&<span style={{fontSize:9,marginLeft:3}}>{cplDelta<0?"▼":"▲"}{Math.abs(cplDelta).toFixed(1)}%</span>}
+                                </span></>}
+                              {ventas>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Ventas</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(ventas)}</span></>}
+                              {ingreso>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Ingresos</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:"var(--green)"}}>${fmtNum(ingreso,2)}</span></>}
+                              {roas>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>ROAS</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:roas>=3?"var(--green)":roas>=1.5?"var(--amber)":"var(--red)"}}>{fmtNum(roas,2)}x</span></>}
+                            </div>
+                            {r.notas_dia&&<div style={{fontSize:10,color:"var(--muted)",borderTop:"1px solid var(--border)",paddingTop:5}}>📝 {r.notas_dia}</div>}
+                          </div>
+                        );
+                      })()}
                     </td>
                   ))}
                   <td>
@@ -3142,8 +3176,10 @@ function SemaforoMision({ client }) {
 }
 
 // ─── TARJETA DE MÉTRICA CON GRÁFICA DESPLEGABLE ──────────────────────────────
-function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocultar, onOcultar, onSubir, onBajar }) {
+function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocultar, onOcultar, onSubir, onBajar, meta, onSetMeta, clientId }) {
   const [open, setOpen] = useState(false);
+  const [editingMeta, setEditingMeta] = useState(false);
+  const [metaInput, setMetaInput] = useState(meta ? String(meta) : "");
 
   const histData = (records || [])
     .filter(r => r[campo] !== undefined && r[campo] !== null && r[campo] !== "")
@@ -3197,15 +3233,56 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocul
           {semaforo && (
             <div style={{ fontSize:10, color:semaforo.color, marginTop:3, fontWeight:600 }}>{semaforo.label}</div>
           )}
+          {/* Barra de progreso hacia meta */}
+          {meta > 0 && (() => {
+            const numVal = parseFloat(String(value).replace(/[^0-9.-]/g,"")) || 0;
+            const pct = Math.min((numVal / meta) * 100, 100);
+            const bajaMejor = ["cpa","cpm","cpl","cpc"].some(k => campo?.toLowerCase().includes(k));
+            const barColor = bajaMejor
+              ? (numVal <= meta ? "var(--green)" : numVal <= meta*1.15 ? "var(--amber)" : "var(--red)")
+              : (pct >= 100 ? "var(--green)" : pct >= 70 ? "var(--amber)" : "var(--red)");
+            return (
+              <div style={{marginTop:6}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                  <span style={{fontSize:9,color:"var(--muted)"}}>Meta: {prefix||""}{fmtNum(meta,meta<100?2:0)}{suffix||""}</span>
+                  <span style={{fontSize:9,fontWeight:700,color:barColor}}>{bajaMejor?(numVal<=meta?"✓ Bajo meta":"↑ Sobre meta"):fmtNum(pct,0)+"%"}</span>
+                </div>
+                <div style={{height:3,borderRadius:2,background:"var(--border)",overflow:"hidden"}}>
+                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:2,transition:"width .4s",boxShadow:`0 0 6px ${barColor}`}}/>
+                </div>
+              </div>
+            );
+          })()}
         </div>
-        {histData.length > 0 && (
-          <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:28 }}>
-            {histData.slice(-7).map((d, i) => (
-              <div key={i} style={{ width:4, borderRadius:2, background: color || "var(--accent)", opacity:.6,
-                height: Math.max((d.val / maxVal) * 28, 2) + "px", transition:"height .3s" }} />
-            ))}
-          </div>
-        )}
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+          {histData.length > 0 && (
+            <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:28 }}>
+              {histData.slice(-7).map((d, i) => (
+                <div key={i} style={{ width:4, borderRadius:2, background: color || "var(--accent)", opacity:.6,
+                  height: Math.max((d.val / maxVal) * 28, 2) + "px", transition:"height .3s" }} />
+              ))}
+            </div>
+          )}
+          {/* Botón para establecer meta */}
+          {onSetMeta && (
+            editingMeta ? (
+              <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
+                <input type="number" value={metaInput} onChange={e=>setMetaInput(e.target.value)}
+                  style={{width:70,fontSize:11,padding:"2px 6px"}}
+                  placeholder="Meta" onKeyDown={e=>{if(e.key==="Enter"){onSetMeta(parseFloat(metaInput)||0);setEditingMeta(false);}if(e.key==="Escape")setEditingMeta(false);}}
+                  autoFocus />
+                <button onClick={()=>{onSetMeta(parseFloat(metaInput)||0);setEditingMeta(false);}} style={{background:"var(--green)",border:"none",color:"#fff",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>✓</button>
+                <button onClick={()=>setEditingMeta(false)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:12}}>×</button>
+              </div>
+            ) : (
+              <button onClick={e=>{e.stopPropagation();setMetaInput(meta?String(meta):"");setEditingMeta(true);}}
+                style={{background:"none",border:"1px dashed var(--border)",color:"var(--muted)",borderRadius:4,padding:"1px 6px",cursor:"pointer",fontSize:10,transition:"all .15s"}}
+                title="Establecer meta diaria">
+                {meta>0?"✎ meta":"+ meta"}
+              </button>
+            )
+          )}
+        </div>
       </div>
       {open && histData.length > 0 && (
         <div style={{ marginTop:12, borderTop:"1px solid var(--border)", paddingTop:12 }}
@@ -3921,6 +3998,22 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
   const [editandoTarjetas, setEditandoTarjetas] = useState(false);
   const [showCorte, setShowCorte] = useState(false);
 
+  // ── Metas diarias por tarjeta ─────────────────────────────────────────────
+  const [metasConfig, setMetasConfig] = useState(() => client.metricasConfig?.metas || {});
+
+  async function guardarMeta(id, valor) {
+    const nuevasMetas = { ...metasConfig, [id]: valor };
+    setMetasConfig(nuevasMetas);
+    const newCfg = { ...(client.metricasConfig||{}), metas: nuevasMetas };
+    if (onUpdate) {
+      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+        body: JSON.stringify({ metricasConfig: newCfg })
+      });
+      client.metricasConfig = newCfg;
+    }
+  }
+
   async function guardarConfigTarjetas(nuevas) {
     setTarjetasConfig(nuevas);
     if (onUpdate) {
@@ -4046,20 +4139,23 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
       {/* Tarjetas personalizadas */}
       <div className="grid4" style={{ marginBottom:"0.5rem" }}>
         {tarjetasVisibles.slice(0,4).map(t=>(
-          <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+          <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+            meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
         ))}
       </div>
       {tarjetasVisibles.length > 4 && (
         <div className="grid4" style={{ marginBottom:"0.5rem" }}>
           {tarjetasVisibles.slice(4,8).map(t=>(
-            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+              meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
           ))}
         </div>
       )}
       {tarjetasVisibles.length > 8 && (
         <div className="grid4" style={{ marginBottom:"1rem" }}>
           {tarjetasVisibles.slice(8).map(t=>(
-            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+              meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
           ))}
         </div>
       )}
@@ -4071,15 +4167,115 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
 function ClientMetricasTable({ client, period, from, to, onUpdate }) {
   const isApollo = client.producto?.startsWith("APOLLO");
   const { cols: rawCols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
-  // Para APOLLO, siempre incluir columnas WP aunque no estén en las preferencias guardadas
   const cols = isApollo
     ? [...new Set([...rawCols, "personas_wp", "costo_wp", "pct_captura_wp"])]
     : rawCols;
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
   const vis = ALL_COLUMNS.filter(c => cols.includes(c.key));
+  const [hovRow, setHovRow] = useState(null);
+
+  // ── Calcular valor de celda (reutilizable para tabla y tooltip) ───────────
+  function getCellVal(r, c) {
+    if (c.key === "date") return fmtDate(r.date);
+    if (c.key === "costo_wp") { const wp=parseFloat(r.personas_wp)||0,inv=parseFloat(r.inversion)||0; return wp>0&&inv>0?"$"+fmtNum(inv/wp,2):"—"; }
+    if (c.key === "pct_captura_wp") { const wp=parseFloat(r.personas_wp)||0,fb=parseFloat(r.formularios||r.resultados||r.clientesPotenciales)||0; return wp>0&&fb>0?fmtNum(wp/fb*100,1)+"%":"—"; }
+    if (c.key === "cpa") { const res=parseFloat(r.resultados||r.formularios)||0,inv=parseFloat(r.inversion)||0; return res>0&&inv>0?"$"+fmtNum(inv/res,2):"—"; }
+    const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||"");
+  }
+
+  // ── Tooltip con datos extendidos del día ──────────────────────────────────
+  function RowTooltip({ r }) {
+    const inv = parseFloat(r.inversion)||0;
+    const leads = parseFloat(r.resultados||r.formularios||r.leads)||0;
+    const ventas = parseFloat(r.ventas)||0;
+    const ingreso = parseFloat(r.ingreso)||0;
+    const alcance = parseFloat(r.alcance)||0;
+    const cpl = leads>0&&inv>0 ? inv/leads : 0;
+    const roas = inv>0&&ingreso>0 ? ingreso/inv : 0;
+    const tasaCierre = leads>0&&ventas>0 ? (ventas/leads*100) : 0;
+    // Comparar con día anterior
+    const idx = rows.findIndex(x=>x===r);
+    const prev = idx > 0 ? rows[idx-1] : null;
+    const prevCpl = prev ? (()=>{ const pi=parseFloat(prev.inversion)||0,pl=parseFloat(prev.resultados||prev.formularios||prev.leads)||0; return pl>0&&pi>0?pi/pl:0; })() : 0;
+    const cplDelta = cpl>0&&prevCpl>0 ? ((cpl-prevCpl)/prevCpl*100) : null;
+    const anotaciones = (client.cplAnotaciones||[]).filter(a=>a.fecha===r.date);
+    return (
+      <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",bottom:"calc(100% + 6px)",zIndex:200,
+        background:"rgba(10,15,30,.97)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 14px",
+        minWidth:220,maxWidth:280,boxShadow:"0 8px 32px rgba(0,0,0,.5)",pointerEvents:"none",whiteSpace:"nowrap"}}>
+        {/* Fecha */}
+        <div style={{fontSize:11,fontWeight:700,color:"var(--accent2)",marginBottom:8,letterSpacing:".04em"}}>{fmtDate(r.date)}</div>
+        {/* Métricas clave */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 12px",marginBottom:8}}>
+          {inv>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Inversión</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>${fmtNum(inv,2)}</span></>}
+          {alcance>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Alcance</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(alcance)}</span></>}
+          {leads>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Leads/Result.</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:"var(--accent2)"}}>{fmtNum(leads)}</span></>}
+          {cpl>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>CPL</span>
+            <span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:cpl<(prevCpl||cpl)?"var(--green)":"var(--red)"}}>
+              ${fmtNum(cpl,2)}{cplDelta!==null&&<span style={{fontSize:9,marginLeft:3}}>{cplDelta<0?"▼":"▲"}{Math.abs(cplDelta).toFixed(1)}%</span>}
+            </span></>}
+          {ventas>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Ventas</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(ventas)}</span></>}
+          {ingreso>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Ingresos</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:"var(--green)"}}>${fmtNum(ingreso,2)}</span></>}
+          {roas>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>ROAS</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:roas>=3?"var(--green)":roas>=1.5?"var(--amber)":"var(--red)"}}>{fmtNum(roas,2)}x</span></>}
+          {tasaCierre>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Tasa cierre</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(tasaCierre,1)}%</span></>}
+        </div>
+        {/* Notas del día */}
+        {r.notas_dia&&<div style={{fontSize:10,color:"var(--muted)",borderTop:"1px solid var(--border)",paddingTop:6,marginTop:4}}>📝 {r.notas_dia}</div>}
+        {/* Anotaciones CPL */}
+        {anotaciones.length>0&&<div style={{borderTop:"1px solid var(--border)",paddingTop:6,marginTop:4}}>
+          {anotaciones.map(a=><div key={a.id} style={{fontSize:10,color:"var(--amber)"}}>📌 {a.hora} — {a.texto}</div>)}
+        </div>}
+        {/* Flecha apuntadora */}
+        <div style={{position:"absolute",bottom:-5,left:"50%",transform:"translateX(-50%)",width:8,height:8,background:"rgba(10,15,30,.97)",border:"1px solid var(--border)",borderTop:"none",borderLeft:"none",transform:"translateX(-50%) rotate(45deg)"}}/>
+      </div>
+    );
+  }
+
   return (
     <div style={{ marginTop:"1rem" }}>
       <CplTradingChart client={client} onUpdate={onUpdate} />
+      {/* ── Resumen semanal automático ─────────────────────────────────────── */}
+      {rows.length >= 3 && (() => {
+        const allR = [...rows].sort((a,b)=>a.date.localeCompare(b.date));
+        const ultimos7 = allR.slice(-7);
+        const getCpl = r => { const i=parseFloat(r.inversion)||0,l=parseFloat(r.resultados||r.formularios||r.leads)||0; return i>0&&l>0?i/l:0; };
+        const cpls = ultimos7.map(getCpl).filter(v=>v>0);
+        if (cpls.length < 2) return null;
+        const cplProm = cpls.reduce((a,v)=>a+v,0)/cpls.length;
+        const mejorDia = [...ultimos7].filter(r=>getCpl(r)>0).sort((a,b)=>getCpl(a)-getCpl(b))[0];
+        const peorDia = [...ultimos7].filter(r=>getCpl(r)>0).sort((a,b)=>getCpl(b)-getCpl(a))[0];
+        const primera = cpls[0], ultima = cpls[cpls.length-1];
+        const tendencia = ((ultima-primera)/primera*100);
+        const invTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
+        const leadsTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
+        const ventasTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.ventas)||0),0);
+        const tendColor = tendencia < -5 ? "var(--green)" : tendencia > 5 ? "var(--red)" : "var(--amber)";
+        const tendText = tendencia < -5 ? "📉 CPL mejorando esta semana" : tendencia > 5 ? "📈 CPL empeorando esta semana" : "➡️ CPL estable esta semana";
+        return (
+          <div className="card" style={{marginTop:"1rem",padding:"14px 18px",background:"rgba(0,74,173,.04)",borderColor:"rgba(0,74,173,.15)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>📊 Resumen últimos {ultimos7.length} días</div>
+              <span style={{fontSize:11,fontWeight:700,color:tendColor,padding:"2px 10px",background:tendColor.replace("var(--","rgba(").replace(")",",.12)"),borderRadius:20}}>{tendText}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+              {[
+                ["Inversión total", "$"+fmtNum(invTotal7,2), "var(--text)"],
+                ["Leads totales", fmtNum(leadsTotal7), "var(--accent2)"],
+                ventasTotal7>0 && ["Ventas", fmtNum(ventasTotal7), "var(--green)"],
+                ["CPL promedio", "$"+fmtNum(cplProm,2), "var(--text)"],
+                mejorDia && ["Mejor día", fmtDate(mejorDia.date)+" · $"+fmtNum(getCpl(mejorDia),2), "var(--green)"],
+                peorDia && mejorDia?.date!==peorDia?.date && ["Peor día", fmtDate(peorDia.date)+" · $"+fmtNum(getCpl(peorDia),2), "var(--red)"],
+              ].filter(Boolean).map(([lbl,val,c],i)=>(
+                <div key={i} style={{textAlign:"center"}}>
+                  <div style={{fontSize:9,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:3}}>{lbl}</div>
+                  <div style={{fontSize:13,fontFamily:"var(--mono)",fontWeight:700,color:c}}>{val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {rows.length > 0 && (
         <div className="card scroll-x" style={{ marginTop:"1rem" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
@@ -4088,11 +4284,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
               <ColumnSelector cols={cols} onToggle={toggle} />
               <BotonesExportar
                 headers={vis.map(c => c.label)}
-                rows={rows.map(r => vis.map(c => {
-                  if (c.key === "date") return fmtDate(r.date);
-                  const v = parseFloat(r[c.key]);
-                  return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||"");
-                }))}
+                rows={rows.map(r => vis.map(c => getCellVal(r,c)))}
                 nombreArchivo="metricas"
               />
             </div>
@@ -4101,14 +4293,13 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
             <thead><tr>{vis.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
             <tbody>
               {rows.map((r,i) => (
-                <tr key={i}>
+                <tr key={i} style={{position:"relative"}}
+                  onMouseEnter={()=>setHovRow(i)} onMouseLeave={()=>setHovRow(null)}>
                   {vis.map(c => (
-                    <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
-                      {c.key === "date" ? fmtDate(r.date)
-                        : c.key === "costo_wp" ? (()=>{ const wp=parseFloat(r.personas_wp)||0,inv=parseFloat(r.inversion)||0; return wp>0&&inv>0?"$"+fmtNum(inv/wp,2):"—"; })()
-                        : c.key === "pct_captura_wp" ? (()=>{ const wp=parseFloat(r.personas_wp)||0,fb=parseFloat(r.formularios||r.resultados||r.clientesPotenciales)||0; return wp>0&&fb>0?fmtNum(wp/fb*100,1)+"%":"—"; })()
-                        : c.key === "cpa" ? (()=>{ const res=parseFloat(r.resultados||r.formularios)||0,inv=parseFloat(r.inversion)||0; return res>0&&inv>0?"$"+fmtNum(inv/res,2):"—"; })()
-                        : (() => { const v = parseFloat(r[c.key]); return isNaN(v) ? "—" : (c.prefix||"") + fmtNum(v, c.prefix||c.suffix?2:0) + (c.suffix||""); })()}
+                    <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12, position:"relative" }}>
+                      {getCellVal(r,c)}
+                      {/* Tooltip en primera celda */}
+                      {c.key === vis[0].key && hovRow === i && <RowTooltip r={r} />}
                     </td>
                   ))}
                 </tr>
@@ -7595,27 +7786,44 @@ function CplTradingChart({ client, onUpdate }) {
 
   if (rango === "24h") {
     const ahora = Date.now();
-    const tsCorte = ahora - 24*60*60*1000;
-    const ayer = new Date(); ayer.setDate(ayer.getDate()-1);
+    const ahoraDate = new Date(ahora);
+    const ayer = new Date(ahora); ayer.setDate(ayer.getDate()-1);
     const ayerStr = ayer.toISOString().slice(0,10);
 
-    // Datos de hoy (línea principal)
+    // ── Ventana deslizante sincronizada ────────────────────────────────────
+    // Inicio de ventana = ayer a la misma hora exacta que ahora
+    // Fin de ventana   = ahora (tiempo real)
+    // → la gráfica siempre cubre exactamente 24h y avanza con el tiempo
+    const tsVentanaInicio = ahora - 24*60*60*1000; // ayer misma hora
+
+    // Datos de hoy (línea principal) — solo desde inicio de ventana
     const ptsHoyGuardados = client.cplRtData?.[hoy]||[];
     const mapa={};
     [...ptsHoyGuardados, ...puntosRT].forEach(p=>{mapa[p.ts]=p;});
-    datosVista = Object.values(mapa).sort((a,b)=>a.ts-b.ts)
-      .map(p=>({...p, fecha:new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}));
+    datosVista = Object.values(mapa)
+      .sort((a,b)=>a.ts-b.ts)
+      .filter(p => p.ts >= tsVentanaInicio && p.ts <= ahora)
+      .map(p=>({...p, fecha:new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), esHoy:true}));
 
-    // Datos de ayer completos (línea de referencia) — misma longitud temporal
+    // Datos de ayer (línea de referencia gris) — misma ventana horaria
+    // Tomamos los puntos de ayer cuyo timestamp original cae en [tsVentanaInicio-24h, ahora-24h]
+    // es decir, los de ayer entre "ayer a la hora de inicio de ventana" y "ayer a la hora actual"
     const ptsAyer = client.cplRtData?.[ayerStr]||[];
-    // Desplazar timestamps de ayer +24h para que se superpongan visualmente con hoy
-    datosAyer = ptsAyer.map(p=>({
-      ...p,
-      tsOriginal: p.ts,
-      ts: p.ts + 24*60*60*1000, // desplazar +1 día para coincidir con eje X
-      fecha: new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
-      esAyer: true
-    })).sort((a,b)=>a.ts-b.ts);
+    datosAyer = ptsAyer
+      .filter(p => {
+        // el punto de ayer está dentro de la misma franja horaria del día
+        const horaAyer = p.ts - ayer.setHours(0,0,0,0); // ms desde medianoche de ayer
+        const horaInicio = tsVentanaInicio - new Date(tsVentanaInicio).setHours(0,0,0,0);
+        const horaFin = ahora - ahoraDate.setHours(0,0,0,0);
+        return horaAyer >= horaInicio && horaAyer <= horaFin;
+      })
+      .map(p=>({
+        ...p,
+        tsOriginal: p.ts,
+        ts: p.ts + 24*60*60*1000, // desplazar +1 día → eje X compartido con hoy
+        fecha: new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
+        esAyer: true
+      })).sort((a,b)=>a.ts-b.ts);
 
     modoRT = true;
   } else if (rango==="1W") {
