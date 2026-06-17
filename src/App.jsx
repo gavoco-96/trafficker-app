@@ -4050,7 +4050,7 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
 
   async function fetchCorteHoy() {
     const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
+    const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
     if (!token || !adAccountId) {
       setCorteError("Sin credenciales de Facebook configuradas.");
       return;
@@ -4563,7 +4563,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
 
   async function sincronizarConFacebook() {
     const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
+    const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
     if (!token || !adAccountId) return show("Configura Facebook Ads en la tab 📘 Facebook primero", "err");
     setSyncing(true); setSyncResult(null);
     show("⏳ Obteniendo anuncios de Facebook (puede tomar unos segundos)...", "ok");
@@ -5865,15 +5865,6 @@ function FacebookPanel({ client, onUpdate }) {
     : null;
   const tokenExpirando = tokenAge !== null && tokenAge >= 50;
 
-  // ── Auto-sync al montar ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (autoSync && token && cuentas.some(c=>c.adAccountId)) {
-      const today = new Date().toISOString().slice(0,10);
-      setSyncDate(today);
-      setTimeout(() => ejecutarSync([today]), 500);
-    }
-  }, []);
-
   // ── Verificar token ───────────────────────────────────────────────────────
   async function verificarToken() {
     if (!token) return show("Ingresa el token primero", "err");
@@ -6008,6 +5999,15 @@ function FacebookPanel({ client, onUpdate }) {
     show("✓ Configuración de Facebook guardada", "ok");
     setSaving(false);
   }
+
+  // ── Auto-sync al montar — va aquí para que ejecutarSync ya esté definido ──
+  useEffect(() => {
+    if (autoSync && token && cuentas.some(c=>c.adAccountId)) {
+      const today = new Date().toISOString().slice(0,10);
+      setSyncDate(today);
+      setTimeout(() => ejecutarSync([today]), 500);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
