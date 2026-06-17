@@ -4039,12 +4039,57 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
 
   // ── Corte del día ─────────────────────────────────────────────────────────
   const hoy = new Date().toISOString().slice(0,10);
-  const registroHoy = allRows.find(r=>r.date===hoy);
   const diasTranscurridos = allRows.length;
-  const invHoy = parseFloat(registroHoy?.inversion)||0;
-  const leadsHoy = parseFloat(registroHoy?.resultados||registroHoy?.formularios)||0;
-  const invPromDia = diasTranscurridos > 0 ? inv/diasTranscurridos : 0;
+  const invPromDia  = diasTranscurridos > 0 ? inv/diasTranscurridos : 0;
   const leadsPromDia = diasTranscurridos > 0 ? forms/diasTranscurridos : 0;
+
+  // Estado para datos en vivo de FB
+  const [corteFB, setCorteFB]       = useState(null);   // { inv, leads, alcance, cpm, ctr, cpc }
+  const [corteLoading, setCorteLoading] = useState(false);
+  const [corteError, setCorteError] = useState(null);
+
+  async function fetchCorteHoy() {
+    const { token, adAccountId } = client.fbConfig || {};
+    if (!token || !adAccountId) {
+      setCorteError("Sin credenciales de Facebook configuradas.");
+      return;
+    }
+    setCorteLoading(true);
+    setCorteError(null);
+    setCorteFB(null);
+    try {
+      const fields = "spend,actions,impressions,reach,cpm,ctr,cpc,date_start";
+      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fields}&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      if (json.error) { setCorteError("FB: " + json.error.message); setCorteLoading(false); return; }
+      if (!json.data?.length) { setCorteError("Sin datos en Facebook para hoy todavía."); setCorteLoading(false); return; }
+      const d   = json.data[0];
+      const inv = parseFloat(d.spend) || 0;
+      const la  = (d.actions||[]).find(a => a.action_type==="lead" || a.action_type==="onsite_conversion.lead_grouped");
+      const leads = la ? parseFloat(la.value) : 0;
+      const alcance = parseFloat(d.reach) || 0;
+      const impr    = parseFloat(d.impressions) || 0;
+      const cpm  = parseFloat(d.cpm) || 0;
+      const ctr  = parseFloat(d.ctr) || 0;
+      const cpc  = parseFloat(d.cpc) || 0;
+      setCorteFB({ inv, leads, alcance, impr, cpm, ctr, cpc,
+        cpl: inv > 0 && leads > 0 ? inv/leads : 0,
+        hora: new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})
+      });
+    } catch(e) {
+      setCorteError("Error de red: " + e.message);
+    }
+    setCorteLoading(false);
+  }
+
+  // Lanzar fetch al abrir el panel
+  function abrirCorte() {
+    setShowCorte(v => {
+      if (!v) fetchCorteHoy(); // solo fetch al abrir
+      return !v;
+    });
+  }
 
   return (
     <div>
@@ -4054,7 +4099,7 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
           {tarjetasVisibles.length} tarjetas visibles
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={()=>setShowCorte(v=>!v)}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={abrirCorte}>
             📊 Corte del día
           </button>
           <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={()=>setEditandoTarjetas(v=>!v)}>
@@ -4088,29 +4133,102 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
         </div>
       )}
 
-      {/* Corte del día */}
+      {/* Corte del día — datos en vivo de Facebook */}
       {showCorte && (
         <div className="card" style={{ marginBottom:"1rem", padding:"16px 20px", background:"rgba(0,74,173,.05)", borderColor:"rgba(0,74,173,.2)" }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-            <div style={{ fontWeight:700, fontSize:14 }}>📊 Corte del día — {fmtDate(hoy)}</div>
-            <button className="btn btn-ghost btn-sm" onClick={()=>setShowCorte(false)}>×</button>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ fontWeight:700, fontSize:14 }}>📊 Corte del día — {fmtDate(hoy)}</div>
+              {corteFB && <span style={{ fontSize:10, color:"var(--muted)" }}>Actualizado {corteFB.hora} · Facebook Ads en vivo</span>}
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }}
+                onClick={fetchCorteHoy} disabled={corteLoading}>
+                {corteLoading ? "⟳" : "🔄 Actualizar"}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setShowCorte(false)}>×</button>
+            </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
-            {[
-              ["Inversión hoy", invHoy>0?"$"+fmtNum(invHoy,2):"Sin registro", invPromDia>0?`Prom/día: $${fmtNum(invPromDia,2)}`:"", invHoy>=invPromDia*0.9?"var(--green)":"var(--amber)"],
-              ["Leads hoy", leadsHoy>0?fmtNum(leadsHoy):"Sin registro", leadsPromDia>0?`Prom/día: ${fmtNum(leadsPromDia,0)}`:"", leadsHoy>=leadsPromDia*0.9?"var(--green)":"var(--amber)"],
-              ["CPL hoy", invHoy>0&&leadsHoy>0?"$"+fmtNum(invHoy/leadsHoy,2):"—", cpl>0?`CPL total: $${fmtNum(cpl,2)}`:"", invHoy>0&&leadsHoy>0&&(invHoy/leadsHoy)<=cpl?"var(--green)":"var(--amber)"],
-              ["Acumulado inversión", "$"+fmtNum(inv,2), diasTranscurridos+" días de campaña", "var(--text)"],
-              ["Acumulado leads", fmtNum(forms), cpl>0?"CPL acum: $"+fmtNum(cpl,2):"", "var(--accent2)"],
-              ["% Captura", pctCap>0?fmtNum(pctCap,1)+"%":"—", wpPersons>0?fmtNum(wpPersons)+" en WP":"", pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)"],
-            ].map(([lbl,val,sub,c],i)=>(
-              <div key={i} style={{ textAlign:"center" }}>
-                <div style={{ fontSize:10, color:"var(--muted)", marginBottom:2 }}>{lbl}</div>
-                <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:16, color:c }}>{val}</div>
-                {sub && <div style={{ fontSize:10, color:"var(--muted)", marginTop:1 }}>{sub}</div>}
-              </div>
-            ))}
-          </div>
+
+          {/* Estado de carga */}
+          {corteLoading && (
+            <div style={{ textAlign:"center", padding:"1.5rem", color:"var(--muted)", fontSize:13 }}>
+              <div style={{ fontSize:20, marginBottom:8 }}>⟳</div>
+              Consultando Facebook Ads...
+            </div>
+          )}
+
+          {/* Error */}
+          {corteError && !corteLoading && (
+            <div style={{ textAlign:"center", padding:"1rem", color:"var(--amber)", fontSize:13, background:"rgba(255,170,0,.06)", borderRadius:8 }}>
+              ⚠️ {corteError}
+            </div>
+          )}
+
+          {/* Datos en vivo */}
+          {corteFB && !corteLoading && (() => {
+            const cplVsAcum = corteFB.cpl > 0 && cpl > 0 ? ((corteFB.cpl - cpl) / cpl * 100) : null;
+            const invVsProm = invPromDia > 0 ? ((corteFB.inv - invPromDia) / invPromDia * 100) : null;
+            const leadsVsProm = leadsPromDia > 0 ? ((corteFB.leads - leadsPromDia) / leadsPromDia * 100) : null;
+            return (
+              <>
+                {/* Fila principal — métricas del día */}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16, marginBottom:16 }}>
+                  {[
+                    {
+                      lbl:"Inversión hoy", val:"$"+fmtNum(corteFB.inv,2),
+                      sub: invVsProm!==null ? `${invVsProm>0?"+":""}${fmtNum(invVsProm,1)}% vs prom $${fmtNum(invPromDia,2)}` : `Prom/día: $${fmtNum(invPromDia,2)}`,
+                      color: invVsProm!==null ? (Math.abs(invVsProm)<15?"var(--green)":"var(--amber)") : "var(--green)"
+                    },
+                    {
+                      lbl:"Leads hoy", val: corteFB.leads > 0 ? fmtNum(corteFB.leads) : "Sin leads aún",
+                      sub: leadsVsProm!==null ? `${leadsVsProm>0?"+":""}${fmtNum(leadsVsProm,1)}% vs prom ${fmtNum(leadsPromDia,0)}` : `Prom/día: ${fmtNum(leadsPromDia,0)}`,
+                      color: corteFB.leads > 0 ? (leadsVsProm===null||leadsVsProm>=-10?"var(--green)":"var(--amber)") : "var(--amber)"
+                    },
+                    {
+                      lbl:"CPL hoy", val: corteFB.cpl > 0 ? "$"+fmtNum(corteFB.cpl,2) : "—",
+                      sub: cplVsAcum!==null ? `${cplVsAcum>0?"▲":"▼"} ${Math.abs(cplVsAcum).toFixed(1)}% vs CPL acum $${fmtNum(cpl,2)}` : cpl>0?`CPL acum: $${fmtNum(cpl,2)}`:"",
+                      color: corteFB.cpl>0 ? (cplVsAcum===null||cplVsAcum<=5?"var(--green)":cplVsAcum<=15?"var(--amber)":"var(--red)") : "var(--muted)"
+                    },
+                  ].map(({lbl,val,sub,color},i) => (
+                    <div key={i} style={{ textAlign:"center" }}>
+                      <div style={{ fontSize:10, color:"var(--muted)", marginBottom:4 }}>{lbl}</div>
+                      <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:18, color }}>{val}</div>
+                      {sub && <div style={{ fontSize:10, color:"var(--muted)", marginTop:3 }}>{sub}</div>}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Divisor */}
+                <div style={{ borderTop:"1px solid var(--border)", marginBottom:14 }}/>
+
+                {/* Fila secundaria — alcance, CPM, CTR + acumulados */}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+                  {[
+                    corteFB.alcance>0 && { lbl:"Alcance hoy",      val:fmtNum(corteFB.alcance),        color:"var(--text)" },
+                    corteFB.cpm>0    && { lbl:"CPM hoy",           val:"$"+fmtNum(corteFB.cpm,2),      color:"var(--text)" },
+                    corteFB.ctr>0    && { lbl:"CTR hoy",           val:fmtNum(corteFB.ctr,2)+"%",      color:"var(--text)" },
+                    { lbl:"Acumulado inversión", val:"$"+fmtNum(inv,2),  color:"var(--text)", sub:diasTranscurridos+" días" },
+                    { lbl:"Acumulado leads",     val:fmtNum(forms),      color:"var(--accent2)", sub:cpl>0?"CPL acum: $"+fmtNum(cpl,2):"" },
+                    pctCap>0 && { lbl:"% Captura FB→WP",  val:fmtNum(pctCap,1)+"%", color:pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)", sub:wpPersons>0?fmtNum(wpPersons)+" en WP":"" },
+                  ].filter(Boolean).map((item,i) => (
+                    <div key={i} style={{ textAlign:"center" }}>
+                      <div style={{ fontSize:10, color:"var(--muted)", marginBottom:2 }}>{item.lbl}</div>
+                      <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:14, color:item.color }}>{item.val}</div>
+                      {item.sub && <div style={{ fontSize:10, color:"var(--muted)", marginTop:1 }}>{item.sub}</div>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+
+          {/* Sin FB config — mostrar datos del registro guardado como fallback */}
+          {!corteFB && !corteLoading && !corteError && (
+            <div style={{ textAlign:"center", padding:"1rem", color:"var(--muted)", fontSize:12 }}>
+              Abriendo...
+            </div>
+          )}
         </div>
       )}
 
