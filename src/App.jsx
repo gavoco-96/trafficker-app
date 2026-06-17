@@ -8185,6 +8185,47 @@ function GruposSelector({ grupos, seleccionados, onChange, label }) {
   );
 }
 
+// ─── PANEL DE ALERTAS ─────────────────────────────────────────
+const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
+
+function AlertasPanel() {
+  const [alertas, setAlertas] = useState([]);
+
+  async function cargar() {
+    const data = await fetch(`${SUPA_ALERTAS_URL}?leida=eq.false&order=creado_en.desc&limit=20`, { headers: HL }).then(r=>r.json()).catch(()=>[]);
+    setAlertas(Array.isArray(data) ? data : []);
+  }
+
+  async function marcarLeida(id) {
+    await fetch(`${SUPA_ALERTAS_URL}?id=eq.${id}`, { method:"PATCH", headers:{...HL,Prefer:"return=minimal"}, body:JSON.stringify({leida:true}) });
+    cargar();
+  }
+
+  useEffect(() => { cargar(); const t = setInterval(cargar, 30000); return ()=>clearInterval(t); }, []);
+
+  if (!alertas.length) return (
+    <div style={{textAlign:"center",padding:"1.5rem",color:"var(--muted)",fontSize:13}}>✅ Sin alertas activas</div>
+  );
+
+  return (
+    <div>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>🔔 Alertas activas ({alertas.length})</div>
+      {alertas.map(a => (
+        <div key={a.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px",background:a.tipo==="grupo_caido"?"rgba(239,68,68,.08)":"rgba(16,185,129,.08)",borderRadius:10,marginBottom:8,border:`1px solid ${a.tipo==="grupo_caido"?"rgba(239,68,68,.2)":"rgba(16,185,129,.2)"}`}}>
+          <div style={{fontSize:20,flexShrink:0}}>{a.tipo==="grupo_caido"?"🔴":a.tipo==="grupo_recuperado"?"🟢":"🟡"}</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{a.nombre_grupo}</div>
+            <div style={{fontSize:12,color:"var(--muted)"}}>{a.mensaje}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{new Date(a.creado_en).toLocaleString("es-ES")}</div>
+          </div>
+          <button onClick={()=>marcarLeida(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:16,padding:4}}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 // ─── PANEL DE GRUPOS WHATSAPP ──────────────────────────────────
 const SUPA_GRUPOS_URL  = `${SUPA_URL}/rest/v1/wa_grupos`;
 const SUPA_CONFIG_URL  = `${SUPA_URL}/rest/v1/wa_config`;
@@ -8649,46 +8690,6 @@ function GruposPanel() {
           <AlertasPanel />
         </div>
       )}
-    </div>
-  );
-}
-
-// ─── PANEL DE ALERTAS ─────────────────────────────────────────
-const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
-
-function AlertasPanel() {
-  const [alertas, setAlertas] = useState([]);
-
-  async function cargar() {
-    const data = await fetch(`${SUPA_ALERTAS_URL}?leida=eq.false&order=creado_en.desc&limit=20`, { headers: HL }).then(r=>r.json()).catch(()=>[]);
-    setAlertas(Array.isArray(data) ? data : []);
-  }
-
-  async function marcarLeida(id) {
-    await fetch(`${SUPA_ALERTAS_URL}?id=eq.${id}`, { method:"PATCH", headers:{...HL,Prefer:"return=minimal"}, body:JSON.stringify({leida:true}) });
-    cargar();
-  }
-
-  useEffect(() => { cargar(); const t = setInterval(cargar, 30000); return ()=>clearInterval(t); }, []);
-
-  if (!alertas.length) return (
-    <div style={{textAlign:"center",padding:"1.5rem",color:"var(--muted)",fontSize:13}}>✅ Sin alertas activas</div>
-  );
-
-  return (
-    <div>
-      <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>🔔 Alertas activas ({alertas.length})</div>
-      {alertas.map(a => (
-        <div key={a.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px",background:a.tipo==="grupo_caido"?"rgba(239,68,68,.08)":"rgba(16,185,129,.08)",borderRadius:10,marginBottom:8,border:`1px solid ${a.tipo==="grupo_caido"?"rgba(239,68,68,.2)":"rgba(16,185,129,.2)"}`}}>
-          <div style={{fontSize:20,flexShrink:0}}>{a.tipo==="grupo_caido"?"🔴":a.tipo==="grupo_recuperado"?"🟢":"🟡"}</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{a.nombre_grupo}</div>
-            <div style={{fontSize:12,color:"var(--muted)"}}>{a.mensaje}</div>
-            <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{new Date(a.creado_en).toLocaleString("es-ES")}</div>
-          </div>
-          <button onClick={()=>marcarLeida(a.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:16,padding:4}}>✕</button>
-        </div>
-      ))}
     </div>
   );
 }
