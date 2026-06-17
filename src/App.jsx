@@ -1350,35 +1350,9 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
         <button className="btn btn-primary btn-sm" onClick={onAdd}>+ Nuevo registro</button>
       </div>
-      <div className="grid4" style={{ marginBottom: "1rem" }}>
-        <MetricCard label="Inversión" value={"$" + t.inversion} />
-        <MetricCard label="Alcance" value={t.alcance} />
-        <MetricCard label="CPM" value={"$" + t.cpm} />
-        <MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight />
-      </div>
-      {isWA && <div className="grid4" style={{ marginBottom: "1rem" }}>
-        <MetricCard label="Leads" value={t.leads} />
-        <MetricCard label="Contactados" value={t.contactados} />
-        <MetricCard label="Ventas" value={t.ventas} />
-        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
-      </div>}
-      {isWeb && <div className="grid4" style={{ marginBottom: "1rem" }}>
-        <MetricCard label="Sesiones" value={t.sesiones} />
-        <MetricCard label="Carrito" value={t.agregar_carrito} />
-        <MetricCard label="Compras" value={t.compras} />
-        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
-      </div>}
-      {isLaunch && <><div className="grid4" style={{ marginBottom: "1rem" }}>
-        <MetricCard label="Potenciales" value={t.clientesPotenciales} />
-        <MetricCard label="Formularios" value={t.formularios} />
-        <MetricCard label="Resultados" value={t.resultados} highlight />
-        <MetricCard label="CPA" value={"$" + t.cpa} />
-      </div>
-      <div className="grid3" style={{ marginBottom: "1rem" }}>
-        <MetricCard label="Costo/formulario" value={"$" + t.costo_formulario} />
-        <MetricCard label="Ventas" value={t.ventas} />
-        <MetricCard label="Ingresos" value={"$" + t.ingreso} highlight />
-      </div></>}
+      {/* Tarjetas — misma vista que el cliente, con personalización y metas independientes */}
+      <ApolloMetricasPanel client={client} period={period} from={from} to={to} onUpdate={onUpdate} configKey="admin" />
+
       {/* TABS vista diario / por campaña */}
       <div style={{ display: "flex", gap: 8, marginBottom: "1rem", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
         <div className="period-pills">
@@ -3976,7 +3950,11 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
 
 // Sub-componente del dashboard APOLLO — evita IIFE en JSX
-function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
+function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "cliente" }) {
+  // configKey = "cliente" → claves tarjetas/metas (vista cliente)
+  // configKey = "admin"   → claves tarjetas_admin/metas_admin (vista admin, independiente)
+  const TARJETAS_KEY = configKey === "admin" ? "tarjetas_admin" : "tarjetas";
+  const METAS_KEY    = configKey === "admin" ? "metas_admin"    : "metas";
   const rows = filterByPeriod(client.records || [], period, from, to);
   const allRows = client.records || [];
   const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
@@ -3994,17 +3972,17 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
 
   // ── Personalización de tarjetas ───────────────────────────────────────────
   const TARJETAS_DEFAULT = ["inversion","alcance","cpm","roas","formularios","cpl","ventas","ingreso"];
-  const [tarjetasConfig, setTarjetasConfig] = useState(() => client.metricasConfig?.tarjetas || TARJETAS_DEFAULT);
+  const [tarjetasConfig, setTarjetasConfig] = useState(() => client.metricasConfig?.[TARJETAS_KEY] || TARJETAS_DEFAULT);
   const [editandoTarjetas, setEditandoTarjetas] = useState(false);
   const [showCorte, setShowCorte] = useState(false);
 
   // ── Metas diarias por tarjeta ─────────────────────────────────────────────
-  const [metasConfig, setMetasConfig] = useState(() => client.metricasConfig?.metas || {});
+  const [metasConfig, setMetasConfig] = useState(() => client.metricasConfig?.[METAS_KEY] || {});
 
   async function guardarMeta(id, valor) {
     const nuevasMetas = { ...metasConfig, [id]: valor };
     setMetasConfig(nuevasMetas);
-    const newCfg = { ...(client.metricasConfig||{}), metas: nuevasMetas };
+    const newCfg = { ...(client.metricasConfig||{}), [METAS_KEY]: nuevasMetas };
     if (onUpdate) {
       await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
         method:"PATCH", headers:{...H, Prefer:"return=minimal"},
@@ -4019,9 +3997,9 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
     if (onUpdate) {
       await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
         method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-        body: JSON.stringify({ metricasConfig: { ...(client.metricasConfig||{}), tarjetas: nuevas } })
+        body: JSON.stringify({ metricasConfig: { ...(client.metricasConfig||{}), [TARJETAS_KEY]: nuevas } })
       });
-      client.metricasConfig = { ...(client.metricasConfig||{}), tarjetas: nuevas };
+      client.metricasConfig = { ...(client.metricasConfig||{}), [TARJETAS_KEY]: nuevas };
     }
   }
 
@@ -7512,6 +7490,7 @@ function GraficasMetricas({ client, period, from, to }) {
 
 function MiniLineChart({ titulo, rows, metricas }) {
   const [expandido, setExpandido] = useState(false);
+  const [hovIdx, setHovIdx] = useState(null);
   const W = expandido ? 700 : 340;
   const H = expandido ? 200 : 120;
   const PAD = { top: 20, right: 16, bottom: 28, left: 40 };
@@ -7618,9 +7597,55 @@ function MiniLineChart({ titulo, rows, metricas }) {
               ) : null)}
             </g>
           ))}
-          {/* Eje X */}
-          <line x1={PAD.left} y1={PAD.top + chartH} x2={PAD.left + chartW} y2={PAD.top + chartH}
-            stroke="var(--border)" strokeWidth="1" />
+          {/* Zonas invisibles de hover por punto */}
+          {rows.map((r, i) => (
+            <rect key={i}
+              x={xPos(i) - Math.max(chartW/Math.max(rows.length,1)/2, 6)}
+              y={PAD.top} width={Math.max(chartW/Math.max(rows.length,1), 12)} height={chartH}
+              fill="transparent" style={{cursor:"crosshair"}}
+              onMouseEnter={()=>setHovIdx(i)} onMouseLeave={()=>setHovIdx(null)}
+            />
+          ))}
+
+          {/* Tooltip al hover */}
+          {hovIdx !== null && (() => {
+            const r = rows[hovIdx];
+            const cx = xPos(hovIdx);
+            const tooltipX = hovIdx < rows.length * 0.65 ? cx + 8 : cx - 168;
+            const vals = series.map(s => ({ label: s.label, color: s.color, val: s.data[hovIdx]?.val ?? 0 })).filter(v=>v.val>0);
+            const tooltipH = 24 + vals.length * 18;
+            const tooltipY = Math.max(PAD.top, PAD.top + chartH/2 - tooltipH/2);
+            return (
+              <g>
+                {/* Línea vertical */}
+                <line x1={cx} y1={PAD.top} x2={cx} y2={PAD.top+chartH}
+                  stroke="rgba(255,255,255,.25)" strokeWidth="0.8" strokeDasharray="3 2"/>
+                {/* Puntos resaltados */}
+                {series.map((s,si)=>s.data[hovIdx]?.val>0&&(
+                  <circle key={si} cx={cx} cy={yPos(s.data[hovIdx].val)} r={4}
+                    fill={s.color} stroke="var(--bg)" strokeWidth="2"/>
+                ))}
+                {/* Caja tooltip */}
+                <rect x={tooltipX} y={tooltipY} width={160} height={tooltipH}
+                  rx="7" fill="rgba(10,15,30,.96)" stroke="rgba(255,255,255,.1)" strokeWidth="0.8"/>
+                {/* Fecha */}
+                <text x={tooltipX+10} y={tooltipY+15} fontSize="9" fill="rgba(255,255,255,.45)"
+                  fontFamily="var(--mono)">{r.date}</text>
+                {/* Valores por serie */}
+                {vals.map((v,vi)=>(
+                  <g key={vi}>
+                    <circle cx={tooltipX+12} cy={tooltipY+24+vi*18+4} r="3" fill={v.color}/>
+                    <text x={tooltipX+20} y={tooltipY+24+vi*18+8} fontSize="10" fill="rgba(255,255,255,.6)">{v.label}</text>
+                    <text x={tooltipX+150} y={tooltipY+24+vi*18+8} fontSize="11" fontWeight="700"
+                      fill={v.color} textAnchor="end" fontFamily="var(--mono)">
+                      {v.val > 100 ? fmtNum(v.val, v.val>1000?0:1) : fmtNum(v.val, 2)}
+                    </text>
+                  </g>
+                ))}
+              </g>
+            );
+          })()}
+
         </svg>
       </div>
       {/* Leyenda */}
