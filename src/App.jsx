@@ -6798,11 +6798,30 @@ function SinIdentificarPanel({ data, client, onUpdate }) {
 function RemarketingTable({ data, readOnly }) {
   const [filtroRem, setFiltroRem] = useState("");
   const [nivelRem, setNivelRem]   = useState("anuncio");
+  const [sortKey, setSortKey]     = useState("pendientes");
+  const [sortDir, setSortDir]     = useState("desc");
+
+  function toggleSort(k) {
+    if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc");
+    else { setSortKey(k); setSortDir("desc"); }
+  }
+  function SortTh({ label, k, align = "right" }) {
+    const active = sortKey === k;
+    return (
+      <th style={{ cursor:"pointer", userSelect:"none", textAlign:align, color: active ? "var(--accent2)" : "", whiteSpace:"nowrap" }}
+        onClick={() => toggleSort(k)}>
+        {label} {active ? (sortDir === "desc" ? "▼" : "▲") : "⇅"}
+      </th>
+    );
+  }
 
   const remItemsFiltrados = (data.niveles?.[nivelRem] || [])
     .filter(i => i.pendientes > 0)
     .filter(i => !filtroRem || i.nombre.toLowerCase().includes(filtroRem.toLowerCase()))
-    .sort((a, b) => b.pendientes - a.pendientes);
+    .sort((a, b) => {
+      const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
+      return sortDir === "desc" ? vb - va : va - vb;
+    });
 
   function descargar(tipo) {
     const items = (data.niveles?.[nivelRem] || []).filter(i => i.pendientes > 0);
@@ -6885,9 +6904,13 @@ function RemarketingTable({ data, readOnly }) {
       <div className="card scroll-x">
         <table className="tbl">
           <thead><tr>
-            <th>#</th><th>Nombre</th><th>Reg. FB</th><th>En WP</th>
-            <th style={{ color:"var(--orange)" }}>Pendientes</th>
-            <th>% Captura</th><th>Potencial +30%</th>
+            <th>#</th>
+                    <SortTh label="Nombre" k="nombre" align="left" />
+                    <SortTh label="Reg. FB" k="total_form" />
+                    <SortTh label="En WP" k="total_wp" />
+                    <SortTh label="Pendientes" k="pendientes" />
+                    <SortTh label="% Captura" k="pct_captura" />
+                    <th>Potencial +30%</th>
           </tr></thead>
           <tbody>
             {remItemsFiltrados.map((item, i) => {
@@ -7532,21 +7555,35 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
               <div className="card scroll-x">
                 <table className="tbl">
                   <thead><tr>
-                    <th>País</th><th>Registros FB</th><th>Personas WP</th>
-                    <th>% Captura</th><th>Pendientes</th><th>Visual</th>
+                    <SortBtn label="País" k="pais" />
+                    <SortBtn label="Registros FB" k="total_form" />
+                    <SortBtn label="Personas WP" k="total_wp" />
+                    <SortBtn label="% Captura" k="pct_captura" />
+                    <SortBtn label="Pendientes" k="pendientes" />
+                    <th>Visual</th>
                   </tr></thead>
                   <tbody>
-                    {[...paises].sort((a,b) => b.total_form - a.total_form).map((p, i) => {
-                      const pct = p.total_form > 0 ? (p.total_wp/p.total_form*100) : 0;
-                      const color = pct >= 70 ? "var(--green)" : pct >= 50 ? "var(--amber)" : "var(--red)";
+                    {[...paises]
+                      .map(p => ({
+                        ...p,
+                        pct_captura: p.total_form > 0 ? p.total_wp/p.total_form*100 : 0,
+                        pendientes: p.total_form - p.total_wp
+                      }))
+                      .sort((a,b) => {
+                        const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
+                        if (typeof va === "string") return sortDir==="desc" ? vb.localeCompare(va) : va.localeCompare(vb);
+                        return sortDir === "desc" ? vb - va : va - vb;
+                      })
+                      .map((p, i) => {
+                      const color = p.pct_captura >= 70 ? "var(--green)" : p.pct_captura >= 50 ? "var(--amber)" : "var(--red)";
                       const maxPaisForm = Math.max(...paises.map(x => x.total_form), 1);
                       return (
                         <tr key={i}>
                           <td style={{ fontWeight:500 }}>{p.pais}</td>
                           <td style={{ fontFamily:"var(--mono)", textAlign:"right" }}>{p.total_form}</td>
                           <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--green)", fontWeight:600 }}>{p.total_wp}</td>
-                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color }}>{pct.toFixed(1)}%</td>
-                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)" }}>{p.total_form - p.total_wp}</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", fontWeight:700, color }}>{p.pct_captura.toFixed(1)}%</td>
+                          <td style={{ fontFamily:"var(--mono)", textAlign:"right", color:"var(--orange)" }}>{p.pendientes}</td>
                           <td style={{ minWidth:100 }}>
                             <div style={{ background:"var(--surface2)", borderRadius:20, height:8, overflow:"hidden" }}>
                               <div style={{ width:(p.total_form/maxPaisForm*100)+"%", height:"100%", background:"#4d9fff", borderRadius:20 }} />
