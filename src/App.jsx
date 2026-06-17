@@ -4025,47 +4025,52 @@ function HermesClientView({ client, allClients, onUpdate }) {
 
 // ─── SYNC MÉTRICAS POR ANUNCIO DESDE FACEBOOK ─────────────────────────────────
 async function fetchMetricasPorAnuncio(token, adAccountId, fechaInicio, fechaFin) {
-  // Obtener métricas a nivel de anuncio individual
   const fields = "ad_name,spend,reach,impressions,cpm,cpc,ctr,actions,cost_per_action_type,video_avg_time_watched_actions,video_p50_watched_actions,video_p100_watched_actions";
   const timeRange = JSON.stringify({ since: fechaInicio, until: fechaFin });
-  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fields}&time_range=${encodeURIComponent(timeRange)}&level=ad&limit=100&access_token=${token}`;
+
+  let allAds = [];
+  let nextUrl = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fields}&time_range=${encodeURIComponent(timeRange)}&level=ad&limit=500&access_token=${token}`;
 
   try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.error) return { ok: false, error: data.error.message };
+    // Paginar hasta traer TODOS los anuncios
+    while (nextUrl) {
+      const res  = await fetch(nextUrl);
+      const data = await res.json();
+      if (data.error) return { ok: false, error: data.error.message };
 
-    const ads = (data.data || []).map(ad => {
-      // Extraer acciones específicas
-      const getAction = (type) => {
+      const getAction = (ad, type) => {
         const a = (ad.actions || []).find(x => x.action_type === type);
         return a ? parseFloat(a.value) || 0 : 0;
       };
-      const getVideo = (arr, field) => {
+      const getVideo = (arr) => {
         if (!arr || !arr.length) return 0;
         return parseFloat(arr[0]?.value) || 0;
       };
 
-      return {
-        nombre:       ad.ad_name || "",
-        alcance:      parseFloat(ad.reach) || 0,
-        impresiones:  parseFloat(ad.impressions) || 0,
-        gasto:        parseFloat(ad.spend) || 0,
-        cpm:          parseFloat(ad.cpm) || 0,
-        cpc:          parseFloat(ad.cpc) || 0,
-        ctr:          parseFloat(ad.ctr) || 0,
-        leads:        getAction("lead") || getAction("onsite_conversion.lead_grouped"),
-        likes:        getAction("post_reaction"),
-        comentarios:  getAction("comment"),
-        compartidos:  getAction("post"),
-        // Video metrics — disponibles si el anuncio tiene video
-        vistas3s:     getVideo(ad.video_avg_time_watched_actions),
-        vistas50:     getVideo(ad.video_p50_watched_actions),
-        vistas100:    getVideo(ad.video_p100_watched_actions),
-      };
-    });
+      (data.data || []).forEach(ad => {
+        allAds.push({
+          nombre:       ad.ad_name || "",
+          alcance:      parseFloat(ad.reach)       || 0,
+          impresiones:  parseFloat(ad.impressions)  || 0,
+          gasto:        parseFloat(ad.spend)        || 0,
+          cpm:          parseFloat(ad.cpm)          || 0,
+          cpc:          parseFloat(ad.cpc)          || 0,
+          ctr:          parseFloat(ad.ctr)          || 0,
+          leads:        getAction(ad, "lead") || getAction(ad, "onsite_conversion.lead_grouped"),
+          likes:        getAction(ad, "post_reaction"),
+          comentarios:  getAction(ad, "comment"),
+          compartidos:  getAction(ad, "post"),
+          vistas3s:     getVideo(ad.video_avg_time_watched_actions),
+          vistas50:     getVideo(ad.video_p50_watched_actions),
+          vistas100:    getVideo(ad.video_p100_watched_actions),
+        });
+      });
 
-    return { ok: true, ads };
+      // Siguiente página si existe
+      nextUrl = data.paging?.next || null;
+    }
+
+    return { ok: true, ads: allAds };
   } catch(e) {
     return { ok: false, error: e.message };
   }
@@ -4101,6 +4106,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
     const { token, adAccountId } = client.fbConfig || {};
     if (!token || !adAccountId) return show("Configura Facebook Ads en la tab 📘 Facebook primero", "err");
     setSyncing(true); setSyncResult(null);
+    show("⏳ Obteniendo anuncios de Facebook (puede tomar unos segundos)...", "ok");
     const result = await fetchMetricasPorAnuncio(token, adAccountId, syncDesde, syncHasta);
     if (!result.ok) { show("Error Facebook: " + result.error, "err"); setSyncing(false); return; }
 
@@ -4140,20 +4146,24 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
       if (adSum) {
         actualizados++;
         const cpl = adSum.leads > 0 && adSum.gasto > 0 ? (adSum.gasto / adSum.leads).toFixed(2) : "";
+        // Siempre sobreescribir con datos frescos de Facebook — si el valor es 0 también se actualiza
         return {
           ...pieza,
-          alcance_pza:    adSum.alcance    > 0 ? String(Math.round(adSum.alcance))    : pieza.alcance_pza,
-          ctr_pza:        adSum.ctr        > 0 ? String(adSum.ctr.toFixed(2))         : pieza.ctr_pza,
-          likes:          adSum.likes      > 0 ? String(Math.round(adSum.likes))      : pieza.likes,
-          comentarios:    adSum.comentarios> 0 ? String(Math.round(adSum.comentarios)): pieza.comentarios,
+          alcance_pza:    String(Math.round(adSum.alcance)),
+          ctr_pza:        String(adSum.ctr.toFixed(2)),
+          likes:          String(Math.round(adSum.likes)),
+          comentarios:    String(Math.round(adSum.comentarios)),
+          compartidos:    String(Math.round(adSum.compartidos)),
           retencion3s:    adSum.vistas3s   > 0 ? String(Math.round(adSum.vistas3s))   : pieza.retencion3s,
           retencion50:    adSum.vistas50   > 0 ? String(Math.round(adSum.vistas50))   : pieza.retencion50,
           retencionFinal: adSum.vistas100  > 0 ? String(Math.round(adSum.vistas100))  : pieza.retencionFinal,
-          leads_fb:       adSum.leads      > 0 ? String(Math.round(adSum.leads))      : pieza.leads_fb,
-          gasto_pza:      adSum.gasto      > 0 ? String(adSum.gasto.toFixed(2))       : pieza.gasto_pza,
+          leads_fb:       String(Math.round(adSum.leads)),
+          gasto_pza:      String(adSum.gasto.toFixed(2)),
           cpl_pza:        cpl || pieza.cpl_pza,
-          fb_anuncios_n:  String(adSum._count), // cuántos anuncios con ese nombre
+          fb_anuncios_n:  String(adSum._count),
           fbSyncDate:     new Date().toISOString().slice(0,10),
+          fbSyncDesde:    syncDesde,
+          fbSyncHasta:    syncHasta,
         };
       } else {
         noEncontrados.push(pieza.nombre);
@@ -4280,23 +4290,31 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
             {/* Resultado de la sincronización */}
             {syncResult && (
               <div style={{ marginTop:"1rem", borderTop:"1px solid var(--border)", paddingTop:"1rem" }}>
-                <div style={{ fontSize:12, fontWeight:600, marginBottom:8 }}>
+                <div style={{ fontSize:12, fontWeight:600, marginBottom:4 }}>
                   ✅ {syncResult.actualizados} de {biblioteca.length} piezas actualizadas · {syncResult.total} anuncios sumados por nombre ({syncResult.nombresUnicos} nombres únicos)
+                </div>
+                <div style={{ fontSize:11, color:"var(--muted)", marginBottom:8 }}>
+                  Período: {syncDesde} → {syncHasta} · Datos sobreescritos con valores frescos de Facebook
+                </div>
+                {/* Mostrar todos los nombres disponibles en Facebook para facilitar el match */}
+                <div style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:11, color:"var(--muted)", marginBottom:4 }}>📋 Nombres encontrados en Facebook Ads ({syncResult.nombresUnicos}):</div>
+                  <div style={{ maxHeight:120, overflowY:"auto", background:"var(--surface2)", borderRadius:6, padding:"6px 10px" }}>
+                    {[...new Set(syncResult.ads.map(a=>a.nombre))].map((n,i) => (
+                      <div key={i} style={{ fontSize:10, color:"var(--muted)", padding:"1px 0", fontFamily:"var(--mono)" }}>• {n}</div>
+                    ))}
+                  </div>
                 </div>
                 {syncResult.noEncontrados.length > 0 && (
                   <div>
                     <div style={{ fontSize:11, color:"var(--amber)", marginBottom:6 }}>
-                      ⚠️ {syncResult.noEncontrados.length} piezas sin match en Facebook — verifica que el nombre sea exactamente igual:
+                      ⚠️ {syncResult.noEncontrados.length} piezas sin match — el nombre en la biblioteca debe coincidir exactamente con el nombre del anuncio en Facebook:
                     </div>
                     {syncResult.noEncontrados.map((n,i) => (
-                      <div key={i} style={{ fontSize:11, color:"var(--muted)", padding:"2px 8px", background:"var(--surface2)", borderRadius:4, marginBottom:2 }}>
-                        📄 "{n}"
+                      <div key={i} style={{ fontSize:11, color:"var(--red)", padding:"2px 8px", background:"rgba(239,68,68,.08)", borderRadius:4, marginBottom:2 }}>
+                        ❌ "{n}"
                       </div>
                     ))}
-                    <div style={{ fontSize:11, color:"var(--muted)", marginTop:6 }}>
-                      Anuncios disponibles en Facebook: {syncResult.ads.slice(0,5).map(a => `"${a.nombre}"`).join(", ")}
-                      {syncResult.ads.length > 5 && ` y ${syncResult.ads.length-5} más`}
-                    </div>
                   </div>
                 )}
               </div>
