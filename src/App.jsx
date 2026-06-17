@@ -4299,7 +4299,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     const anotaciones = (client.cplAnotaciones||[]).filter(a=>a.fecha===r.date);
     // Posición fija: aparece a la derecha del cursor, ajustada para no salirse de pantalla
     const TW = 260, TH = 180;
-    const left = Math.min(tooltipPos.x + 12, window.innerWidth - TW - 16);
+    const left = Math.min(tooltipPos.x + 12, (typeof window !== "undefined" ? window.innerWidth : 1200) - TW - 16);
     const top  = Math.max(tooltipPos.y - TH/2, 8);
     return (
       <div style={{position:"fixed", left, top, zIndex:9999,
@@ -6755,7 +6755,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
               Asegúrate de haber desplegado el archivo <code>api/telegram-webhook.js</code> en Vercel.
             </div>
             <div style={{fontSize:12,fontFamily:"var(--mono)",background:"rgba(0,0,0,.3)",padding:"6px 10px",borderRadius:6,marginBottom:12,wordBreak:"break-all",color:"var(--accent2)"}}>
-              {window.location.origin}/api/telegram-webhook
+              {typeof window !== "undefined" ? window.location.origin : "https://trafficker-app.vercel.app"}/api/telegram-webhook
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
               <button className="btn btn-primary btn-sm" style={{background:"rgba(124,58,237,.8)"}}
@@ -6950,7 +6950,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     const result = await detectarChatId(token);
     if (result.ok) {
       if (result.chats.length === 1) {
-        setChatId(result.chats[0].id);
+        updateDest(chatIds[0].id, "chatId", result.chats[0].id);
         show("✓ Chat ID detectado: " + result.chats[0].id + " (" + result.chats[0].nombre + ")", "ok");
       } else {
         setChatsEncontrados(result.chats);
@@ -9900,7 +9900,7 @@ function LinksPanel() {
   const [detalle, setDetalle]     = useState(null);
   const { show, el: toastEl }     = useToast();
 
-  const BASE_URL = window.location.origin;
+  const BASE_URL = typeof window !== "undefined" ? window.location.origin : "https://trafficker-app.vercel.app";
 
   async function cargar() {
     setLoading(true);
