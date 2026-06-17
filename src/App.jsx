@@ -184,6 +184,7 @@ const css = `
   /* CARDS */
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:1.25rem;margin-bottom:1.25rem}
   .card-title{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem}
+  .card:hover .card-controls{opacity:1!important;transition:opacity .2s}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
   .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
   .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}
@@ -3141,16 +3142,30 @@ function SemaforoMision({ client }) {
 }
 
 // ─── TARJETA DE MÉTRICA CON GRÁFICA DESPLEGABLE ──────────────────────────────
-function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
+function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocultar, onOcultar, onSubir, onBajar }) {
   const [open, setOpen] = useState(false);
 
-  // Calcular datos históricos para la gráfica
   const histData = (records || [])
     .filter(r => r[campo] !== undefined && r[campo] !== null && r[campo] !== "")
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(r => ({ fecha: fmtDate(r.date), val: parseFloat(r[campo]) || 0 }));
 
   const maxVal = histData.length > 0 ? Math.max(...histData.map(d => d.val), 0.01) : 1;
+
+  // ── Semáforo: comparar valor actual vs promedio últimos 7 días ────────────
+  const semaforo = (() => {
+    if (histData.length < 3) return null;
+    const ultimos7 = histData.slice(-7);
+    const prom = ultimos7.slice(0,-1).reduce((a,d)=>a+d.val,0) / Math.max(ultimos7.length-1,1);
+    const actual = histData[histData.length-1].val;
+    if (prom === 0) return null;
+    const diff = (actual - prom) / prom * 100;
+    // Para CPL/CPM/CPA: bajar es mejor. Para el resto: subir es mejor
+    const bajaMejor = ["cpa","cpm","cpl","cpc"].some(k => campo?.toLowerCase().includes(k));
+    if (Math.abs(diff) < 5) return { color:"var(--muted)", label:"estable", icono:"●" };
+    if (bajaMejor) return diff < -5 ? { color:"var(--green)", label:`▼ ${Math.abs(diff).toFixed(0)}% vs 7d`, icono:"▼" } : { color:"var(--red)", label:`▲ ${Math.abs(diff).toFixed(0)}% vs 7d`, icono:"▲" };
+    return diff > 5 ? { color:"var(--green)", label:`▲ ${Math.abs(diff).toFixed(0)}% vs 7d`, icono:"▲" } : { color:"var(--red)", label:`▼ ${Math.abs(diff).toFixed(0)}% vs 7d`, icono:"▼" };
+  })();
 
   function exportarCSV() {
     const csv = "Fecha," + label + "\n" + histData.map(d => d.fecha + "," + d.val).join("\n");
@@ -3160,13 +3175,28 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
     a.click();
   }
 
+  if (ocultar) return null;
+
   return (
-    <div className="card" style={{ padding:"1rem", cursor: histData.length > 0 ? "pointer" : "default" }}
+    <div className="card" style={{ padding:"1rem", cursor: histData.length > 0 ? "pointer" : "default", position:"relative" }}
       onClick={() => histData.length > 0 && setOpen(o => !o)}>
+      {/* Controles de orden — solo visibles en hover */}
+      {(onSubir || onBajar || onOcultar) && (
+        <div style={{ position:"absolute", top:6, right:6, display:"flex", gap:3, opacity:0 }}
+          className="card-controls"
+          onClick={e=>e.stopPropagation()}>
+          {onSubir && <button onClick={onSubir} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:11, padding:"1px 3px" }}>↑</button>}
+          {onBajar && <button onClick={onBajar} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:11, padding:"1px 3px" }}>↓</button>}
+          {onOcultar && <button onClick={onOcultar} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--muted)", fontSize:11, padding:"1px 3px" }}>×</button>}
+        </div>
+      )}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-        <div>
+        <div style={{ flex:1 }}>
           <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>{label}</div>
           <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: color || "var(--text)" }}>{value}</div>
+          {semaforo && (
+            <div style={{ fontSize:10, color:semaforo.color, marginTop:3, fontWeight:600 }}>{semaforo.label}</div>
+          )}
         </div>
         {histData.length > 0 && (
           <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:28 }}>
@@ -3189,10 +3219,8 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
               <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>× Cerrar</button>
             </div>
           </div>
-          {/* Gráfica de barras SVG — scroll independiente */}
           <div style={{ overflowX:"auto", overflowY:"visible", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
-            <svg width={Math.max(histData.length * 36, 300)} height={130}
-              style={{ display:"block" }}>
+            <svg width={Math.max(histData.length * 36, 300)} height={130} style={{ display:"block" }}>
               {histData.map((d, i) => {
                 const barH = maxVal > 0 ? Math.max((d.val / maxVal) * 75, 3) : 3;
                 const x = i * 36 + 4;
@@ -3212,7 +3240,6 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix }) {
               })}
             </svg>
           </div>
-          {/* Mini tabla */}
           <div style={{ marginTop:8, maxHeight:120, overflowY:"auto" }}>
             <table className="tbl" style={{ fontSize:11 }}>
               <thead><tr><th>Fecha</th><th style={{ textAlign:"right" }}>{label}</th></tr></thead>
@@ -3872,8 +3899,9 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 // ─── VISTA HERMES CLIENTE ─────────────────────────────────────────────────────
 
 // Sub-componente del dashboard APOLLO — evita IIFE en JSX
-function ApolloMetricasPanel({ client, period, from, to }) {
+function ApolloMetricasPanel({ client, period, from, to, onUpdate }) {
   const rows = filterByPeriod(client.records || [], period, from, to);
+  const allRows = client.records || [];
   const inv = rows.reduce((a,r) => a+(parseFloat(r.inversion)||0), 0);
   const alc = rows.reduce((a,r) => a+(parseFloat(r.alcance)||0), 0);
   const cpm = rows.length ? rows.reduce((a,r) => a+(parseFloat(r.cpm)||0), 0)/rows.length : 0;
@@ -3886,41 +3914,155 @@ function ApolloMetricasPanel({ client, period, from, to }) {
   const pctCap = forms > 0 && wpPersons > 0 ? (wpPersons/forms*100) : 0;
   const capturaData = client.capturaConfig?.lastData;
   const remarketing = capturaData?.total_remarketing || 0;
-  const allRows = client.records || [];
+
+  // ── Personalización de tarjetas ───────────────────────────────────────────
+  const TARJETAS_DEFAULT = ["inversion","alcance","cpm","roas","formularios","cpl","ventas","ingreso"];
+  const [tarjetasConfig, setTarjetasConfig] = useState(() => client.metricasConfig?.tarjetas || TARJETAS_DEFAULT);
+  const [editandoTarjetas, setEditandoTarjetas] = useState(false);
+  const [showCorte, setShowCorte] = useState(false);
+
+  async function guardarConfigTarjetas(nuevas) {
+    setTarjetasConfig(nuevas);
+    if (onUpdate) {
+      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+        body: JSON.stringify({ metricasConfig: { ...(client.metricasConfig||{}), tarjetas: nuevas } })
+      });
+      client.metricasConfig = { ...(client.metricasConfig||{}), tarjetas: nuevas };
+    }
+  }
+
+  function moverTarjeta(id, dir) {
+    const arr = [...tarjetasConfig];
+    const i = arr.indexOf(id);
+    if (i < 0) return;
+    if (dir === "up" && i > 0) [arr[i-1], arr[i]] = [arr[i], arr[i-1]];
+    if (dir === "down" && i < arr.length-1) [arr[i], arr[i+1]] = [arr[i+1], arr[i]];
+    guardarConfigTarjetas(arr);
+  }
+
+  function toggleTarjeta(id) {
+    const arr = tarjetasConfig.includes(id)
+      ? tarjetasConfig.filter(t=>t!==id)
+      : [...tarjetasConfig, id];
+    guardarConfigTarjetas(arr);
+  }
+
+  const TODAS_TARJETAS = [
+    { id:"inversion",   label:"Inversión",         val:"$"+fmtNum(inv,2),              color:"var(--text)",     campo:"inversion",  prefix:"$" },
+    { id:"alcance",     label:"Alcance",            val:fmtNum(alc),                    color:"var(--text)",     campo:"alcance" },
+    { id:"cpm",         label:"CPM",                val:"$"+fmtNum(cpm,2),              color:"var(--text)",     campo:"cpm",        prefix:"$" },
+    { id:"roas",        label:"ROAS",               val:roas>0?fmtNum(roas,2)+"x":"0,00x", color:roas>=4?"var(--green)":roas>=2?"var(--amber)":"#4d9fff", campo:"roas", suffix:"x" },
+    { id:"formularios", label:"Formularios/Leads FB", val:fmtNum(forms),               color:"var(--accent2)",  campo:"resultados" },
+    { id:"cpl",         label:"Costo x Lead",       val:cpl>0?"$"+fmtNum(cpl,2):"—",   color:"var(--text)",     campo:"cpa",        prefix:"$" },
+    { id:"ventas",      label:"Ventas",             val:fmtNum(ventas),                 color:"var(--text)",     campo:"ventas" },
+    { id:"ingreso",     label:"Ingresos",           val:"$"+fmtNum(ingreso,2),          color:ingreso>0?"var(--green)":"#4d9fff", campo:"ingreso", prefix:"$" },
+    { id:"personas_wp", label:"Personas WP",        val:fmtNum(wpPersons),              color:"var(--green)",    campo:"personas_wp" },
+    { id:"pct_captura", label:"% Captura FB→WP",    val:pctCap>0?fmtNum(pctCap,1)+"%":"—", color:pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)", campo:"pct_captura_wp" },
+    { id:"remarketing", label:"Para remarketing",   val:fmtNum(remarketing),            color:"var(--orange)",   campo:"personas_wp" },
+  ];
+
+  const tarjetasVisibles = tarjetasConfig
+    .map(id => TODAS_TARJETAS.find(t=>t.id===id))
+    .filter(Boolean);
+
+  // ── Corte del día ─────────────────────────────────────────────────────────
+  const hoy = new Date().toISOString().slice(0,10);
+  const registroHoy = allRows.find(r=>r.date===hoy);
+  const diasTranscurridos = allRows.length;
+  const invHoy = parseFloat(registroHoy?.inversion)||0;
+  const leadsHoy = parseFloat(registroHoy?.resultados||registroHoy?.formularios)||0;
+  const invPromDia = diasTranscurridos > 0 ? inv/diasTranscurridos : 0;
+  const leadsPromDia = diasTranscurridos > 0 ? forms/diasTranscurridos : 0;
+
   return (
     <div>
-      <div className="grid4" style={{ marginBottom:"0.5rem" }}>
-        <MetricaCard label="Inversión" value={"$"+fmtNum(inv,2)} color="var(--text)" records={allRows} campo="inversion" prefix="$" />
-        <MetricaCard label="Alcance" value={fmtNum(alc)} color="var(--text)" records={allRows} campo="alcance" />
-        <MetricaCard label="CPM" value={"$"+fmtNum(cpm,2)} color="var(--text)" records={allRows} campo="cpm" prefix="$" />
-        <MetricaCard label="ROAS" value={roas > 0 ? fmtNum(roas,2)+"x" : "0,00x"} color={roas >= 4 ? "var(--green)" : roas >= 2 ? "var(--amber)" : "#4d9fff"} records={allRows} campo="roas" suffix="x" />
+      {/* Barra de acciones */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <div style={{ fontSize:11, color:"var(--muted)" }}>
+          {tarjetasVisibles.length} tarjetas visibles
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={()=>setShowCorte(v=>!v)}>
+            📊 Corte del día
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize:11 }} onClick={()=>setEditandoTarjetas(v=>!v)}>
+            ⚙️ {editandoTarjetas?"Listo":"Personalizar"}
+          </button>
+        </div>
       </div>
-      <div className="grid4" style={{ marginBottom:"0.5rem" }}>
-        <MetricaCard label="Formularios/Leads FB" value={fmtNum(forms)} color="var(--accent2)" records={allRows} campo="resultados" />
-        <MetricaCard label="Costo x Lead" value={cpl > 0 ? "$"+fmtNum(cpl,2) : "—"} color="var(--text)" records={allRows} campo="cpa" prefix="$" />
-        <MetricaCard label="Ventas" value={fmtNum(ventas)} color="var(--text)" records={allRows} campo="ventas" />
-        <MetricaCard label="Ingresos" value={"$"+fmtNum(ingreso,2)} color={ingreso > 0 ? "var(--green)" : "#4d9fff"} records={allRows} campo="ingreso" prefix="$" />
-      </div>
-      {wpPersons > 0 || capturaData ? (
-        <div className="grid4" style={{ marginBottom:"1rem" }}>
-          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Registros FB</div>
-            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>{fmtNum(forms)}</div>
-          </div>
-          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Personas en WP</div>
-            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--green)" }}>{fmtNum(wpPersons)}</div>
-          </div>
-          <div className="card" style={{ padding:"1rem", background:"rgba(16,185,129,.06)", borderColor:"rgba(16,185,129,.2)" }}>
-            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>% Captura FB→WP</div>
-            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color: pctCap >= 70 ? "var(--green)" : pctCap >= 50 ? "var(--amber)" : "var(--red)" }}>{pctCap > 0 ? fmtNum(pctCap,1)+"%" : "—"}</div>
-          </div>
-          <div className="card" style={{ padding:"1rem", background:"rgba(255,145,77,.06)", borderColor:"rgba(255,145,77,.2)" }}>
-            <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:4 }}>Para remarketing</div>
-            <div style={{ fontSize:20, fontFamily:"var(--mono)", fontWeight:700, color:"var(--orange)" }}>{fmtNum(remarketing)}</div>
+
+      {/* Panel de personalización */}
+      {editandoTarjetas && (
+        <div className="card" style={{ marginBottom:"1rem", padding:"14px 16px" }}>
+          <div style={{ fontSize:12, fontWeight:600, marginBottom:10 }}>Selecciona y ordena las tarjetas que quieres ver</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+            {TODAS_TARJETAS.map(t => {
+              const activa = tarjetasConfig.includes(t.id);
+              const idx = tarjetasConfig.indexOf(t.id);
+              return (
+                <div key={t.id} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:20, border:`1px solid ${activa?"var(--accent)":"var(--border)"}`, background:activa?"rgba(77,159,255,.1)":"transparent", cursor:"pointer" }}
+                  onClick={()=>toggleTarjeta(t.id)}>
+                  <span style={{ fontSize:12, color:activa?"var(--accent)":"var(--muted)" }}>{t.label}</span>
+                  {activa && (
+                    <span style={{ display:"flex", gap:2, marginLeft:4 }}>
+                      <span onClick={e=>{e.stopPropagation();moverTarjeta(t.id,"up");}} style={{ cursor:"pointer", color:"var(--muted)", fontSize:10, padding:"0 2px" }}>↑</span>
+                      <span onClick={e=>{e.stopPropagation();moverTarjeta(t.id,"down");}} style={{ cursor:"pointer", color:"var(--muted)", fontSize:10, padding:"0 2px" }}>↓</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
-      ) : null}
+      )}
+
+      {/* Corte del día */}
+      {showCorte && (
+        <div className="card" style={{ marginBottom:"1rem", padding:"16px 20px", background:"rgba(0,74,173,.05)", borderColor:"rgba(0,74,173,.2)" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div style={{ fontWeight:700, fontSize:14 }}>📊 Corte del día — {fmtDate(hoy)}</div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setShowCorte(false)}>×</button>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+            {[
+              ["Inversión hoy", invHoy>0?"$"+fmtNum(invHoy,2):"Sin registro", invPromDia>0?`Prom/día: $${fmtNum(invPromDia,2)}`:"", invHoy>=invPromDia*0.9?"var(--green)":"var(--amber)"],
+              ["Leads hoy", leadsHoy>0?fmtNum(leadsHoy):"Sin registro", leadsPromDia>0?`Prom/día: ${fmtNum(leadsPromDia,0)}`:"", leadsHoy>=leadsPromDia*0.9?"var(--green)":"var(--amber)"],
+              ["CPL hoy", invHoy>0&&leadsHoy>0?"$"+fmtNum(invHoy/leadsHoy,2):"—", cpl>0?`CPL total: $${fmtNum(cpl,2)}`:"", invHoy>0&&leadsHoy>0&&(invHoy/leadsHoy)<=cpl?"var(--green)":"var(--amber)"],
+              ["Acumulado inversión", "$"+fmtNum(inv,2), diasTranscurridos+" días de campaña", "var(--text)"],
+              ["Acumulado leads", fmtNum(forms), cpl>0?"CPL acum: $"+fmtNum(cpl,2):"", "var(--accent2)"],
+              ["% Captura", pctCap>0?fmtNum(pctCap,1)+"%":"—", wpPersons>0?fmtNum(wpPersons)+" en WP":"", pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)"],
+            ].map(([lbl,val,sub,c],i)=>(
+              <div key={i} style={{ textAlign:"center" }}>
+                <div style={{ fontSize:10, color:"var(--muted)", marginBottom:2 }}>{lbl}</div>
+                <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:16, color:c }}>{val}</div>
+                {sub && <div style={{ fontSize:10, color:"var(--muted)", marginTop:1 }}>{sub}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tarjetas personalizadas */}
+      <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+        {tarjetasVisibles.slice(0,4).map(t=>(
+          <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+        ))}
+      </div>
+      {tarjetasVisibles.length > 4 && (
+        <div className="grid4" style={{ marginBottom:"0.5rem" }}>
+          {tarjetasVisibles.slice(4,8).map(t=>(
+            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+          ))}
+        </div>
+      )}
+      {tarjetasVisibles.length > 8 && (
+        <div className="grid4" style={{ marginBottom:"1rem" }}>
+          {tarjetasVisibles.slice(8).map(t=>(
+            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -4004,7 +4146,7 @@ function HermesClientView({ client, allClients, onUpdate }) {
           {isApollo && <SemaforoMision client={client} />}
 
           {/* Panel de métricas rápidas — entre barra de progreso y KPIs */}
-          {isApollo && <ApolloMetricasPanel client={client} period={period} from={from} to={to} />}
+          {isApollo && <ApolloMetricasPanel client={client} period={period} from={from} to={to} onUpdate={onUpdate} />}
           <div className="grid2" style={{ alignItems: "start" }}>
             <HermesKpisPanel client={client} onUpdate={() => {}} readOnly={true} isApollo={isApollo} />
             {isApollo
@@ -6853,8 +6995,10 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
       // Data completa de producto (para consultas detalladas)
       apolloData:  isApollo ? client.apolloData : undefined,
       hermesData:  !isApollo ? client.hermesData : undefined,
-      // WhatsApp snapshot
+      // ── WhatsApp snapshot
       wa_grupos_snapshot: waGrupos,
+      // ── Bitácora de tráfico (anotaciones en gráfica CPL)
+      bitacora_trafico: client.cplAnotaciones || [],
       // Resumen legacy (compatibilidad)
       resumen: calcularResumenMision(client, isApollo),
     };
@@ -7074,7 +7218,24 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
 
                   <div style={{ marginTop:8, fontSize:11, color:"var(--muted)" }}>
                     Archivado el {new Date(m.fechaArchivado).toLocaleDateString("es-EC")} · {(m.records||[]).length} registros guardados · {m.creativos?.length || 0} creativos
+                    {m.bitacora_trafico?.length > 0 && ` · ${m.bitacora_trafico.length} anotaciones en bitácora`}
                   </div>
+
+                  {/* Bitácora de tráfico */}
+                  {m.bitacora_trafico?.length > 0 && (
+                    <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid var(--border)" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--amber)", marginBottom:8 }}>📌 Bitácora de tráfico ({m.bitacora_trafico.length} anotaciones)</div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                        {m.bitacora_trafico.map(a=>(
+                          <div key={a.id} style={{ fontSize:12, padding:"6px 10px", background:"rgba(255,222,89,.06)", borderRadius:6, display:"flex", gap:10 }}>
+                            <span style={{ color:"var(--muted)", fontSize:11, whiteSpace:"nowrap" }}>{a.fecha} {a.hora}</span>
+                            <span>{a.texto}</span>
+                            {a.cpl && <span style={{ color:"var(--muted)", fontSize:11, marginLeft:"auto" }}>CPL: ${fmtNum(a.cpl,2)}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -7287,11 +7448,470 @@ function MiniLineChart({ titulo, rows, metricas }) {
 }
 
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
-// ─── GRÁFICA CPL TIEMPO REAL (estilo trading con consulta a Facebook) ─────────
-// ─── GRÁFICA CPL TIEMPO REAL — con persistencia en Supabase ──────────────────
-// ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 function CplTradingChart({ client, onUpdate }) {
+  const { token, adAccountId } = client.fbConfig || {};
+
+  const [rango, setRango]           = useState("24h");
+  const [loading, setLoading]       = useState(false);
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [hovIdx, setHovIdx]         = useState(null);
+  const [showAnotForm, setShowAnotForm] = useState(false);
+  const [anotTexto, setAnotTexto]   = useState("");
+  const [puntosRT, setPuntosRT]     = useState(() => {
+    const hoy = new Date().toISOString().slice(0,10);
+    return client.cplRtData?.[hoy] || [];
+  });
+  const fetchCount = useRef(0);
+  const INTERVALO  = 30;
+
+  // ── Historial diario ──────────────────────────────────────────────────────
+  const histDiario = [
+    ...(client.misiones||[]).flatMap(m => (m.records||[]).map(r => {
+      const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
+      return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"mision", mision:m.nombre} : null;
+    }).filter(Boolean)),
+    ...(client.records||[]).filter(r => r.date<=new Date().toISOString().slice(0,10))
+      .map(r => {
+        const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
+        return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"dia"} : null;
+      }).filter(Boolean)
+  ].sort((a,b)=>a.fecha.localeCompare(b.fecha));
+
+  // ── Anotaciones ───────────────────────────────────────────────────────────
+  const anotaciones = client.cplAnotaciones || [];
+
+  async function guardarAnotacion() {
+    if (!anotTexto.trim()) return;
+    const nueva = {
+      id: "anot_" + Date.now(),
+      ts: Date.now(),
+      hora: new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
+      fecha: new Date().toISOString().slice(0,10),
+      texto: anotTexto.trim(),
+      cpl: puntosRT.length ? puntosRT[puntosRT.length-1].cpl : null,
+    };
+    const nuevas = [...anotaciones, nueva];
+    await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+      method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+      body: JSON.stringify({cplAnotaciones: nuevas})
+    });
+    client.cplAnotaciones = nuevas;
+    setAnotTexto(""); setShowAnotForm(false);
+  }
+
+  // ── Guardar puntos ────────────────────────────────────────────────────────
+  async function guardarPuntos(nuevosPuntos) {
+    if (!onUpdate || !nuevosPuntos.length) return;
+    const hoy = new Date().toISOString().slice(0,10);
+    const cplRtData = {...(client.cplRtData||{})};
+    const existing = cplRtData[hoy] || [];
+    const mapa = {};
+    [...existing, ...nuevosPuntos].forEach(p => { mapa[p.ts] = p; });
+    cplRtData[hoy] = Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+    const limite = new Date(); limite.setDate(limite.getDate()-90);
+    Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+    try {
+      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+        body: JSON.stringify({cplRtData})
+      });
+      client.cplRtData = cplRtData;
+    } catch {}
+  }
+
+  // ── Fetch histórico por hora ───────────────────────────────────────────────
+  async function fetchHistoricoHoy() {
+    if (!token || !adAccountId) return;
+    setLoadingHist(true);
+    const hoy = new Date().toISOString().slice(0,10);
+    try {
+      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      if (json.error || !json.data?.length) { setLoadingHist(false); return; }
+      const puntosPorHora = json.data.map(d => {
+        const inv = parseFloat(d.spend)||0;
+        const la  = (d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+        const nl  = la ? parseFloat(la.value) : 0;
+        if (inv<=0 || nl<=0) return null;
+        const ts = new Date((d.date_start||hoy).replace(" ","T")).getTime();
+        return { ts, hora:new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
+      }).filter(Boolean);
+      if (puntosPorHora.length > 0) {
+        setPuntosRT(prev => {
+          const mapa = {};
+          [...prev, ...puntosPorHora].forEach(p => { mapa[p.ts]=p; });
+          return Object.values(mapa).sort((a,b)=>a.ts-b.ts);
+        });
+        await guardarPuntos(puntosPorHora);
+      }
+    } catch {}
+    setLoadingHist(false);
+  }
+
+  // ── Fetch en tiempo real cada 30s ─────────────────────────────────────────
+  async function fetchCplActual() {
+    if (!token || !adAccountId) return;
+    setLoading(true);
+    const hoy = new Date().toISOString().slice(0,10);
+    try {
+      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      if (!json.error && json.data?.length) {
+        const d = json.data[0];
+        const inv=parseFloat(d.spend)||0;
+        const la=(d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+        const nl=la?parseFloat(la.value):0;
+        if (inv>0 && nl>0) {
+          const cpl=inv/nl;
+          const ahora=Date.now();
+          const punto={ ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
+          setPuntosRT(prev => {
+            const mapa={};
+            [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
+            return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+          });
+          fetchCount.current++;
+          if (fetchCount.current%5===0) guardarPuntos([punto]);
+        }
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (!token || !adAccountId) return;
+    fetchHistoricoHoy();
+    fetchCplActual();
+    const t = setInterval(fetchCplActual, INTERVALO*1000);
+    return () => clearInterval(t);
+  }, [token, adAccountId]);
+
+  // ── Construir datos según rango ────────────────────────────────────────────
+  const hoy = new Date().toISOString().slice(0,10);
+  let datosVista = [], datosAyer = [], modoRT = false;
+
+  if (rango === "24h") {
+    const ahora = Date.now();
+    const tsCorte = ahora - 24*60*60*1000;
+    const ayer = new Date(); ayer.setDate(ayer.getDate()-1);
+    const ayerStr = ayer.toISOString().slice(0,10);
+
+    // Datos de hoy (línea principal)
+    const ptsHoyGuardados = client.cplRtData?.[hoy]||[];
+    const mapa={};
+    [...ptsHoyGuardados, ...puntosRT].forEach(p=>{mapa[p.ts]=p;});
+    datosVista = Object.values(mapa).sort((a,b)=>a.ts-b.ts)
+      .map(p=>({...p, fecha:new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}));
+
+    // Datos de ayer completos (línea de referencia) — misma longitud temporal
+    const ptsAyer = client.cplRtData?.[ayerStr]||[];
+    // Desplazar timestamps de ayer +24h para que se superpongan visualmente con hoy
+    datosAyer = ptsAyer.map(p=>({
+      ...p,
+      tsOriginal: p.ts,
+      ts: p.ts + 24*60*60*1000, // desplazar +1 día para coincidir con eje X
+      fecha: new Date(p.ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
+      esAyer: true
+    })).sort((a,b)=>a.ts-b.ts);
+
+    modoRT = true;
+  } else if (rango==="1W") {
+    for (let i=6; i>=0; i--) {
+      const d=new Date(); d.setDate(d.getDate()-i);
+      const ds=d.toISOString().slice(0,10);
+      const pts=client.cplRtData?.[ds]||[];
+      if (pts.length>0) {
+        const avgCpl = pts.reduce((a,p)=>a+p.cpl,0)/pts.length;
+        datosVista.push({fecha:ds.slice(5), cpl:avgCpl, tipo:"dia_rt"});
+      } else {
+        const hist = histDiario.find(h=>h.fecha===ds);
+        if (hist) datosVista.push({...hist, fecha:ds.slice(5)});
+      }
+    }
+  } else if (rango==="1M") {
+    datosVista = histDiario.slice(-30).map(d=>({...d, fecha:d.fecha.slice(5)}));
+  } else if (rango==="1Y") {
+    datosVista = histDiario.slice(-365).map(d=>({...d, fecha:d.fecha.slice(5)}));
+  } else {
+    datosVista = histDiario.map(d=>({...d, fecha:d.fecha.slice(5)}));
+  }
+
+  // Combinar hoy+ayer para calcular escala Y
+  const todosLosVals = [
+    ...datosVista.map(d=>d.cpl),
+    ...datosAyer.map(d=>d.cpl)
+  ].filter(v=>v>0);
+
+  const n=datosVista.length, hasData=todosLosVals.length>0;
+  const ultimo=datosVista.length>0?datosVista[datosVista.length-1]:null;
+  const primero=datosVista.length>0?datosVista[0]:null;
+  const minCpl=hasData?Math.min(...todosLosVals):0;
+  const maxCpl=hasData?Math.max(...todosLosVals):0;
+  const cambio=hasData&&primero&&ultimo?((ultimo.cpl-primero.cpl)/primero.cpl*100):0;
+  const tend=cambio<-0.1?"baja":cambio>0.1?"sube":"igual";
+  const color=tend==="baja"?"#10B981":tend==="sube"?"#EF4444":"#FFDE59";
+
+  const W=700, H=240, PAD={top:20,right:70,bottom:60,left:60};
+  const cW=W-PAD.left-PAD.right, cH=H-PAD.top-PAD.bottom;
+  const maxV=hasData?maxCpl*1.1:1, minV=hasData?Math.max(0,minCpl*0.9):0, rngV=maxV-minV||1;
+
+  // Para el eje X en modo 24h usamos timestamps; en otros modos usamos índices
+  function xP(i, arr){ return PAD.left+(i/Math.max((arr||datosVista).length-1,1))*cW; }
+  function xPts(ts, allPts) {
+    if (!allPts.length) return PAD.left;
+    const minTs = allPts[0].ts, maxTs = allPts[allPts.length-1].ts;
+    const rng = maxTs - minTs || 1;
+    return PAD.left + ((ts - minTs) / rng) * cW;
+  }
+  function yP(v){ return PAD.top+cH-((v-minV)/rngV)*cH; }
+
+  // En modo 24h mezclar ayer y hoy para eje X compartido
+  const allPts24h = modoRT ? [...datosAyer, ...datosVista].sort((a,b)=>a.ts-b.ts) : [];
+
+  const pathHoy = modoRT && datosVista.length>0
+    ? datosVista.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts, allPts24h)+" "+yP(d.cpl)).join(" ")
+    : !modoRT && datosVista.length>0
+      ? datosVista.map((d,i)=>(i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ")
+      : "";
+
+  const areaHoy = modoRT && datosVista.length>0
+    ? `M ${xPts(datosVista[0].ts, allPts24h)} ${PAD.top+cH} `+datosVista.map(d=>`L ${xPts(d.ts,allPts24h)} ${yP(d.cpl)}`).join(" ")+` L ${xPts(datosVista[datosVista.length-1].ts,allPts24h)} ${PAD.top+cH} Z`
+    : !modoRT && datosVista.length>0
+      ? `M ${xP(0)} ${PAD.top+cH} `+datosVista.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z`
+      : "";
+
+  const pathAyer = datosAyer.length>0
+    ? datosAyer.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts,allPts24h)+" "+yP(d.cpl)).join(" ")
+    : "";
+
+  const yTicks=[0,0.2,0.4,0.6,0.8,1].map(t=>minV+rngV*t);
+  const xStep=Math.max(1,Math.floor(n/8));
+  const xLabels=datosVista.filter((_,i)=>i%xStep===0||i===n-1);
+
+  // Sparkline inferior
+  const sparkD=histDiario.slice(-60), sN=sparkD.length;
+  const sVals=sparkD.map(d=>d.cpl), sMax=sVals.length?Math.max(...sVals):1, sMin=Math.max(0,sVals.length?Math.min(...sVals)*0.9:0), sRng=sMax-sMin||1;
+  function sxP(i){return(i/Math.max(sN-1,1))*(W-4)+2;}
+  function syP(v){return 28-((v-sMin)/sRng)*24;}
+  const sparkPath=sparkD.map((d,i)=>(i===0?"M ":"L ")+sxP(i)+" "+syP(d.cpl)).join(" ");
+
+  // Anotaciones del día visible
+  const anotHoy = anotaciones.filter(a => a.fecha === hoy);
+
+  const RANGOS=["24h","1W","1M","1Y","Todo"];
+
+  return (
+    <div className="card" style={{marginBottom:"1rem",padding:"1.25rem"}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{fontWeight:700,fontSize:16}}>Costo por Lead (CPL)</div>
+            {modoRT && puntosRT.length>0 && <span style={{fontSize:10,background:"rgba(16,185,129,.15)",color:"var(--green)",padding:"2px 8px",borderRadius:10,fontWeight:600}}>● EN VIVO</span>}
+            {(loading||loadingHist) && <span style={{fontSize:10,color:"var(--muted)"}}>{loadingHist?"Cargando...":"⟳"}</span>}
+          </div>
+          {hasData && ultimo && <>
+            <div style={{display:"flex",alignItems:"baseline",gap:10,marginTop:4}}>
+              <span style={{fontSize:28,fontWeight:800,fontFamily:"var(--mono)",color}}>${fmtNum(ultimo.cpl,2)}</span>
+              <span style={{fontSize:13,color,fontWeight:600}}>{tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})</span>
+            </div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+              Min: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(minCpl,2)}</span>
+              {" · "}Max: <span style={{fontFamily:"var(--mono)",color:"var(--red)"}}>${fmtNum(maxCpl,2)}</span>
+              {modoRT && datosAyer.length>0 && <span style={{marginLeft:8,color:"rgba(255,255,255,.3)"}}>— Gris: ayer</span>}
+            </div>
+          </>}
+        </div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+          {modoRT && (
+            <button className="btn btn-ghost btn-sm" style={{fontSize:11,padding:"3px 10px",color:"var(--amber)"}}
+              onClick={()=>setShowAnotForm(v=>!v)}>📌 Anotar</button>
+          )}
+          {RANGOS.map(r=>(
+            <button key={r} className="btn btn-ghost btn-sm"
+              style={{fontSize:11,padding:"3px 10px",background:rango===r?"var(--accent)":"transparent",color:rango===r?"#fff":"var(--muted)",borderRadius:6,fontWeight:rango===r?700:400}}
+              onClick={()=>setRango(r)}>{r}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Panel de anotación */}
+      {showAnotForm && (
+        <div style={{marginBottom:12,display:"flex",gap:8,alignItems:"center"}}>
+          <input type="text" value={anotTexto} onChange={e=>setAnotTexto(e.target.value)}
+            placeholder="Ej: Subí presupuesto $50, cambié creativos, pausé campaña..."
+            style={{flex:1,fontSize:13}} onKeyDown={e=>e.key==="Enter"&&guardarAnotacion()} />
+          <button className="btn btn-sm" onClick={guardarAnotacion}>Guardar</button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setShowAnotForm(false)}>×</button>
+        </div>
+      )}
+
+      {/* Anotaciones del día */}
+      {modoRT && anotHoy.length>0 && (
+        <div style={{marginBottom:8,display:"flex",flexWrap:"wrap",gap:4}}>
+          {anotHoy.map(a=>(
+            <div key={a.id} style={{fontSize:11,padding:"2px 10px",background:"rgba(255,222,89,.1)",border:"1px solid rgba(255,222,89,.2)",borderRadius:10,color:"var(--amber)"}}>
+              📌 {a.hora} — {a.texto}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Gráfica */}
+      {!hasData ? (
+        <div style={{height:160,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"var(--muted)",fontSize:12,gap:8}}>
+          {token&&adAccountId ? <>
+            <div>Cargando datos de hoy desde Facebook...</div>
+            <div style={{fontSize:10}}>Se actualizan automáticamente cada 30 segundos</div>
+          </> : "Configura Facebook Ads para activar el monitoreo en tiempo real"}
+        </div>
+      ) : (
+        <div style={{overflowX:"auto"}}>
+          <svg width={W} height={H} style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
+            <defs>
+              <linearGradient id={"cplG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
+                <stop offset="90%" stopColor={color} stopOpacity="0.02"/>
+              </linearGradient>
+            </defs>
+
+            {/* Grid Y */}
+            {yTicks.map((v,i)=>(
+              <g key={i}>
+                <line x1={PAD.left} y1={yP(v)} x2={PAD.left+cW} y2={yP(v)} stroke="rgba(255,255,255,.05)" strokeWidth="1"/>
+                <text x={PAD.left-4} y={yP(v)+4} textAnchor="end" fontSize="9" fill="var(--muted)">${fmtNum(v,2)}</text>
+              </g>
+            ))}
+
+            {/* Labels X */}
+            {modoRT ? (
+              datosVista.filter((_,i,arr)=>i===0||i===Math.floor(arr.length/2)||i===arr.length-1).map((d,i)=>(
+                <text key={i} x={xPts(d.ts,allPts24h)} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
+              ))
+            ) : (
+              xLabels.map((d,i)=>(
+                <text key={i} x={xP(datosVista.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
+              ))
+            )}
+
+            {/* Línea de ayer (referencia gris) */}
+            {pathAyer && (
+              <path d={pathAyer} fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="1.2" strokeDasharray="4 2" strokeLinejoin="round"/>
+            )}
+
+            {/* Área y línea de hoy */}
+            {areaHoy && <path d={areaHoy} fill={`url(#cplG_${client.id})`}/>}
+            {pathHoy && <path d={pathHoy} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/>}
+
+            {/* Anotaciones en la gráfica */}
+            {modoRT && anotHoy.map(a=>{
+              const ptCercano = datosVista.reduce((prev,curr)=>Math.abs(curr.ts-a.ts)<Math.abs(prev.ts-a.ts)?curr:prev, datosVista[0]);
+              if (!ptCercano) return null;
+              const cx = xPts(ptCercano.ts, allPts24h);
+              const cy = yP(ptCercano.cpl);
+              return (
+                <g key={a.id}>
+                  <line x1={cx} y1={cy-4} x2={cx} y2={PAD.top+cH} stroke="rgba(255,222,89,.3)" strokeWidth="0.8" strokeDasharray="2 2"/>
+                  <circle cx={cx} cy={cy-4} r="5" fill="rgba(255,222,89,.2)" stroke="var(--amber)" strokeWidth="1"/>
+                  <text x={cx} y={cy-8} textAnchor="middle" fontSize="8" fill="var(--amber)">📌</text>
+                </g>
+              );
+            })}
+
+            {/* Punto actual */}
+            {hasData && ultimo && <>
+              <circle cx={modoRT?xPts(ultimo.ts,allPts24h):xP(n-1)} cy={yP(ultimo.cpl)} r="10" fill={color} fillOpacity="0.12"/>
+              <circle cx={modoRT?xPts(ultimo.ts,allPts24h):xP(n-1)} cy={yP(ultimo.cpl)} r="4" fill={color}/>
+            </>}
+
+            {/* Línea de precio actual con badge */}
+            {hasData && ultimo && <>
+              <line x1={PAD.left} y1={yP(ultimo.cpl)} x2={PAD.left+cW} y2={yP(ultimo.cpl)} stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"/>
+              <rect x={PAD.left+cW+4} y={yP(ultimo.cpl)-9} width={58} height={18} rx="4" fill={color}/>
+              <text x={PAD.left+cW+33} y={yP(ultimo.cpl)+4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+            </>}
+
+            {/* Watermark */}
+            <text x={PAD.left+cW-10} y={PAD.top+cH-10} textAnchor="end" fontSize="11" fill="rgba(255,255,255,.06)" fontWeight="700" letterSpacing="1">📊 TRAFFICK PRO</text>
+
+            {/* Hover areas */}
+            {datosVista.map((d,i)=>(
+              <rect key={i}
+                x={(modoRT?xPts(d.ts,allPts24h):xP(i))-Math.max(cW/Math.max(n,1)/2,3)}
+                y={PAD.top} width={Math.max(cW/Math.max(n,1),6)} height={cH}
+                fill="transparent" style={{cursor:"crosshair"}} onMouseEnter={()=>setHovIdx(i)}/>
+            ))}
+
+            {/* Tooltip mejorado */}
+            {hovIdx!==null && hovIdx<datosVista.length && (()=>{
+              const d=datosVista[hovIdx];
+              const cx=modoRT?xPts(d.ts,allPts24h):xP(hovIdx);
+              const tx=hovIdx<datosVista.length*0.65?cx+8:cx-165;
+              const ty=Math.max(yP(d.cpl)-80,PAD.top);
+              // Buscar dato de ayer a la misma hora
+              const dAyer = datosAyer.find(a=>a.hora===d.fecha);
+              const tooltipH = dAyer ? 90 : 70;
+              return (
+                <g>
+                  <line x1={cx} y1={PAD.top} x2={cx} y2={PAD.top+cH} stroke="rgba(255,255,255,.3)" strokeWidth="0.8" strokeDasharray="3 2"/>
+                  <circle cx={cx} cy={yP(d.cpl)} r="5" fill={color} stroke="var(--bg)" strokeWidth="2"/>
+                  {dAyer && <circle cx={cx} cy={yP(dAyer.cpl)} r="4" fill="rgba(255,255,255,.3)" stroke="var(--bg)" strokeWidth="2"/>}
+                  <rect x={tx} y={ty} width={158} height={tooltipH} rx="8" fill="rgba(15,20,40,.95)" stroke={color} strokeWidth="0.8"/>
+                  <text x={tx+10} y={ty+16} fontSize="10" fill="rgba(255,255,255,.5)">{d.fecha}{d.esHoy?" · HOY":""}</text>
+                  <text x={tx+10} y={ty+34} fontSize="15" fontWeight="800" fill={color} fontFamily="var(--mono)">${fmtNum(d.cpl,2)}/lead</text>
+                  {d.leads&&<text x={tx+10} y={ty+50} fontSize="9" fill="rgba(255,255,255,.5)">{Math.round(d.leads)} leads · ${fmtNum(d.inv||0,2)} invertido</text>}
+                  {dAyer&&<>
+                    <line x1={tx+8} y1={ty+60} x2={tx+150} y2={ty+60} stroke="rgba(255,255,255,.08)" strokeWidth="0.5"/>
+                    <text x={tx+10} y={ty+74} fontSize="9" fill="rgba(255,255,255,.35)">Ayer {dAyer.hora}: ${fmtNum(dAyer.cpl,2)}/lead</text>
+                    <text x={tx+10} y={ty+86} fontSize="9" fill={d.cpl<dAyer.cpl?"#10B981":"#EF4444"}>
+                      {d.cpl<dAyer.cpl?"▼ Mejor que ayer":"▲ Peor que ayer"} {Math.abs(((d.cpl-dAyer.cpl)/dAyer.cpl)*100).toFixed(1)}%
+                    </text>
+                  </>}
+                  {d.mision&&<text x={tx+10} y={ty+50} fontSize="9" fill="rgba(255,255,255,.5)">{d.mision}</text>}
+                </g>
+              );
+            })()}
+            <line x1={PAD.left} y1={PAD.top+cH} x2={PAD.left+cW} y2={PAD.top+cH} stroke="var(--border)" strokeWidth="1"/>
+          </svg>
+        </div>
+      )}
+
+      {/* Sparkline histórico inferior */}
+      {sN>3 && (
+        <div style={{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
+          <div style={{fontSize:9,color:"var(--muted)",marginBottom:4}}>Historial CPL — últimos {sN} días</div>
+          <svg width={W} height={32} style={{display:"block",opacity:.6}}>
+            <defs>
+              <linearGradient id={"spkG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#4d9fff" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#4d9fff" stopOpacity="0.02"/>
+              </linearGradient>
+            </defs>
+            <path d={sparkPath+` L ${sxP(sN-1)} 30 L ${sxP(0)} 30 Z`} fill={`url(#spkG_${client.id})`}/>
+            <path d={sparkPath} fill="none" stroke="#4d9fff" strokeWidth="1"/>
+            {(()=>{
+              const dias=rango==="1W"?7:rango==="1M"?30:rango==="1Y"?365:0;
+              if(!dias||sN<=dias) return null;
+              const x=sxP(sN-dias);
+              return <rect x={x} y={0} width={sxP(sN-1)-x} height={30} fill="rgba(77,159,255,.1)" rx="2"/>;
+            })()}
+          </svg>
+        </div>
+      )}
+
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10,color:"var(--muted)"}}>
+        <span>{client.cplRtData?`${Object.keys(client.cplRtData).length} días guardados · ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos total`:"Sin historial RT aún"}</span>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {modoRT && datosAyer.length>0 && <span style={{color:"rgba(255,255,255,.25)"}}>— ayer</span>}
+          {token&&adAccountId&&<button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px"}} onClick={()=>{fetchHistoricoHoy();fetchCplActual();}} disabled={loading||loadingHist}>🔄</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
   const { token, adAccountId } = client.fbConfig || {};
 
   const [rango, setRango]           = useState("24h");
