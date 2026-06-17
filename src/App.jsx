@@ -4280,6 +4280,8 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
   }
 
   // ── Tooltip con datos extendidos del día ──────────────────────────────────
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
   function RowTooltip({ r }) {
     const inv = parseFloat(r.inversion)||0;
     const leads = parseFloat(r.resultados||r.formularios||r.leads)||0;
@@ -4289,19 +4291,20 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     const cpl = leads>0&&inv>0 ? inv/leads : 0;
     const roas = inv>0&&ingreso>0 ? ingreso/inv : 0;
     const tasaCierre = leads>0&&ventas>0 ? (ventas/leads*100) : 0;
-    // Comparar con día anterior
     const idx = rows.findIndex(x=>x===r);
     const prev = idx > 0 ? rows[idx-1] : null;
     const prevCpl = prev ? (()=>{ const pi=parseFloat(prev.inversion)||0,pl=parseFloat(prev.resultados||prev.formularios||prev.leads)||0; return pl>0&&pi>0?pi/pl:0; })() : 0;
     const cplDelta = cpl>0&&prevCpl>0 ? ((cpl-prevCpl)/prevCpl*100) : null;
     const anotaciones = (client.cplAnotaciones||[]).filter(a=>a.fecha===r.date);
+    // Posición fija: aparece a la derecha del cursor, ajustada para no salirse de pantalla
+    const TW = 260, TH = 180;
+    const left = Math.min(tooltipPos.x + 12, window.innerWidth - TW - 16);
+    const top  = Math.max(tooltipPos.y - TH/2, 8);
     return (
-      <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",bottom:"calc(100% + 6px)",zIndex:200,
+      <div style={{position:"fixed", left, top, zIndex:9999,
         background:"rgba(10,15,30,.97)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 14px",
-        minWidth:220,maxWidth:280,boxShadow:"0 8px 32px rgba(0,0,0,.5)",pointerEvents:"none",whiteSpace:"nowrap"}}>
-        {/* Fecha */}
+        width:TW,boxShadow:"0 8px 32px rgba(0,0,0,.6)",pointerEvents:"none",whiteSpace:"nowrap"}}>
         <div style={{fontSize:11,fontWeight:700,color:"var(--accent2)",marginBottom:8,letterSpacing:".04em"}}>{fmtDate(r.date)}</div>
-        {/* Métricas clave */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 12px",marginBottom:8}}>
           {inv>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Inversión</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>${fmtNum(inv,2)}</span></>}
           {alcance>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Alcance</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(alcance)}</span></>}
@@ -4315,14 +4318,10 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
           {roas>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>ROAS</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right",color:roas>=3?"var(--green)":roas>=1.5?"var(--amber)":"var(--red)"}}>{fmtNum(roas,2)}x</span></>}
           {tasaCierre>0&&<><span style={{fontSize:10,color:"var(--muted)"}}>Tasa cierre</span><span style={{fontSize:11,fontFamily:"var(--mono)",fontWeight:700,textAlign:"right"}}>{fmtNum(tasaCierre,1)}%</span></>}
         </div>
-        {/* Notas del día */}
         {r.notas_dia&&<div style={{fontSize:10,color:"var(--muted)",borderTop:"1px solid var(--border)",paddingTop:6,marginTop:4}}>📝 {r.notas_dia}</div>}
-        {/* Anotaciones CPL */}
         {anotaciones.length>0&&<div style={{borderTop:"1px solid var(--border)",paddingTop:6,marginTop:4}}>
           {anotaciones.map(a=><div key={a.id} style={{fontSize:10,color:"var(--amber)"}}>📌 {a.hora} — {a.texto}</div>)}
         </div>}
-        {/* Flecha apuntadora */}
-        <div style={{position:"absolute",bottom:-5,left:"50%",transform:"translateX(-50%)",width:8,height:8,background:"rgba(10,15,30,.97)",border:"1px solid var(--border)",borderTop:"none",borderLeft:"none",transform:"translateX(-50%) rotate(45deg)"}}/>
       </div>
     );
   }
@@ -4387,14 +4386,15 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
             <tbody>
               {rows.map((r,i) => (
                 <tr key={i} style={{position:"relative"}}
-                  onMouseEnter={()=>setHovRow(i)} onMouseLeave={()=>setHovRow(null)}>
+                  onMouseEnter={e=>{ setHovRow(i); setTooltipPos({x:e.clientX, y:e.clientY}); }}
+                  onMouseMove={e=>setTooltipPos({x:e.clientX, y:e.clientY})}
+                  onMouseLeave={()=>setHovRow(null)}>
                   {vis.map(c => (
-                    <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12, position:"relative" }}>
+                    <td key={c.key} style={{ fontFamily:"var(--mono)", fontSize:12 }}>
                       {getCellVal(r,c)}
-                      {/* Tooltip en primera celda */}
-                      {c.key === vis[0].key && hovRow === i && <RowTooltip r={r} />}
                     </td>
                   ))}
+                  {hovRow === i && <RowTooltip r={r} />}
                 </tr>
               ))}
             </tbody>
