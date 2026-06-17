@@ -6758,24 +6758,104 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
     const nombre = misionNombre.trim() || nombreSugerido;
     const ahora = new Date().toISOString();
 
-    // Snapshot completo de la misión actual
+    // ── Calcular métricas de biblioteca para IA ──────────────────
+    const biblioteca = client.hermesData?.biblioteca || client.apolloData?.biblioteca || [];
+    const creativosArchivados = biblioteca.map(p => ({
+      nombre:         p.nombre,
+      categoria:      p.categoria,
+      fechaGrabacion: p.fechaGrabacion,
+      // Métricas de Facebook
+      gasto:          parseFloat(p.gasto_pza) || 0,
+      alcance:        parseFloat(p.alcance_pza) || 0,
+      ctr:            parseFloat(p.ctr_pza) || 0,
+      leads:          parseFloat(p.leads_fb) || 0,
+      cpl:            parseFloat(p.cpl_pza) || 0,
+      likes:          parseFloat(p.likes) || 0,
+      comentarios:    parseFloat(p.comentarios) || 0,
+      compartidos:    parseFloat(p.compartidos) || 0,
+      retencion3s:    parseFloat(p.retencion3s) || 0,
+      retencion50:    parseFloat(p.retencion50) || 0,
+      retencionFinal: parseFloat(p.retencionFinal) || 0,
+      n_anuncios:     parseInt(p.fb_anuncios_n) || 0,
+      iv:             calcIV(p, biblioteca),
+      clasificacion:  getIVLabel(calcIV(p, biblioteca)),
+      fbSyncDate:     p.fbSyncDate || "",
+      fbSyncDesde:    p.fbSyncDesde || "",
+      fbSyncHasta:    p.fbSyncHasta || "",
+    }));
+
+    // ── Métricas del embudo completo ─────────────────────────────
+    const records = client.records || [];
+    const embudo = {
+      total_dias:       records.length,
+      inversion_total:  records.reduce((a,r) => a + (parseFloat(r.inversion)||0), 0),
+      leads_fb:         records.reduce((a,r) => a + (parseFloat(r.formularios)||parseFloat(r.leads)||0), 0),
+      personas_wp:      records.reduce((a,r) => a + (parseFloat(r.personas_wp)||0), 0),
+      ventas:           records.reduce((a,r) => a + (parseFloat(r.ventas)||0), 0),
+      ingreso:          records.reduce((a,r) => a + (parseFloat(r.ingreso)||0), 0),
+      // Tasas de conversión
+      pct_captura_fb_wp: null,
+      cpl_promedio: null,
+      cpa_promedio: null,
+      roas: null,
+    };
+    if (embudo.leads_fb > 0) {
+      embudo.pct_captura_fb_wp = parseFloat((embudo.personas_wp / embudo.leads_fb * 100).toFixed(1));
+      embudo.cpl_promedio      = parseFloat((embudo.inversion_total / embudo.leads_fb).toFixed(2));
+    }
+    if (embudo.ventas > 0) {
+      embudo.cpa_promedio = parseFloat((embudo.inversion_total / embudo.ventas).toFixed(2));
+    }
+    if (embudo.inversion_total > 0 && embudo.ingreso > 0) {
+      embudo.roas = parseFloat((embudo.ingreso / embudo.inversion_total).toFixed(2));
+    }
+
+    // ── Datos de WhatsApp (si están disponibles en Supabase) ─────
+    // Se guardan como referencia — el dashboard puede consultarlos después
+    const waGrupos = client.waGruposSnapshot || [];
+
+    // ── Creativos ganadores automáticos ─────────────────────────
+    const ganadores    = creativosArchivados.filter(c => c.iv >= 70).sort((a,b) => b.iv - a.iv);
+    const descartados  = creativosArchivados.filter(c => c.iv < 40);
+    const mejorCPL     = creativosArchivados.filter(c => c.cpl > 0).sort((a,b) => a.cpl - b.cpl)[0] || null;
+    const mayorAlcance = creativosArchivados.sort((a,b) => b.alcance - a.alcance)[0] || null;
+
+    // ── Snapshot completo ────────────────────────────────────────
     const snapshot = {
-      id: "mision_" + Date.now(),
+      id:              "mision_" + Date.now(),
       nombre,
-      fechaInicio: client.fechaContrato || client.contracts?.[0]?.fechaInicio || "",
-      fechaFin: ahora.slice(0, 10),
-      fechaArchivado: ahora,
-      producto: client.producto,
-      // KPIs según producto
-      kpis: isApollo
-        ? (client.apolloData?.kpisApollo || [])
-        : (client.hermesData?.kpisHermes || []),
-      // Registros diarios
-      records: client.records || [],
-      // Data del producto
-      apolloData: isApollo ? client.apolloData : undefined,
-      hermesData: !isApollo ? client.hermesData : undefined,
-      // Resumen calculado
+      fechaInicio:     client.fechaContrato || client.contracts?.[0]?.fechaInicio || "",
+      fechaFin:        ahora.slice(0, 10),
+      fechaArchivado:  ahora,
+      producto:        client.producto,
+      cliente_nombre:  client.name,
+      cliente_nicho:   client.nicho || client.rubro || "",
+      // KPIs finales
+      kpis: isApollo ? (client.apolloData?.kpisApollo || []) : (client.hermesData?.kpisHermes || []),
+      // Registros diarios completos
+      records,
+      // Resumen del embudo completo
+      embudo,
+      // Creativos con performance completo
+      creativos: creativosArchivados,
+      // Insights para IA
+      insights: {
+        n_creativos_total:    creativosArchivados.length,
+        n_ganadores:          ganadores.length,
+        n_descartados:        descartados.length,
+        creativo_mejor_iv:    ganadores[0]?.nombre || null,
+        creativo_mejor_cpl:   mejorCPL?.nombre || null,
+        creativo_mayor_alcance: mayorAlcance?.nombre || null,
+        categoria_ganadora:   ganadores[0]?.categoria || null,
+        inversion_por_dia:    embudo.total_dias > 0 ? parseFloat((embudo.inversion_total / embudo.total_dias).toFixed(2)) : null,
+        leads_por_dia:        embudo.total_dias > 0 ? parseFloat((embudo.leads_fb / embudo.total_dias).toFixed(1)) : null,
+      },
+      // Data completa de producto (para consultas detalladas)
+      apolloData:  isApollo ? client.apolloData : undefined,
+      hermesData:  !isApollo ? client.hermesData : undefined,
+      // WhatsApp snapshot
+      wa_grupos_snapshot: waGrupos,
+      // Resumen legacy (compatibilidad)
       resumen: calcularResumenMision(client, isApollo),
     };
 
@@ -6904,37 +6984,96 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
 
               {isExp && (
                 <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-                  {/* KPIs de la misión */}
-                  {(m.kpis || []).length > 0 && (
-                    <div style={{ marginBottom: "1rem" }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>KPIs finales</div>
-                      <div className="grid2">
-                        {m.kpis.map(k => (
-                          <div key={k.id} style={{ background: "var(--surface2)", borderRadius: 8, padding: "8px 12px" }}>
-                            <div style={{ fontSize: 11, color: "var(--muted)" }}>{k.nombre}</div>
-                            <div style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: 16, color: "var(--accent2)", marginTop: 2 }}>
-                              {k.actual || "—"} <span style={{ fontSize: 10, color: "var(--muted)" }}>{k.unidad}</span>
-                            </div>
-                            {k.meta && <div style={{ fontSize: 10, color: "var(--muted)" }}>Meta: {k.meta}</div>}
+
+                  {/* Embudo completo */}
+                  {m.embudo && (
+                    <div style={{ marginBottom:"1rem" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>Embudo completo</div>
+                      <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+                        {[
+                          ["💰 Inversión", m.embudo.inversion_total ? "$"+parseFloat(m.embudo.inversion_total).toFixed(2) : null, "var(--accent)"],
+                          ["📋 Leads FB", m.embudo.leads_fb || null, null],
+                          ["💬 Personas WP", m.embudo.personas_wp || null, null],
+                          ["% Captura FB→WP", m.embudo.pct_captura_fb_wp ? m.embudo.pct_captura_fb_wp+"%" : null, m.embudo.pct_captura_fb_wp >= 60 ? "var(--green)" : "var(--amber)"],
+                          ["💵 CPL promedio", m.embudo.cpl_promedio ? "$"+m.embudo.cpl_promedio : null, "var(--green)"],
+                          ["🛒 Ventas", m.embudo.ventas || null, null],
+                          ["📈 ROAS", m.embudo.roas ? m.embudo.roas+"x" : null, parseFloat(m.embudo.roas) >= 4 ? "var(--green)" : "var(--amber)"],
+                          ["📅 Días", m.embudo.total_dias || null, null],
+                        ].filter(x => x[1]).map(([label, val, color]) => (
+                          <div key={label} style={{ background:"var(--surface2)", borderRadius:8, padding:"8px 14px", textAlign:"center" }}>
+                            <div style={{ fontSize:10, color:"var(--muted)", marginBottom:2 }}>{label}</div>
+                            <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:15, color: color || "var(--text)" }}>{val}</div>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
-                  {/* Resumen de métricas */}
-                  <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "10px 12px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Resumen de métricas</div>
-                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                      {[["Inversión", r.inversion ? "$"+r.inversion : null],["Leads/Registros FB", r.leads],["Personas WP", r.personas_wp],["% Captura", r.pct_captura ? r.pct_captura+"%" : null],["Ventas", r.ventas],["CPA", r.cpa ? "$"+r.cpa : null],["ROAS", r.roas ? r.roas+"x" : null],["Ingresos", r.ingreso ? "$"+r.ingreso : null]].filter(x => x[1]).map(([label, val]) => (
-                        <div key={label} style={{ fontSize: 12 }}>
-                          <div style={{ color: "var(--muted)", fontSize: 10 }}>{label}</div>
-                          <div style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{val}</div>
-                        </div>
-                      ))}
+
+                  {/* Insights para IA */}
+                  {m.insights && (
+                    <div style={{ marginBottom:"1rem", background:"rgba(0,74,173,.06)", border:"1px solid rgba(0,74,173,.15)", borderRadius:10, padding:"12px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--accent)", marginBottom:8 }}>🤖 Insights del lanzamiento</div>
+                      <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:12 }}>
+                        {m.insights.creativo_mejor_iv && <div><span style={{ color:"var(--muted)" }}>Mejor IV: </span><strong>{m.insights.creativo_mejor_iv}</strong></div>}
+                        {m.insights.creativo_mejor_cpl && <div><span style={{ color:"var(--muted)" }}>Mejor CPL: </span><strong>{m.insights.creativo_mejor_cpl}</strong></div>}
+                        {m.insights.categoria_ganadora && <div><span style={{ color:"var(--muted)" }}>Categoría ganadora: </span><strong>{m.insights.categoria_ganadora}</strong></div>}
+                        {m.insights.n_ganadores > 0 && <div><span style={{ color:"var(--muted)" }}>Creativos ganadores: </span><strong style={{ color:"var(--green)" }}>{m.insights.n_ganadores}</strong></div>}
+                        {m.insights.inversion_por_dia && <div><span style={{ color:"var(--muted)" }}>Inversión/día: </span><strong>${m.insights.inversion_por_dia}</strong></div>}
+                        {m.insights.leads_por_dia && <div><span style={{ color:"var(--muted)" }}>Leads/día: </span><strong>{m.insights.leads_por_dia}</strong></div>}
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
-                    Archivado el {new Date(m.fechaArchivado).toLocaleDateString("es-EC")} · {(m.records || []).length} registros guardados
+                  )}
+
+                  {/* Creativos archivados */}
+                  {m.creativos?.length > 0 && (
+                    <div style={{ marginBottom:"1rem" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>Creativos ({m.creativos.length})</div>
+                      <div style={{ overflowX:"auto" }}>
+                        <table className="tbl" style={{ fontSize:11 }}>
+                          <thead>
+                            <tr>
+                              <th>Video</th><th>Tipo</th><th>Inversión</th><th>Leads</th><th>CPL</th><th>CTR%</th><th>IV</th><th>Resultado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...m.creativos].sort((a,b) => b.iv - a.iv).map((c,i) => (
+                              <tr key={i}>
+                                <td style={{ maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.nombre}</td>
+                                <td><span className="badge" style={{ fontSize:10 }}>{c.categoria}</span></td>
+                                <td style={{ fontFamily:"var(--mono)" }}>{c.gasto > 0 ? "$"+c.gasto.toFixed(2) : "—"}</td>
+                                <td style={{ fontFamily:"var(--mono)" }}>{c.leads || "—"}</td>
+                                <td style={{ fontFamily:"var(--mono)", color:"var(--green)" }}>{c.cpl > 0 ? "$"+c.cpl.toFixed(2) : "—"}</td>
+                                <td style={{ fontFamily:"var(--mono)" }}>{c.ctr > 0 ? c.ctr.toFixed(2)+"%" : "—"}</td>
+                                <td><span className={"iv-badge "+getIVClass(c.iv)}>{c.iv}</span></td>
+                                <td style={{ fontSize:10 }}>{c.clasificacion}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* KPIs finales */}
+                  {(m.kpis || []).length > 0 && (
+                    <div style={{ marginBottom:"1rem" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>KPIs finales</div>
+                      <div className="grid2">
+                        {m.kpis.map(k => (
+                          <div key={k.id} style={{ background:"var(--surface2)", borderRadius:8, padding:"8px 12px" }}>
+                            <div style={{ fontSize:11, color:"var(--muted)" }}>{k.nombre}</div>
+                            <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:16, color:"var(--accent2)", marginTop:2 }}>
+                              {k.actual || "—"} <span style={{ fontSize:10, color:"var(--muted)" }}>{k.unidad}</span>
+                            </div>
+                            {k.meta && <div style={{ fontSize:10, color:"var(--muted)" }}>Meta: {k.meta}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop:8, fontSize:11, color:"var(--muted)" }}>
+                    Archivado el {new Date(m.fechaArchivado).toLocaleDateString("es-EC")} · {(m.records||[]).length} registros guardados · {m.creativos?.length || 0} creativos
                   </div>
                 </div>
               )}
