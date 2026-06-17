@@ -4345,13 +4345,10 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
         const invTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
         const leadsTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
         const ventasTotal7 = ultimos7.reduce((a,r)=>a+(parseFloat(r.ventas)||0),0);
-        const tendColor = tendencia < -5 ? "var(--green)" : tendencia > 5 ? "var(--red)" : "var(--amber)";
-        const tendText = tendencia < -5 ? "📉 CPL mejorando esta semana" : tendencia > 5 ? "📈 CPL empeorando esta semana" : "➡️ CPL estable esta semana";
         return (
           <div className="card" style={{marginTop:"1rem",padding:"14px 18px",background:"rgba(0,74,173,.04)",borderColor:"rgba(0,74,173,.15)"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
+            <div style={{marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>📊 Resumen últimos {ultimos7.length} días</div>
-              <span style={{fontSize:11,fontWeight:700,color:tendColor,padding:"2px 10px",background:tendColor.replace("var(--","rgba(").replace(")",",.12)"),borderRadius:20}}>{tendText}</span>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
               {[
@@ -4401,6 +4398,38 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
                 </tr>
               ))}
             </tbody>
+            {rows.length > 1 && (
+              <tfoot>
+                <tr style={{ background:"rgba(77,159,255,.08)", fontWeight:600 }}>
+                  {vis.map(c => {
+                    if (c.key === "date") return <td key="date" style={{ fontSize:12, color:"var(--accent)", fontFamily:"var(--mono)" }}>TOTAL</td>;
+                    if (c.key === "cpa") {
+                      const res = rows.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios)||0),0);
+                      const inv = rows.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
+                      return <td key="cpa" style={{fontFamily:"var(--mono)",fontSize:12}}>{res&&inv?"$"+fmtNum(inv/res,2):"—"}</td>;
+                    }
+                    if (c.key === "costo_wp") {
+                      const wp  = rows.reduce((a,r)=>a+(parseFloat(r.personas_wp)||0),0);
+                      const inv = rows.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
+                      return <td key="costo_wp" style={{fontFamily:"var(--mono)",fontSize:12}}>{wp&&inv?"$"+fmtNum(inv/wp,2):"—"}</td>;
+                    }
+                    if (c.key === "pct_captura_wp") {
+                      const wp = rows.reduce((a,r)=>a+(parseFloat(r.personas_wp)||0),0);
+                      const fb = rows.reduce((a,r)=>a+(parseFloat(r.formularios||r.resultados||r.clientesPotenciales)||0),0);
+                      return <td key="pct_captura_wp" style={{fontFamily:"var(--mono)",fontSize:12}}>{wp&&fb?fmtNum(wp/fb*100,1)+"%":"—"}</td>;
+                    }
+                    const isAvg = ["cpm","cpc","ctr","roas"].includes(c.key);
+                    const val = isAvg
+                      ? rows.reduce((a,r)=>a+(parseFloat(r[c.key])||0),0) / rows.filter(r=>parseFloat(r[c.key])>0).length || 0
+                      : rows.reduce((a,r)=>a+(parseFloat(r[c.key])||0),0);
+                    if (!val) return <td key={c.key} style={{fontFamily:"var(--mono)",fontSize:12}}>—</td>;
+                    return <td key={c.key} style={{fontFamily:"var(--mono)",fontSize:12}}>
+                      {c.prefix||""}{fmtNum(val, c.prefix||c.suffix?2:0)}{c.suffix||""}
+                    </td>;
+                  })}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
