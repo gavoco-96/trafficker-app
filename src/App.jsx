@@ -6997,7 +6997,11 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
     const telWPSet = new Set();
     for (let i = 1; i < rowsWP.length; i++) {
       const tel = rowsWP[i]?.[telColWP];
-      if (tel) telWPSet.add(String(tel).replace(/[\s\-\(\)\+\.]/g, ""));
+      if (!tel) continue;
+      const s = String(tel);
+      const mP = s.match(/p:(\d+)/);
+      const norm = mP ? mP[1] : s.replace(/[\s\-\(\)\+\.]/g, "");
+      if (norm.length >= 7) telWPSet.add(norm);
     }
 
     // Leer hoja de FB (formularios/registros)
@@ -7019,17 +7023,47 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
     const colTelFB = headerFB.findIndex(h => h.includes("tel") || h.includes("phone") || h.includes("numero") || h.includes("número") || h.includes("whatsapp") || h.includes("celular"));
     const telColFB = colTelFB >= 0 ? colTelFB : 0;
 
-    // Detectar columna de nombre en FB
-    const colNombreFB = headerFB.findIndex(h => h.includes("nombre") || h.includes("name") || h.includes("apellido"));
+    // Detectar columna de nombre del LEAD en FB
+    // Excluir columnas que claramente NO son nombre de persona
+    const EXCLUIR_NOMBRE = ["anuncio","campaign","conjunto","adset","ad_name","ad_id",
+      "campaign_name","conjunto_nombre","creatividad","creative","fecha","date","hora",
+      "time","email","correo","telefon","phone","celular","numero","numero","id","utm",
+      "fuente","source","etiqueta","tag","status","estado","ciudad","pais","country"];
+    const colNombreFB = (() => {
+      // 1er intento: columna que claramente sea nombre del lead
+      const candidatos = [
+        "full_name","nombre_completo","nombre completo","first_name","primer_nombre",
+        "nombre_lead","lead_name","nombre del lead","tu nombre","your name","nombre y apellido",
+        "nombre","name"
+      ];
+      for (const c of candidatos) {
+        const idx = headerFB.findIndex(h => h.trim() === c || (h.includes(c) && !EXCLUIR_NOMBRE.some(ex => ex !== c && h.includes(ex))));
+        if (idx >= 0 && idx !== telColFB) return idx;
+      }
+      return -1;
+    })();
+
+    // Función para extraer teléfono limpio — maneja formatos:
+    // "593991234567", "+593 99 123 4567", "p:593991234567", "Nombre,p:593991234567"
+    function extraerTelefono(raw) {
+      if (!raw) return "";
+      const s = String(raw);
+      // Formato con p: → extraer solo el número después de p:
+      const mP = s.match(/p:(\d+)/);
+      if (mP) return mP[1];
+      // Limpiar y retornar solo dígitos
+      return s.replace(/[\s\-\(\)\+\.]/g, "");
+    }
 
     // Procesar cada registro FB
     const mapaP = {};
     const pendientesRem = []; // { tel, nombre }
     for (let i = 1; i < rowsFB.length; i++) {
       const row = rowsFB[i];
-      const tel = row?.[telColFB];
-      if (!tel) continue;
-      const telNorm = String(tel).replace(/[\s\-\(\)\+\.]/g, "");
+      const rawTel = row?.[telColFB];
+      if (!rawTel) continue;
+      const telNorm = extraerTelefono(rawTel);
+      if (!telNorm || telNorm.length < 7) continue;
       const nombre = colNombreFB >= 0 ? (row[colNombreFB] || "") : "";
       const pais = detectarPais(telNorm);
       if (!mapaP[pais]) mapaP[pais] = { total_form: 0, total_wp: 0 };
