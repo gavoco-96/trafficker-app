@@ -4049,7 +4049,8 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   const [corteError, setCorteError] = useState(null);
 
   async function fetchCorteHoy() {
-    const { token, adAccountId } = client.fbConfig || {};
+    const { token, cuentas: _cuentas } = client.fbConfig || {};
+  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
     if (!token || !adAccountId) {
       setCorteError("Sin credenciales de Facebook configuradas.");
       return;
@@ -4561,7 +4562,8 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   async function sincronizarConFacebook() {
-    const { token, adAccountId } = client.fbConfig || {};
+    const { token, cuentas: _cuentas } = client.fbConfig || {};
+  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
     if (!token || !adAccountId) return show("Configura Facebook Ads en la tab 📘 Facebook primero", "err");
     setSyncing(true); setSyncResult(null);
     show("⏳ Obteniendo anuncios de Facebook (puede tomar unos segundos)...", "ok");
@@ -5816,176 +5818,438 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
 
 function FacebookPanel({ client, onUpdate }) {
   const fbConfig = client.fbConfig || {};
-  const [token, setToken] = useState(fbConfig.token || "");
-  const [adAccountId, setAdAccountId] = useState(fbConfig.adAccountId || "");
+
+  // ── Estado principal ──────────────────────────────────────────────────────
+  const [token, setToken]           = useState(fbConfig.token || "");
   const [selectedMetrics, setSelectedMetrics] = useState(
     fbConfig.selectedMetrics || FB_METRICAS_DISPONIBLES.slice(0, 7)
   );
-  const [syncing, setSyncing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [syncDate, setSyncDate] = useState(new Date(Date.now() - 86400000).toISOString().slice(0, 10));
-  const [lastSync, setLastSync] = useState(fbConfig.lastSync || null);
-  const [syncStatus, setSyncStatus] = useState(null);
-  const { show, el: toastEl } = useToast();
+  const [lastSync, setLastSync]     = useState(fbConfig.lastSync || null);
+  const [syncing, setSyncing]       = useState(false);
+  const [saving, setSaving]         = useState(false);
+  const [syncDate, setSyncDate]     = useState(new Date(Date.now()-86400000).toISOString().slice(0,10));
+  const [rangeFrom, setRangeFrom]   = useState(new Date(Date.now()-7*86400000).toISOString().slice(0,10));
+  const [rangeTo, setRangeTo]       = useState(new Date(Date.now()-86400000).toISOString().slice(0,10));
+  const [syncMode, setSyncMode]     = useState("single"); // single | range
+  const [syncStatus, setSyncStatus] = useState(null);     // null | loading | ok | err
+  const [syncLog, setSyncLog]       = useState([]);
+  const [verifyStatus, setVerify]   = useState(null);     // null | loading | {name, accounts} | err
+  const [campaigns, setCampaigns]   = useState(null);
+  const [loadingCamp, setLoadingCamp] = useState(false);
+  const [autoSync, setAutoSync]     = useState(fbConfig.autoSync || false);
+  const { show, el: toastEl }       = useToast();
 
-  function toggleMetric(m) {
-    const exists = selectedMetrics.find(x => x.key === m.key);
-    if (exists) {
-      if (selectedMetrics.length <= 1) return;
-      setSelectedMetrics(prev => prev.filter(x => x.key !== m.key));
+  // ── Multi-cuenta ──────────────────────────────────────────────────────────
+  // cuentas: [{ id, nombre, adAccountId }]
+  const [cuentas, setCuentas] = useState(() => {
+    if (fbConfig.cuentas?.length) return fbConfig.cuentas;
+    // Migrar config antigua a nueva estructura
+    if (fbConfig.adAccountId) return [{ id:1, nombre:"Cuenta principal", adAccountId: fbConfig.adAccountId }];
+    return [{ id:1, nombre:"Cuenta principal", adAccountId:"" }];
+  });
+
+  function addCuenta() {
+    setCuentas(p => [...p, { id: Date.now(), nombre:"Nueva cuenta", adAccountId:"" }]);
+  }
+  function removeCuenta(id) {
+    if (cuentas.length <= 1) return show("Debe quedar al menos una cuenta", "err");
+    setCuentas(p => p.filter(c => c.id !== id));
+  }
+  function updateCuenta(id, field, val) {
+    setCuentas(p => p.map(c => c.id===id ? {...c, [field]: val} : c));
+  }
+
+  // ── Alerta expiración token ───────────────────────────────────────────────
+  const tokenAge = fbConfig.tokenSavedAt
+    ? Math.floor((Date.now() - new Date(fbConfig.tokenSavedAt).getTime()) / 86400000)
+    : null;
+  const tokenExpirando = tokenAge !== null && tokenAge >= 50;
+
+  // ── Auto-sync al montar ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (autoSync && token && cuentas.some(c=>c.adAccountId)) {
+      const today = new Date().toISOString().slice(0,10);
+      setSyncDate(today);
+      setTimeout(() => ejecutarSync([today]), 500);
+    }
+  }, []);
+
+  // ── Verificar token ───────────────────────────────────────────────────────
+  async function verificarToken() {
+    if (!token) return show("Ingresa el token primero", "err");
+    setVerify("loading");
+    try {
+      const res = await fetch(`https://graph.facebook.com/v19.0/me?fields=name,id&access_token=${token}`);
+      const d = await res.json();
+      if (d.error) { setVerify("err"); show("Token inválido: " + d.error.message, "err"); return; }
+      // Verificar cuentas
+      const accRes = await fetch(`https://graph.facebook.com/v19.0/me/adaccounts?fields=name,account_id,account_status&access_token=${token}`);
+      const accD = await accRes.json();
+      setVerify({ name: d.name, accounts: accD.data || [] });
+      show("✅ Token válido — " + d.name, "ok");
+    } catch(e) { setVerify("err"); show("Error: " + e.message, "err"); }
+  }
+
+  // ── Campañas activas ──────────────────────────────────────────────────────
+  async function cargarCampanas() {
+    const activas = cuentas.filter(c => c.adAccountId);
+    if (!token || !activas.length) return show("Configura token y al menos una cuenta", "err");
+    setLoadingCamp(true); setCampaigns(null);
+    const todas = [];
+    for (const cuenta of activas) {
+      try {
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,spend_cap,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE","PAUSED"]}]&limit=50&access_token=${token}`;
+        const res = await fetch(url);
+        const d = await res.json();
+        if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre})));
+      } catch {}
+    }
+    setCampaigns(todas);
+    setLoadingCamp(false);
+  }
+
+  // ── Core sync — suma datos de todas las cuentas para una fecha ───────────
+  async function syncFecha(fecha) {
+    const activas = cuentas.filter(c => c.adAccountId);
+    if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
+
+    // Acumular datos de todas las cuentas
+    const sumFields = ["inversion","alcance","impresiones","clics_enlace","leads","resultados","formularios","ventas","roas","frecuencia","cpa"];
+    const avgFields = ["cpm","cpc","ctr"];
+    const acum = {};
+    const porCuenta = [];
+
+    for (const cuenta of activas) {
+      const res = await fetchFbMetrics(token, cuenta.adAccountId, fecha, selectedMetrics);
+      if (!res.ok) continue;
+      const r = res.record;
+      porCuenta.push({ cuenta: cuenta.nombre, adAccountId: cuenta.adAccountId, ...r });
+      // Sumar campos numéricos
+      sumFields.forEach(f => { if (r[f]) acum[f] = (acum[f]||0) + (parseFloat(r[f])||0); });
+      // Promedio ponderado por inversión para CPM, CPC, CTR (se recalculan abajo)
+    }
+
+    if (!porCuenta.length) return { ok: false, error: "Sin datos en FB para " + fecha };
+
+    // Recalcular métricas derivadas del consolidado
+    if (acum.inversion && acum.leads) acum.cpa = parseFloat((acum.inversion/acum.leads).toFixed(4));
+    if (acum.inversion && acum.impresiones) acum.cpm = parseFloat((acum.inversion/acum.impresiones*1000).toFixed(4));
+    if (acum.inversion && acum.clics_enlace) acum.cpc = parseFloat((acum.inversion/acum.clics_enlace).toFixed(4));
+    if (acum.clics_enlace && acum.impresiones) acum.ctr = parseFloat((acum.clics_enlace/acum.impresiones*100).toFixed(4));
+
+    return { ok: true, record: { date: fecha, ...acum, _porCuenta: porCuenta } };
+  }
+
+  // ── Ejecutar sync de un array de fechas ──────────────────────────────────
+  async function ejecutarSync(fechas) {
+    if (!token) return show("Ingresa el Access Token", "err");
+    if (!cuentas.some(c=>c.adAccountId)) return show("Agrega al menos una cuenta con Ad Account ID", "err");
+    setSyncing(true); setSyncStatus("loading"); setSyncLog([]);
+
+    let ok = 0, err = 0;
+    const existingRecords = [...(client.records||[])];
+
+    for (const fecha of fechas) {
+      setSyncLog(l => [...l, { fecha, estado: "⟳" }]);
+      const result = await syncFecha(fecha);
+      if (!result.ok) {
+        err++;
+        setSyncLog(l => l.map(x => x.fecha===fecha ? {...x, estado:"❌ "+result.error} : x));
+        continue;
+      }
+      // Fusionar con registros existentes
+      const idx = existingRecords.findIndex(r => r.date === fecha);
+      if (idx >= 0) existingRecords[idx] = { ...existingRecords[idx], ...result.record };
+      else existingRecords.push(result.record);
+      ok++;
+      setSyncLog(l => l.map(x => x.fecha===fecha ? {...x, estado:"✅"} : x));
+    }
+
+    existingRecords.sort((a,b) => a.date.localeCompare(b.date));
+    const now = new Date().toLocaleString("es-EC");
+    const updated = {
+      ...client,
+      records: existingRecords,
+      fbConfig: { token, cuentas, selectedMetrics, lastSync: now, autoSync,
+        tokenSavedAt: fbConfig.tokenSavedAt || new Date().toISOString() }
+    };
+    await onUpdate(updated);
+    setLastSync(now);
+    setSyncStatus(err === 0 ? "ok" : ok > 0 ? "partial" : "err");
+    show(`✓ ${ok} día${ok!==1?"s":""} sincronizados${err>0?` · ${err} con error`:""}`, ok>0?"ok":"err");
+    setSyncing(false);
+  }
+
+  function handleSync() {
+    if (syncMode === "single") {
+      ejecutarSync([syncDate]);
     } else {
-      if (selectedMetrics.length >= 10) return show("Maximo 10 metricas", "err");
-      setSelectedMetrics(prev => [...prev, m]);
+      // Generar array de fechas del rango
+      const fechas = [];
+      let d = new Date(rangeFrom);
+      const end = new Date(rangeTo);
+      while (d <= end) {
+        fechas.push(d.toISOString().slice(0,10));
+        d.setDate(d.getDate()+1);
+      }
+      if (fechas.length > 90) return show("Máximo 90 días por rango", "err");
+      ejecutarSync(fechas);
     }
   }
 
   async function saveConfig() {
     setSaving(true);
-    const updated = { ...client, fbConfig: { token, adAccountId, selectedMetrics, lastSync } };
+    const updated = { ...client, fbConfig: {
+      token, cuentas, selectedMetrics, lastSync,
+      autoSync,
+      tokenSavedAt: fbConfig.tokenSavedAt || new Date().toISOString()
+    }};
     await onUpdate(updated);
-    show("✓ Configuracion de Facebook guardada", "ok");
+    show("✓ Configuración de Facebook guardada", "ok");
     setSaving(false);
   }
 
-  async function syncDay() {
-    if (!token || !adAccountId) return show("Completa el token y el Ad Account ID", "err");
-    setSyncing(true);
-    setSyncStatus("loading");
-    const result = await fetchFbMetrics(token, adAccountId, syncDate, selectedMetrics);
-    if (!result.ok) {
-      setSyncStatus("err");
-      show("Error: " + result.error, "err");
-      setSyncing(false);
-      return;
-    }
-    // Guardar el registro en los datos del cliente
-    const existingRecords = client.records || [];
-    const idx = existingRecords.findIndex(r => r.date === syncDate);
-    let newRecords;
-    if (idx >= 0) {
-      // Actualizar registro existente fusionando los campos
-      newRecords = existingRecords.map((r, i) => i === idx ? { ...r, ...result.record } : r);
-    } else {
-      newRecords = [...existingRecords, result.record];
-    }
-    newRecords.sort((a, b) => a.date.localeCompare(b.date));
-    const now = new Date().toLocaleString("es-EC");
-    const updated = {
-      ...client,
-      records: newRecords,
-      fbConfig: { token, adAccountId, selectedMetrics, lastSync: now }
-    };
-    await onUpdate(updated);
-    setLastSync(now);
-    setSyncStatus("ok");
-    show("✓ Datos del " + syncDate + " sincronizados desde Facebook", "ok");
-    setSyncing(false);
-  }
-
-  async function syncToday() {
-    const today = new Date().toISOString().slice(0, 10);
-    setSyncDate(today);
-    // Pequeño delay para que el estado se actualice
-    setTimeout(() => syncDay(), 100);
-  }
-
-  const idClean = adAccountId.replace("act_", "").trim();
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       {toastEl}
-      <div className="fb-card">
+
+      {/* Alerta expiración token */}
+      {tokenExpirando && (
+        <div style={{padding:"10px 16px",marginBottom:"1rem",borderRadius:10,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",fontSize:13,display:"flex",gap:10,alignItems:"center"}}>
+          <span style={{fontSize:20}}>⚠️</span>
+          <div>
+            <strong style={{color:"var(--red)"}}>Token con {tokenAge} días — expira pronto</strong>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>El token dura 60 días. Renuévalo en developers.facebook.com antes de que expire para no perder la sincronización automática.</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sección 1: Token ─────────────────────────────────────────────── */}
+      <div className="fb-card" style={{marginBottom:"1rem"}}>
         <div className="fb-header">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#1877F2"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-          Integracion con Facebook Ads
-          {lastSync && <span className="fb-sync-badge fb-sync-ok" style={{ marginLeft: "auto" }}>Ultima sync: {lastSync}</span>}
+          Integración con Facebook Ads
+          {lastSync && <span className="fb-sync-badge fb-sync-ok" style={{marginLeft:"auto"}}>Última sync: {lastSync}</span>}
         </div>
 
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
-          <b style={{ color: "var(--text)" }}>Como obtener el token:</b> developers.facebook.com
-          → tu app → Marketing API → Herramientas → selecciona los permisos → Obtener token.
-          El token dura 60 dias, luego necesitaras renovarlo.
-        </div>
-
-        <div className="form-row">
-          <div className="field">
-            <label>Access Token de Facebook</label>
-            <input type="text" value={token} onChange={e => setToken(e.target.value)} placeholder="EAAOWMIieniUBRIB7Tw..." />
-          </div>
-          <div className="field">
-            <label>Ad Account ID</label>
-            <input type="text" value={adAccountId} onChange={e => setAdAccountId(e.target.value.replace("act_", ""))} placeholder="120247229359120062" />
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Solo el numero, sin "act_"</div>
-          </div>
-        </div>
-
-        {/* SELECTOR DE METRICAS */}
-        <div style={{ marginBottom: "1rem" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
-            Metricas a sincronizar ({selectedMetrics.length}/10)
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {FB_METRICAS_DISPONIBLES.map(m => {
-              const active = !!selectedMetrics.find(x => x.key === m.key);
-              return (
-                <div key={m.key} className={"fb-chip " + (active ? "active" : "")} onClick={() => toggleMetric(m)}>
-                  {active ? "✓ " : ""}{m.label}
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
-            Estas metricas se guardaran automaticamente en los registros diarios del cliente.
-          </div>
-        </div>
-
-        {/* SINCRONIZACION */}
-        <div style={{ background: "var(--surface2)", borderRadius: 10, padding: 12, marginBottom: "1rem" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>Sincronizar datos</div>
-          <div className="form-row" style={{ marginBottom: 10 }}>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Fecha a sincronizar</label>
-              <input type="date" value={syncDate} onChange={e => setSyncDate(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
-            </div>
-            <div className="field" style={{ marginBottom: 0, display: "flex", alignItems: "flex-end" }}>
-              {syncStatus && (
-                <span className={"fb-sync-badge " + (syncStatus === "ok" ? "fb-sync-ok" : syncStatus === "err" ? "fb-sync-err" : "fb-sync-loading")}>
-                  {syncStatus === "ok" ? "✓ Sincronizado" : syncStatus === "err" ? "✕ Error" : "Sincronizando..."}
-                </span>
-              )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-primary btn-sm" disabled={syncing || !token || !adAccountId} onClick={syncDay}
-              style={{ background: "var(--accent)" }}>
-              {syncing ? "Sincronizando..." : "⟳ Sincronizar fecha seleccionada"}
-            </button>
-            <button className="btn btn-ghost btn-sm" disabled={syncing || !token || !adAccountId} onClick={() => {
-              const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-              setSyncDate(yesterday);
-              setTimeout(syncDay, 100);
-            }}>
-              Sincronizar ayer
+        <div className="field">
+          <label>Access Token de Facebook</label>
+          <div style={{display:"flex",gap:8}}>
+            <input type="text" value={token} onChange={e=>setToken(e.target.value)}
+              placeholder="EAAOWMIieniUBRIB7Tw..." style={{flex:1}} />
+            <button className="btn btn-ghost btn-sm" style={{whiteSpace:"nowrap"}}
+              onClick={verificarToken} disabled={verifyStatus==="loading"}>
+              {verifyStatus==="loading" ? "⟳" : "🔍 Verificar"}
             </button>
           </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, lineHeight: 1.5 }}>
-            Los datos se fusionan con los registros existentes. Si ya hay un registro para esa fecha, se actualizan los campos de Facebook sin borrar los demas.
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>
+            developers.facebook.com → tu app → Marketing API → Herramientas → Obtener token (60 días)
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-green btn-sm" disabled={saving} onClick={saveConfig}>
-            {saving ? "Guardando..." : "💾 Guardar configuracion"}
-          </button>
+        {/* Resultado verificación */}
+        {verifyStatus && verifyStatus !== "loading" && verifyStatus !== "err" && (
+          <div style={{padding:"10px 14px",borderRadius:8,background:"rgba(16,185,129,.08)",border:"1px solid rgba(16,185,129,.2)",marginBottom:12}}>
+            <div style={{fontWeight:600,fontSize:13,color:"var(--green)"}}>✅ Token válido — {verifyStatus.name}</div>
+            {verifyStatus.accounts?.length > 0 && (
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>
+                Cuentas disponibles:
+                {verifyStatus.accounts.map(a => (
+                  <span key={a.account_id} style={{marginLeft:8,padding:"1px 8px",background:"rgba(255,255,255,.06)",borderRadius:10,cursor:"pointer"}}
+                    onClick={()=>{ if(!cuentas.some(c=>c.adAccountId===a.account_id)) updateCuenta(cuentas[0].id,"adAccountId",a.account_id); }}>
+                    {a.name} ({a.account_id})
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Auto-sync toggle */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"var(--surface2)",marginTop:8}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600}}>🔄 Sincronización automática al abrir</div>
+            <div style={{fontSize:11,color:"var(--muted)"}}>Sincroniza el día de hoy automáticamente cada vez que abres este panel</div>
+          </div>
+          <div style={{position:"relative",width:44,height:24,cursor:"pointer"}} onClick={()=>setAutoSync(v=>!v)}>
+            <div style={{position:"absolute",inset:0,borderRadius:12,background:autoSync?"var(--green)":"var(--border)",transition:"background .2s"}}/>
+            <div style={{position:"absolute",top:3,left:autoSync?22:3,width:18,height:18,borderRadius:9,background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.3)"}}/>
+          </div>
         </div>
       </div>
 
-      {/* INFO SOBRE RENOVACION DEL TOKEN */}
-      <div style={{ background: "var(--surface2)", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "var(--muted)", lineHeight: 1.6 }}>
-        <b style={{ color: "var(--amber)" }}>⚠️ Importante sobre el token:</b> El token que generates en el panel de desarrolladores dura solo 1-2 horas.
-        Para obtener un token de larga duracion (60 dias): usa el Graph API Explorer, genera el token,
-        luego visitaaccess_token&grant_type=fb_exchange_token con tu App ID y App Secret.
-        Cuando tengamos la app aprobada esto sera automatico para todos los clientes.
+      {/* ── Sección 2: Multi-cuenta ──────────────────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13}}>📊 Cuentas de anunciante</div>
+          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={addCuenta}>+ Agregar cuenta</button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {cuentas.map((c, i) => (
+            <div key={c.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"end",padding:"10px 12px",borderRadius:8,background:"var(--surface2)"}}>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>Nombre de la cuenta</div>
+                <input type="text" value={c.nombre} onChange={e=>updateCuenta(c.id,"nombre",e.target.value)}
+                  placeholder="Ej: Principal, Respaldo, Ecuador..." style={{width:"100%",fontSize:12}} />
+              </div>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>Ad Account ID</div>
+                <input type="text" value={c.adAccountId}
+                  onChange={e=>updateCuenta(c.id,"adAccountId",e.target.value.replace("act_",""))}
+                  placeholder="120247229359120062" style={{width:"100%",fontSize:12}} />
+              </div>
+              <button onClick={()=>removeCuenta(c.id)}
+                style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:18,padding:"0 4px",alignSelf:"center"}}>×</button>
+            </div>
+          ))}
+        </div>
+        {cuentas.length > 1 && (
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>
+            💡 Al sincronizar, los datos de todas las cuentas se suman en un registro consolidado por día. También puedes ver el desglose por cuenta en el historial.
+          </div>
+        )}
+      </div>
+
+      {/* ── Sección 3: Métricas ──────────────────────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>
+          Métricas a sincronizar ({selectedMetrics.length}/10)
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {FB_METRICAS_DISPONIBLES.map(m => {
+            const active = !!selectedMetrics.find(x=>x.key===m.key);
+            return (
+              <div key={m.key} className={"fb-chip "+(active?"active":"")} onClick={()=>toggleMetric(m)}>
+                {active?"✓ ":""}{m.label}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>
+          Se guardan en los registros diarios. Mínimo 1, máximo 10.
+        </div>
+      </div>
+
+      {/* ── Sección 4: Sincronización ────────────────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem"}}>
+        <div style={{fontWeight:700,fontSize:13,marginBottom:12}}>⟳ Sincronizar datos</div>
+
+        {/* Tabs single/range */}
+        <div className="period-pills" style={{marginBottom:12}}>
+          <button className={"pill "+(syncMode==="single"?"active":"")} onClick={()=>setSyncMode("single")}>📅 Fecha específica</button>
+          <button className={"pill "+(syncMode==="range"?"active":"")} onClick={()=>setSyncMode("range")}>📆 Rango de fechas</button>
+        </div>
+
+        {syncMode === "single" ? (
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="date" value={syncDate} onChange={e=>setSyncDate(e.target.value)}
+              max={new Date().toISOString().slice(0,10)} style={{width:"auto"}} />
+            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(new Date().toISOString().slice(0,10))}>Hoy</button>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(new Date(Date.now()-86400000).toISOString().slice(0,10))}>Ayer</button>
+          </div>
+        ) : (
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="date" value={rangeFrom} onChange={e=>setRangeFrom(e.target.value)}
+              max={rangeTo} style={{width:"auto"}} />
+            <span style={{color:"var(--muted)",fontSize:12}}>hasta</span>
+            <input type="date" value={rangeTo} onChange={e=>setRangeTo(e.target.value)}
+              max={new Date().toISOString().slice(0,10)} style={{width:"auto"}} />
+            <span style={{fontSize:11,color:"var(--muted)"}}>
+              {(() => { const d=Math.round((new Date(rangeTo)-new Date(rangeFrom))/86400000)+1; return d>0?d+" días":""; })()}
+            </span>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,marginTop:12,alignItems:"center",flexWrap:"wrap"}}>
+          <button className="btn btn-primary btn-sm" disabled={syncing||!token||!cuentas.some(c=>c.adAccountId)} onClick={handleSync}
+            style={{background:"var(--accent)"}}>
+            {syncing ? "⟳ Sincronizando..." : syncMode==="range"?"⟳ Sincronizar rango":"⟳ Sincronizar"}
+          </button>
+          {syncStatus && (
+            <span className={"fb-sync-badge "+(syncStatus==="ok"?"fb-sync-ok":syncStatus==="err"?"fb-sync-err":syncStatus==="partial"?"fb-sync-loading":"fb-sync-loading")}>
+              {syncStatus==="ok"?"✓ Completado":syncStatus==="err"?"✕ Error":syncStatus==="partial"?"⚠ Parcial":"⟳ Sincronizando..."}
+            </span>
+          )}
+        </div>
+
+        {/* Log de sync para rango */}
+        {syncLog.length > 0 && (
+          <div style={{marginTop:12,maxHeight:160,overflowY:"auto",background:"var(--surface2)",borderRadius:8,padding:"8px 12px"}}>
+            {syncLog.map((l,i) => (
+              <div key={i} style={{fontSize:11,display:"flex",gap:10,padding:"2px 0",color:"var(--muted)"}}>
+                <span style={{fontFamily:"var(--mono)"}}>{l.fecha}</span>
+                <span>{l.estado}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Sección 5: Campañas activas ──────────────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13}}>📡 Campañas activas ahora</div>
+          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={cargarCampanas} disabled={loadingCamp}>
+            {loadingCamp?"⟳ Cargando...":"🔄 Cargar"}
+          </button>
+        </div>
+        {!campaigns && !loadingCamp && (
+          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>
+            Presiona "Cargar" para ver las campañas activas y pausadas ahora mismo.
+          </div>
+        )}
+        {loadingCamp && <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>⟳ Consultando Facebook Ads...</div>}
+        {campaigns && campaigns.length === 0 && (
+          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>Sin campañas activas o pausadas.</div>
+        )}
+        {campaigns && campaigns.length > 0 && (
+          <div className="scroll-x">
+            <table className="tbl">
+              <thead><tr>
+                {cuentas.length>1 && <th>Cuenta</th>}
+                <th>Campaña</th>
+                <th>Estado</th>
+                <th>Objetivo</th>
+                <th style={{textAlign:"right"}}>Presupuesto</th>
+              </tr></thead>
+              <tbody>
+                {campaigns.map((c,i) => (
+                  <tr key={i}>
+                    {cuentas.length>1 && <td style={{fontSize:11,color:"var(--muted)"}}>{c._cuenta}</td>}
+                    <td style={{fontWeight:500,fontSize:12,maxWidth:280,wordBreak:"break-word"}}>{c.name}</td>
+                    <td>
+                      <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,
+                        background:c.status==="ACTIVE"?"rgba(16,185,129,.15)":"rgba(255,222,89,.1)",
+                        color:c.status==="ACTIVE"?"var(--green)":"var(--amber)"}}>
+                        {c.status==="ACTIVE"?"● Activa":"⏸ Pausada"}
+                      </span>
+                    </td>
+                    <td style={{fontSize:11,color:"var(--muted)"}}>{(c.objective||"").replace(/_/g," ").toLowerCase()}</td>
+                    <td style={{fontFamily:"var(--mono)",textAlign:"right",fontSize:12}}>
+                      {c.daily_budget ? "$"+fmtNum(parseFloat(c.daily_budget)/100,2)+"/día"
+                        : c.lifetime_budget ? "$"+fmtNum(parseFloat(c.lifetime_budget)/100,2)+" total"
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Guardar + nota token */}
+      <div style={{display:"flex",gap:8,marginBottom:"1rem"}}>
+        <button className="btn btn-green btn-sm" disabled={saving} onClick={saveConfig}>
+          {saving?"Guardando...":"💾 Guardar configuración"}
+        </button>
+      </div>
+
+      <div style={{background:"var(--surface2)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"var(--muted)",lineHeight:1.6}}>
+        <b style={{color:"var(--amber)"}}>⚠️ Token de larga duración (60 días):</b> El token del panel de desarrolladores dura solo 1-2 horas.
+        Para extenderlo: Graph API Explorer → genera token → Exchange for a long-lived token.
+        Cuando la app esté aprobada esto será automático.
       </div>
     </>
   );
@@ -8240,7 +8504,8 @@ function MiniLineChart({ titulo, rows, metricas }) {
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 function CplTradingChart({ client, onUpdate }) {
-  const { token, adAccountId } = client.fbConfig || {};
+  const { token, cuentas: _cuentas } = client.fbConfig || {};
+  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
 
   const [rango, setRango]           = useState("24h");
   const [loading, setLoading]       = useState(false);
