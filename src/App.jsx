@@ -6461,14 +6461,477 @@ const PLANTILLAS_DEFAULT = [
 ];
 
 function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
-  const [token, setToken] = useState(tgConfig?.token || "");
-  const [chatId, setChatId] = useState(tgConfig?.chatId || client.telefono || "");
-  const [sending, setSending] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [token, setToken]           = useState(tgConfig?.token || "");
+  const [chatIds, setChatIds]       = useState(() => {
+    // Soportar múltiples destinatarios
+    if (tgConfig?.chatIds?.length) return tgConfig.chatIds;
+    if (tgConfig?.chatId) return [{ id:1, nombre: client.name || "Cliente", chatId: tgConfig.chatId }];
+    return [{ id:1, nombre: client.name || "Cliente", chatId: client.telefono || "" }];
+  });
+  const [sending, setSending]       = useState(false);
+  const [saving, setSaving]         = useState(false);
   const [plantillas, setPlantillas] = useState(tgConfig?.plantillas || PLANTILLAS_DEFAULT);
   const [selectedPlantilla, setSelectedPlantilla] = useState("p1");
-  const [editingPlantilla, setEditingPlantilla] = useState(null); // id de la que se está editando
-  const { show, el: toastEl } = useToast();
+  const [editingPlantilla, setEditingPlantilla]   = useState(null);
+  const [historial, setHistorial]   = useState(tgConfig?.historial || []);
+  const [showHistorial, setShowHistorial] = useState(false);
+  const [showWebhook, setShowWebhook] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState(null);
+  const { show, el: toastEl }       = useToast();
+
+  useEffect(() => { if (tgConfig?.plantillas) setPlantillas(tgConfig.plantillas); }, [client.id]);
+
+  const [detecting, setDetecting]         = useState(false);
+  const [chatsEncontrados, setChatsEncontrados] = useState([]);
+  const [editingMensaje, setEditingMensaje]     = useState(false);
+  const [mensajeEditado, setMensajeEditado]     = useState("");
+
+  // Chat ID principal (primer destinatario)
+  const chatIdPrincipal = chatIds[0]?.chatId || "";
+
+  function addDestinatario() {
+    if (chatIds.length >= 5) return show("Máximo 5 destinatarios", "err");
+    setChatIds(p => [...p, { id: Date.now(), nombre: "Destinatario " + (p.length+1), chatId: "" }]);
+  }
+  function updateDest(id, field, val) {
+    setChatIds(p => p.map(d => d.id===id ? {...d, [field]: val} : d));
+  }
+  function removeDest(id) {
+    if (chatIds.length <= 1) return show("Debe quedar al menos un destinatario", "err");
+    setChatIds(p => p.filter(d => d.id !== id));
+  }
+
+  async function handleDetectarChatId() {
+    if (!token) return show("Ingresa el Bot Token primero", "err");
+    setDetecting(true); setChatsEncontrados([]);
+    const result = await detectarChatId(token);
+    if (result.ok) {
+      if (result.chats.length === 1) {
+        updateDest(chatIds[0].id, "chatId", result.chats[0].id);
+        show("✓ Chat ID detectado: " + result.chats[0].id, "ok");
+      } else {
+        setChatsEncontrados(result.chats);
+        show(result.chats.length + " chats encontrados — selecciona", "ok");
+      }
+    } else { show("No se pudo detectar: " + result.error, "err"); }
+    setDetecting(false);
+  }
+
+  // ── Mensaje con variables dinámicas ──────────────────────────────────────
+  function resolverVariables(texto) {
+    if (!texto) return texto;
+    const hoy  = new Date();
+    const ult  = records?.length ? records[records.length-1] : null;
+    const inv  = ult ? parseFloat(ult.inversion)||0 : 0;
+    const leads = ult ? parseFloat(ult.resultados||ult.formularios||ult.leads)||0 : 0;
+    const cpl  = leads > 0 ? inv/leads : 0;
+    return texto
+      .replace(/\{\{nombre\}\}/gi, client.name || "")
+      .replace(/\{\{fecha\}\}/gi, hoy.toLocaleDateString("es-EC"))
+      .replace(/\{\{inversion\}\}/gi, "$"+fmtNum(inv,2))
+      .replace(/\{\{leads\}\}/gi, fmtNum(leads))
+      .replace(/\{\{cpl\}\}/gi, cpl>0?"$"+fmtNum(cpl,2):"—")
+      .replace(/\{\{producto\}\}/gi, client.producto||"")
+      .replace(/\{\{mes\}\}/gi, hoy.toLocaleDateString("es-EC",{month:"long"}));
+  }
+
+  const lastRecord = records?.length ? [records[records.length-1]] : [];
+
+  function getMensaje() {
+    try {
+      const p = plantillas.find(x => x.id === selectedPlantilla);
+      if (!p) return "";
+      if (p.tipo === "reporte") return lastRecord.length ? buildReportMessage(client, lastRecord) : "";
+      if (p.tipo === "apollo")  return lastRecord.length ? (buildReportApollo(client, lastRecord) || buildReportMessage(client, lastRecord)) : "";
+      if (p.tipo === "cobro")   return buildCobroMessage(client) || "No hay cuotas pendientes para este cliente.";
+      return resolverVariables(p.texto || "");
+    } catch { return ""; }
+  }
+
+  const mensajeBase = getMensaje();
+  useEffect(() => { setEditingMensaje(false); setMensajeEditado(""); }, [selectedPlantilla]);
+  const mensajeFinal = editingMensaje ? mensajeEditado : mensajeBase;
+  const preview      = mensajeFinal ? mensajeFinal.replace(/[*_]/g, "") : "";
+
+  async function saveConfig(extraData = {}) {
+    setSaving(true);
+    // Mantener compatibilidad: guardar también chatId del primero
+    await onSaveConfig({ token, chatId: chatIdPrincipal, chatIds, plantillas, historial, ...extraData });
+    show("✓ Configuración guardada", "ok");
+    setSaving(false);
+  }
+
+  // ── Prueba de conexión ────────────────────────────────────────────────────
+  async function enviarPrueba() {
+    if (!token || !chatIdPrincipal) return show("Completa el token y chat ID primero", "err");
+    setSending(true);
+    const msg = `✅ *Trafficker Pro conectado*\n\nHola ${client.name}! Tu bot está configurado correctamente.\n\nEscribe /ayuda para ver todos los comandos disponibles.\n\n_${new Date().toLocaleString("es-EC")}_`;
+    const result = await sendTelegram(token, chatIdPrincipal, msg);
+    show(result.ok ? "✓ Mensaje de prueba enviado" : "Error: " + result.error, result.ok ? "ok" : "err");
+    setSending(false);
+  }
+
+  // ── Enviar a todos los destinatarios ─────────────────────────────────────
+  async function send() {
+    if (!token) return show("Completa el token primero", "err");
+    if (!mensajeFinal) return show("No hay mensaje para enviar", "err");
+    const activos = chatIds.filter(d => d.chatId);
+    if (!activos.length) return show("Agrega al menos un destinatario con Chat ID", "err");
+    setSending(true);
+    let ok = 0, err = 0;
+    for (const dest of activos) {
+      const result = await sendTelegram(token, dest.chatId, mensajeFinal);
+      if (result.ok) ok++; else err++;
+    }
+    // Guardar en historial
+    const p = plantillas.find(x => x.id === selectedPlantilla);
+    const entrada = {
+      id: Date.now(),
+      fecha: new Date().toLocaleString("es-EC"),
+      plantilla: p?.nombre || "—",
+      destinatarios: ok,
+      estado: err === 0 ? "ok" : ok > 0 ? "parcial" : "err"
+    };
+    const nuevoHistorial = [entrada, ...historial].slice(0, 30);
+    setHistorial(nuevoHistorial);
+    await onSaveConfig({ token, chatId: chatIdPrincipal, chatIds, plantillas, historial: nuevoHistorial });
+    show(ok > 0 ? `✓ Enviado a ${ok} destinatario${ok!==1?"s":""}${err>0?" · "+err+" fallaron":""}` : "Error al enviar", ok>0?"ok":"err");
+    setSending(false);
+  }
+
+  // ── Configurar webhook ────────────────────────────────────────────────────
+  async function configurarWebhook() {
+    if (!token) return show("Ingresa el Bot Token primero", "err");
+    setWebhookStatus("loading");
+    const webhookUrl = `${window.location.origin}/api/telegram-webhook`;
+    try {
+      const res  = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: webhookUrl })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setWebhookStatus("ok");
+        show("✓ Webhook configurado — el bot ya puede recibir mensajes", "ok");
+      } else {
+        setWebhookStatus("err");
+        show("Error: " + data.description, "err");
+      }
+    } catch (e) { setWebhookStatus("err"); show("Error: " + e.message, "err"); }
+  }
+
+  async function verificarWebhook() {
+    if (!token) return show("Ingresa el Bot Token primero", "err");
+    try {
+      const res  = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+      const data = await res.json();
+      const url  = data.result?.url || "";
+      const expected = `${window.location.origin}/api/telegram-webhook`;
+      if (url === expected) {
+        setWebhookStatus("ok");
+        show("✓ Webhook activo y apuntando correcto", "ok");
+      } else if (url) {
+        setWebhookStatus("err");
+        show("Webhook apunta a: " + url, "err");
+      } else {
+        setWebhookStatus("none");
+        show("Sin webhook configurado", "err");
+      }
+    } catch (e) { show("Error: " + e.message, "err"); }
+  }
+
+  function updPlantilla(id, k, v) { setPlantillas(p => p.map(x => x.id===id ? {...x,[k]:v} : x)); }
+  function addPlantilla() {
+    if (plantillas.length >= 5) return show("Máximo 5 plantillas", "err");
+    setPlantillas(p => [...p, { id:"p"+Date.now(), nombre:"Nueva plantilla", tipo:"custom", texto:"" }]);
+  }
+
+  return (
+    <>
+      {toastEl}
+
+      {/* ── Sección 1: Configuración ─────────────────────────────────────── */}
+      <div className="tg-card" style={{marginBottom:"1rem"}}>
+        <div className="tg-header">
+          <span style={{fontSize:18}}>✈️</span> Mensajería por Telegram
+        </div>
+
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:"1rem",lineHeight:1.6}}>
+          <b style={{color:"var(--text)"}}>Configuración:</b> Busca <b>@BotFather</b> → /newbot → copia el Token.
+          El cliente busca tu bot y escribe <b>/start</b>. Luego clic en "Detectar Chat ID" ✓
+        </div>
+
+        <div className="field">
+          <label>Bot Token</label>
+          <input type="text" value={token} onChange={e=>{setToken(e.target.value);setChatsEncontrados([]);}}
+            placeholder="1234567890:ABCdef..." />
+        </div>
+
+        {/* Múltiples destinatarios */}
+        <div style={{marginBottom:"1rem"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".05em"}}>
+              Destinatarios ({chatIds.length})
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={handleDetectarChatId} disabled={detecting||!token}>
+                {detecting?"⟳":"🔍"} Detectar
+              </button>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={addDestinatario}>+ Añadir</button>
+            </div>
+          </div>
+          {chatIds.map((d,i) => (
+            <div key={d.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,marginBottom:6,alignItems:"end"}}>
+              <div>
+                {i===0 && <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>Nombre</div>}
+                <input type="text" value={d.nombre} onChange={e=>updateDest(d.id,"nombre",e.target.value)}
+                  placeholder="Ej: Cliente, Socio..." style={{width:"100%",fontSize:12}} />
+              </div>
+              <div>
+                {i===0 && <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>Chat ID</div>}
+                <input type="text" value={d.chatId} onChange={e=>updateDest(d.id,"chatId",e.target.value)}
+                  placeholder="123456789" style={{width:"100%",fontSize:12}} />
+              </div>
+              <button onClick={()=>removeDest(d.id)} disabled={chatIds.length<=1}
+                style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:18,padding:"0 4px",alignSelf:"center",opacity:chatIds.length<=1?.3:1}}>×</button>
+            </div>
+          ))}
+        </div>
+
+        {/* Múltiples chats detectados */}
+        {chatsEncontrados.length > 1 && (
+          <div style={{background:"var(--surface2)",borderRadius:10,padding:12,marginBottom:"1rem"}}>
+            <div style={{fontSize:12,fontWeight:600,color:"var(--accent2)",marginBottom:8}}>
+              {chatsEncontrados.length} conversaciones — selecciona:
+            </div>
+            {chatsEncontrados.map(c => (
+              <div key={c.id} onClick={()=>{updateDest(chatIds[0].id,"chatId",c.id);setChatsEncontrados([]);show("✓ "+c.id,"ok");}}
+                style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",marginBottom:4,
+                  background:chatIdPrincipal===c.id?"rgba(0,74,173,.2)":"var(--bg)",border:"1px solid "+(chatIdPrincipal===c.id?"var(--accent)":"var(--border)")}}>
+                <div style={{width:32,height:32,borderRadius:"50%",background:"rgba(0,74,173,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"var(--accent2)"}}>
+                  {c.nombre.slice(0,2).toUpperCase()}
+                </div>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>{c.nombre}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{c.username?"@"+c.username+" · ":""} ID: {c.id}</div>
+                </div>
+                {chatIdPrincipal===c.id && <span style={{marginLeft:"auto",color:"var(--green)",fontWeight:700}}>✓</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {chatIdPrincipal && token && (
+          <div style={{fontSize:12,marginBottom:"1rem",display:"flex",alignItems:"center",gap:6}}>
+            <span style={{color:"var(--green)",fontWeight:700}}>●</span>
+            <span style={{color:"var(--muted)"}}>Configurado · Chat ID: <span style={{fontFamily:"var(--mono)",color:"var(--text)"}}>{chatIdPrincipal}</span>
+              {chatIds.length>1 && <span style={{marginLeft:6,color:"var(--accent2)"}}>+{chatIds.length-1} más</span>}
+            </span>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={()=>saveConfig()}>💾 Guardar</button>
+          <button className="btn btn-ghost btn-sm" disabled={sending||!token||!chatIdPrincipal} onClick={enviarPrueba}>📨 Prueba de conexión</button>
+        </div>
+      </div>
+
+      {/* ── Sección 2: Bot inteligente (Webhook) ─────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem",borderColor:"rgba(124,58,237,.3)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:13}}>🤖 Bot inteligente</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>El cliente puede consultar métricas escribiéndole al bot 24/7</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>setShowWebhook(v=>!v)}>
+            {showWebhook?"Ocultar":"⚙️ Configurar"}
+          </button>
+        </div>
+
+        {showWebhook && (
+          <div style={{padding:"12px 14px",background:"var(--surface2)",borderRadius:8}}>
+            <div style={{fontSize:12,color:"var(--muted)",marginBottom:12,lineHeight:1.7}}>
+              Para que el bot responda mensajes del cliente necesitas activar el webhook una sola vez.
+              Asegúrate de haber desplegado el archivo <code>api/telegram-webhook.js</code> en Vercel.
+            </div>
+            <div style={{fontSize:12,fontFamily:"var(--mono)",background:"rgba(0,0,0,.3)",padding:"6px 10px",borderRadius:6,marginBottom:12,wordBreak:"break-all",color:"var(--accent2)"}}>
+              {window.location.origin}/api/telegram-webhook
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+              <button className="btn btn-primary btn-sm" style={{background:"rgba(124,58,237,.8)"}}
+                onClick={configurarWebhook} disabled={!token||webhookStatus==="loading"}>
+                {webhookStatus==="loading"?"⟳ Configurando...":"🔗 Activar webhook"}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={verificarWebhook} disabled={!token}>
+                🔍 Verificar
+              </button>
+              {webhookStatus==="ok" && <span style={{color:"var(--green)",fontSize:12}}>✅ Activo</span>}
+              {webhookStatus==="err" && <span style={{color:"var(--red)",fontSize:12}}>❌ Error</span>}
+              {webhookStatus==="none" && <span style={{color:"var(--amber)",fontSize:12}}>⚠️ Sin configurar</span>}
+            </div>
+            <div style={{marginTop:12,fontSize:11,color:"var(--muted)"}}>
+              <b>Comandos disponibles para el cliente:</b><br/>
+              /hoy · /semana · /mes · /mision · /captura · /contrato · /proyeccion [monto]<br/>
+              + lenguaje natural: "¿Cómo van mis leads?" · "¿Qué pasa si gasto $150 diarios?"
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Sección 3: Plantillas y envío ────────────────────────────────── */}
+      <div className="tg-card" style={{marginBottom:"1rem"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em"}}>
+            Plantillas ({plantillas.length}/5)
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {editingPlantilla && (
+              <button className="btn btn-green btn-sm" onClick={async()=>{setEditingPlantilla(null);await saveConfig();}}>💾 Guardar</button>
+            )}
+            <button className="btn btn-ghost btn-sm" onClick={addPlantilla}>+ Añadir</button>
+          </div>
+        </div>
+
+        {plantillas.map(p => {
+          const isEditing  = editingPlantilla === p.id;
+          const isSelected = selectedPlantilla === p.id;
+          return (
+            <div key={p.id} className={"tg-plantilla-view "+(isSelected?"selected":"")}
+              onClick={()=>!isEditing&&setSelectedPlantilla(p.id)}>
+              {isEditing ? (
+                <div onClick={e=>e.stopPropagation()}>
+                  <div className="form-row" style={{marginBottom:8}}>
+                    <div className="field" style={{marginBottom:0}}>
+                      <label>Nombre</label>
+                      <input type="text" value={p.nombre} onChange={e=>updPlantilla(p.id,"nombre",e.target.value)} />
+                    </div>
+                    <div className="field" style={{marginBottom:0}}>
+                      <label>Tipo</label>
+                      <select value={p.tipo} onChange={e=>updPlantilla(p.id,"tipo",e.target.value)}>
+                        <option value="reporte">Reporte diario (automático)</option>
+                        <option value="apollo">🚀 Gasto diario APOLLO</option>
+                        <option value="cobro">Recordatorio de cobro</option>
+                        <option value="custom">Mensaje personalizado</option>
+                      </select>
+                    </div>
+                  </div>
+                  {p.tipo === "custom" && (
+                    <div className="field" style={{marginBottom:4}}>
+                      <label>Texto del mensaje</label>
+                      <textarea value={p.texto||""} onChange={e=>updPlantilla(p.id,"texto",e.target.value)}
+                        placeholder="Hola {{nombre}}! Hoy {{fecha}} invertiste {{inversion}} y obtuviste {{leads}} leads (CPL {{cpl}})."
+                        style={{minHeight:80}} />
+                      <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>
+                        Variables: <code>{"{{nombre}}"}</code> <code>{"{{fecha}}"}</code> <code>{"{{inversion}}"}</code> <code>{"{{leads}}"}</code> <code>{"{{cpl}}"}</code> <code>{"{{producto}}"}</code> <code>{"{{mes}}"}</code>
+                      </div>
+                    </div>
+                  )}
+                  {p.tipo === "reporte" && <div style={{fontSize:11,color:"var(--muted)"}}>Genera automáticamente con los datos del último registro diario.</div>}
+                  {p.tipo === "cobro"   && <div style={{fontSize:11,color:"var(--muted)"}}>Genera automáticamente con las cuotas pendientes del contrato.</div>}
+                  <div style={{display:"flex",gap:6,marginTop:8}}>
+                    <button className="btn btn-ghost btn-sm" onClick={()=>setEditingPlantilla(null)}>Cancelar</button>
+                    {plantillas.length > 1 && (
+                      <button className="btn btn-danger btn-sm" onClick={()=>{setPlantillas(prev=>prev.filter(x=>x.id!==p.id));setEditingPlantilla(null);setSelectedPlantilla(plantillas[0]?.id);}}>Eliminar</button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:13}}>{p.nombre}</div>
+                    <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                      {p.tipo==="reporte"?"Reporte automático":p.tipo==="cobro"?"Recordatorio de cobro":p.tipo==="apollo"?"🚀 APOLLO":"Personalizado"}
+                      {isSelected && <span style={{color:"var(--accent2)",marginLeft:8}}>● Seleccionada</span>}
+                    </div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={e=>{e.stopPropagation();setEditingPlantilla(p.id);setSelectedPlantilla(p.id);}} title="Editar">&#9998;</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Editor de mensaje */}
+        {mensajeBase && (
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div style={{fontSize:12,fontWeight:600,color:"var(--accent2)",textTransform:"uppercase",letterSpacing:".06em"}}>
+                {editingMensaje?"Editando":"Vista previa"}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {editingMensaje ? (
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{setEditingMensaje(false);setMensajeEditado("");}}>Restaurar</button>
+                ) : (
+                  <button className="btn btn-ghost btn-sm" onClick={()=>{setEditingMensaje(true);setMensajeEditado(mensajeBase.replace(/[*_]/g,""));}}>✏️ Editar</button>
+                )}
+              </div>
+            </div>
+            {editingMensaje ? (
+              <textarea value={mensajeEditado} onChange={e=>setMensajeEditado(e.target.value)}
+                style={{width:"100%",minHeight:220,background:"var(--bg)",border:"1px solid var(--accent2)",borderRadius:8,padding:"10px 14px",fontSize:13,fontFamily:"var(--mono)",color:"var(--text)",resize:"vertical",outline:"none",lineHeight:1.6}} />
+            ) : (
+              <div style={{background:"var(--bg)",borderRadius:8,padding:"10px 14px",fontSize:13,fontFamily:"var(--mono)",color:"var(--text)",whiteSpace:"pre-wrap",maxHeight:220,overflow:"auto",lineHeight:1.6,border:"1px solid var(--border)"}}>
+                {preview}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!mensajeBase && (
+          <div style={{background:"var(--surface2)",borderRadius:8,padding:"12px 14px",fontSize:12,color:"var(--muted)",marginBottom:"1rem"}}>
+            {(() => {
+              const p = plantillas.find(x=>x.id===selectedPlantilla);
+              if (!p) return "Selecciona una plantilla.";
+              if (p.tipo==="reporte") return "Agrega un registro diario para generar el reporte.";
+              if (p.tipo==="cobro")   return "Este cliente no tiene contratos con cuotas pendientes.";
+              return "Edita el texto de esta plantilla ✏️.";
+            })()}
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button className="btn btn-primary" disabled={sending||!mensajeFinal} onClick={send} style={{background:"var(--accent)"}}>
+            {sending?"Enviando...":chatIds.length>1?`📤 Enviar a ${chatIds.filter(d=>d.chatId).length} destinatarios`:"📤 Enviar mensaje"}
+          </button>
+          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={()=>saveConfig()}>💾 Guardar todo</button>
+        </div>
+      </div>
+
+      {/* ── Sección 4: Historial ─────────────────────────────────────────── */}
+      {historial.length > 0 && (
+        <div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:13}}>📋 Historial de envíos</div>
+            <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={()=>setShowHistorial(v=>!v)}>
+              {showHistorial?"Ocultar":"Ver "+historial.length}
+            </button>
+          </div>
+          {showHistorial && (
+            <table className="tbl" style={{fontSize:12}}>
+              <thead><tr><th>Fecha</th><th>Plantilla</th><th>Dest.</th><th>Estado</th></tr></thead>
+              <tbody>
+                {historial.map(h => (
+                  <tr key={h.id}>
+                    <td style={{fontFamily:"var(--mono)",fontSize:11}}>{h.fecha}</td>
+                    <td>{h.plantilla}</td>
+                    <td style={{textAlign:"center"}}>{h.destinatarios}</td>
+                    <td>
+                      <span style={{fontSize:11,padding:"1px 8px",borderRadius:10,
+                        background:h.estado==="ok"?"rgba(16,185,129,.15)":h.estado==="parcial"?"rgba(255,222,89,.1)":"rgba(239,68,68,.1)",
+                        color:h.estado==="ok"?"var(--green)":h.estado==="parcial"?"var(--amber)":"var(--red)"}}>
+                        {h.estado==="ok"?"✓ OK":h.estado==="parcial"?"⚠ Parcial":"✕ Error"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
 
   // Sincronizar plantillas cuando el cliente cambia (viene de Supabase)
   useEffect(() => {
@@ -6521,245 +6984,6 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const mensajeFinal = editingMensaje ? mensajeEditado : mensajeBase;
   const preview = mensajeFinal ? mensajeFinal.replace(/[*_]/g, "") : "";
   const mensaje = mensajeFinal;
-
-  async function saveConfig() {
-    setSaving(true);
-    await onSaveConfig({ token, chatId, plantillas });
-    show("✓ Configuracion guardada", "ok");
-    setSaving(false);
-  }
-
-  async function send() {
-    if (!token || !chatId) return show("Completa el token y chat ID primero", "err");
-    if (!mensaje) return show("No hay mensaje para enviar", "err");
-    setSending(true);
-    const result = await sendTelegram(token, chatId, mensaje);
-    show(result.ok ? "✓ Mensaje enviado a Telegram" : "Error: " + result.error, result.ok ? "ok" : "err");
-    setSending(false);
-  }
-
-  function updPlantilla(id, k, v) {
-    setPlantillas(p => p.map(x => x.id === id ? { ...x, [k]: v } : x));
-  }
-
-  function addPlantilla() {
-    if (plantillas.length >= 5) return show("Maximo 5 plantillas", "err");
-    setPlantillas(p => [...p, { id: "p" + Date.now(), nombre: "Nueva plantilla", tipo: "custom", texto: "" }]);
-  }
-
-  return (
-    <>
-      {toastEl}
-      <div className="tg-card">
-        <div className="tg-header">
-          <span style={{ fontSize: 18 }}>✈️</span> Mensajeria por Telegram
-        </div>
-
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6 }}>
-          <b style={{ color: "var(--text)" }}>Configuracion (una sola vez):</b><br/>
-          1. Busca <b>@BotFather</b> en Telegram, escribe /newbot, copia el Token<br/>
-          2. El cliente busca tu bot y le da <b>/start</b><br/>
-          3. Clic en <b>"Detectar Chat ID"</b> — lo encuentra automaticamente ✓
-        </div>
-
-        <div className="form-row">
-          <div className="field">
-            <label>Bot Token</label>
-            <input type="text" value={token} onChange={e => { setToken(e.target.value); setChatsEncontrados([]); }} placeholder="1234567890:ABCdef..." />
-          </div>
-          <div className="field">
-            <label>Chat ID del destinatario</label>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input type="text" value={chatId} onChange={e => setChatId(e.target.value)} placeholder="Ej: 123456789" style={{ flex: 1 }} />
-              <button className="btn btn-primary btn-sm" disabled={detecting || !token}
-                onClick={handleDetectarChatId}
-                style={{ whiteSpace: "nowrap", background: "var(--accent)" }}
-                title="Detecta el Chat ID automaticamente">
-                {detecting ? "⏳" : "🔍 Detectar"}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Selector cuando hay múltiples chats */}
-        {chatsEncontrados.length > 1 && (
-          <div style={{ background: "var(--surface2)", borderRadius: 10, padding: 12, marginBottom: "1rem" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent2)", marginBottom: 8 }}>
-              Se encontraron {chatsEncontrados.length} conversaciones — selecciona la del cliente:
-            </div>
-            {chatsEncontrados.map(c => (
-              <div key={c.id}
-                onClick={() => { setChatId(c.id); setChatsEncontrados([]); show("✓ Chat ID seleccionado: " + c.id, "ok"); }}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 4, background: chatId === c.id ? "rgba(0,74,173,.2)" : "var(--bg)", border: "1px solid " + (chatId === c.id ? "var(--accent)" : "var(--border)"), transition: "all .15s" }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(0,74,173,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: "var(--accent2)" }}>
-                  {c.nombre.slice(0,2).toUpperCase()}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{c.nombre}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {c.username ? "@" + c.username + " · " : ""} ID: {c.id}
-                  </div>
-                </div>
-                {chatId === c.id && <span style={{ marginLeft: "auto", color: "var(--green)", fontWeight: 700 }}>✓</span>}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Estado de validación */}
-        {chatId && token && (
-          <div style={{ fontSize: 12, marginBottom: "1rem", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "var(--green)", fontWeight: 700 }}>●</span>
-            <span style={{ color: "var(--muted)" }}>Configurado — Chat ID: <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{chatId}</span></span>
-          </div>
-        )}
-
-        <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig} style={{ marginBottom: "1.5rem" }}>
-          {saving ? "Guardando..." : "💾 Guardar configuracion"}
-        </button>
-
-        {/* PLANTILLAS */}
-        <div style={{ marginBottom: "1rem" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>
-              Plantillas de mensaje ({plantillas.length}/5)
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {editingPlantilla && (
-                <button className="btn btn-green btn-sm" onClick={async () => { setEditingPlantilla(null); await saveConfig(); }}>
-                  💾 Guardar cambios
-                </button>
-              )}
-              <button className="btn btn-ghost btn-sm" onClick={addPlantilla}>+ Añadir</button>
-            </div>
-          </div>
-
-          {/* Lista de plantillas: modo vista o edición */}
-          {plantillas.map(p => {
-            const isEditing = editingPlantilla === p.id;
-            const isSelected = selectedPlantilla === p.id;
-            return (
-              <div key={p.id}
-                className={"tg-plantilla-view " + (isSelected ? "selected" : "")}
-                onClick={() => !isEditing && setSelectedPlantilla(p.id)}>
-                {isEditing ? (
-                  /* MODO EDICIÓN */
-                  <div onClick={e => e.stopPropagation()}>
-                    <div className="form-row" style={{ marginBottom: 8 }}>
-                      <div className="field" style={{ marginBottom: 0 }}>
-                        <label>Nombre</label>
-                        <input type="text" value={p.nombre} onChange={e => updPlantilla(p.id, "nombre", e.target.value)} />
-                      </div>
-                      <div className="field" style={{ marginBottom: 0 }}>
-                        <label>Tipo</label>
-                        <select value={p.tipo} onChange={e => updPlantilla(p.id, "tipo", e.target.value)}>
-                          <option value="reporte">Reporte diario (automatico)</option>
-                          <option value="apollo">🚀 Gasto diario APOLLO (lanzamientos)</option>
-                          <option value="cobro">Recordatorio de cobro (contrato)</option>
-                          <option value="custom">Mensaje personalizado</option>
-                        </select>
-                      </div>
-                    </div>
-                    {p.tipo === "custom" && (
-                      <div className="field" style={{ marginBottom: 0 }}>
-                        <label>Texto del mensaje</label>
-                        <textarea value={p.texto || ""} onChange={e => updPlantilla(p.id, "texto", e.target.value)} placeholder="Escribe tu mensaje aqui..." style={{ minHeight: 80 }} />
-                      </div>
-                    )}
-                    {p.tipo === "reporte" && <div style={{ fontSize: 11, color: "var(--muted)" }}>Genera automaticamente con los datos del ultimo registro diario.</div>}
-                    {p.tipo === "cobro" && <div style={{ fontSize: 11, color: "var(--muted)" }}>Genera automaticamente con la informacion de cuotas pendientes del contrato.</div>}
-                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-                      <button className="btn btn-ghost btn-sm" onClick={() => setEditingPlantilla(null)}>Cancelar</button>
-                      {plantillas.length > 1 && (
-                        <button className="btn btn-danger btn-sm" onClick={() => { setPlantillas(prev => prev.filter(x => x.id !== p.id)); setEditingPlantilla(null); setSelectedPlantilla(plantillas[0]?.id); }}>Eliminar</button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  /* MODO VISTA */
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{p.nombre}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                        {p.tipo === "reporte" ? "Reporte automatico" : p.tipo === "cobro" ? "Recordatorio de cobro" : "Mensaje personalizado"}
-                        {isSelected && <span style={{ color: "var(--accent2)", marginLeft: 8 }}>● Seleccionada</span>}
-                      </div>
-                    </div>
-                    <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setEditingPlantilla(p.id); setSelectedPlantilla(p.id); }}
-                      title="Editar plantilla">&#9998;</button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* EDITOR DE MENSAJE */}
-        {mensajeBase && (
-          <div style={{ marginBottom: "1rem" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent2)", textTransform: "uppercase", letterSpacing: ".06em" }}>
-                {editingMensaje ? "Editando mensaje" : "Vista previa del mensaje"}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {editingMensaje ? (
-                  <>
-                    <button className="btn btn-ghost btn-sm" onClick={() => { setEditingMensaje(false); setMensajeEditado(""); }}>
-                      Restaurar original
-                    </button>
-                  </>
-                ) : (
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setEditingMensaje(true); setMensajeEditado(mensajeBase.replace(/[*_]/g, "")); }}>
-                    ✏️ Editar mensaje
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {editingMensaje ? (
-              <div>
-                <textarea
-                  value={mensajeEditado}
-                  onChange={e => setMensajeEditado(e.target.value)}
-                  style={{ width: "100%", minHeight: 220, background: "var(--bg)", border: "1px solid var(--accent2)", borderRadius: 8, padding: "10px 14px", fontSize: 13, fontFamily: "var(--mono)", color: "var(--text)", resize: "vertical", outline: "none", lineHeight: 1.6 }}
-                />
-                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                  Puedes agregar o borrar cualquier parte del mensaje. El original se restaura al cambiar de plantilla.
-                </div>
-              </div>
-            ) : (
-              <div style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 14px", fontSize: 13, fontFamily: "var(--mono)", color: "var(--text)", whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto", lineHeight: 1.6, border: "1px solid var(--border)" }}>
-                {preview}
-              </div>
-            )}
-          </div>
-        )}
-
-        {!mensajeBase && (
-          <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "12px 14px", fontSize: 12, color: "var(--muted)", marginBottom: "1rem" }}>
-            {(() => {
-              const p = plantillas.find(x => x.id === selectedPlantilla);
-              if (!p) return "Selecciona una plantilla.";
-              if (p.tipo === "reporte") return "Agrega un registro diario para generar el reporte.";
-              if (p.tipo === "cobro") return "Este cliente no tiene contratos con cuotas pendientes.";
-              return "Edita el texto de esta plantilla haciendo clic en el lapiz ✏️.";
-            })()}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-primary" disabled={sending || !mensaje} onClick={send} style={{ background: "var(--accent)" }}>
-            {sending ? "Enviando..." : "📤 Enviar mensaje"}
-          </button>
-          <button className="btn btn-ghost btn-sm" disabled={saving} onClick={saveConfig}>
-            💾 Guardar todo
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
 
 
 // ─── MÓDULO ANÁLISIS DE CAPTURA FB→WP ────────────────────────────────────────
