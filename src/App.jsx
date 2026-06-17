@@ -6813,14 +6813,10 @@ function RemarketingTable({ data, readOnly }) {
 
     if (tipo === "telefonos_csv") {
       if (!contactos.length) { alert("Sincroniza los datos primero para generar la lista."); return; }
-      // CSV: columnas nombre (si hay) + telefono — números como texto plano, sin fórmulas
-      const header = tieneNombre ? "Nombre,Telefono" : "Telefono";
-      const filas = contactos.map(c => {
-        // Prefijo \t fuerza texto en Excel para preservar el número completo
-        const telTexto = `\t${c.tel}`;
-        return tieneNombre ? `"${c.nombre}",${telTexto}` : telTexto;
-      });
-      const csv = header + "\n" + filas.join("\n");
+      // Siempre dos columnas: Nombre | Telefono
+      // Teléfono como texto puro — sin fórmulas, sin notación científica
+      const filas = contactos.map(c => `"${c.nombre}"\t"${c.tel}"`);
+      const csv = "Nombre\tTelefono\n" + filas.join("\n");
       const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
       a.download = `remarketing_contactos_${fecha}.csv`; a.click();
@@ -6932,6 +6928,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
   // ── Nombres configurables de hojas ───────────────────────────────────────
   const [hojaFB, setHojaFB] = useState(sheetConfig.hojaFB || "Registros");
   const [hojaWP, setHojaWP] = useState(sheetConfig.hojaWP || "Miembros WP");
+  const [colNombrePersona, setColNombrePersona] = useState(sheetConfig.colNombrePersona || "");
   const [showHojas, setShowHojas] = useState(false);
 
   // ── Tabla de prefijos de país ─────────────────────────────────────────────
@@ -6971,18 +6968,59 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
   }
 
   // Lee una hoja de Google Sheets y devuelve todas las filas como arrays
-  async function leerHoja(sheetId, nombre, key) {
+  // Lee hoja via exportación CSV pública — NO requiere API Key
+  // Solo requiere que el sheet sea compartido con "cualquiera con el enlace puede ver"
+  async function leerHoja(sheetId, nombreHoja, _key) {
     try {
-      const range = encodeURIComponent(`'${nombre}'!A:Z`);
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${key}`;
-      const res = await fetch(url);
-      const json = await res.json();
-      if (json.error) return null;
-      return json.values || [];
+      // Primero obtener el GID (ID numérico) de la hoja por nombre usando la API
+      // Si falla, intentar con el endpoint de exportación por nombre directo
+      const gidUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties&key=${_key}`;
+      const gidRes = await fetch(gidUrl);
+      const gidJson = await gidRes.json();
+      let gid = 0;
+      if (!gidJson.error && gidJson.sheets) {
+        const hoja = gidJson.sheets.find(s =>
+          s.properties.title.toLowerCase() === nombreHoja.toLowerCase()
+        );
+        if (hoja) gid = hoja.properties.sheetId;
+      }
+      // Exportar como CSV — sin API Key, solo necesita sheet público
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+      const csvRes = await fetch(csvUrl);
+      if (!csvRes.ok) {
+        // Fallback: intentar con API Key y range
+        const range = encodeURIComponent(`'${nombreHoja}'!A:Z`);
+        const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${_key}`;
+        const apiRes = await fetch(apiUrl);
+        const apiJson = await apiRes.json();
+        if (apiJson.error) return null;
+        return apiJson.values || [];
+      }
+      const csvText = await csvRes.text();
+      // Parsear CSV respetando comillas y comas dentro de campos
+      return csvText.trim().split("\n").map(line => {
+        const cols = []; let cur = ""; let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === "," && !inQ) { cols.push(cur.trim()); cur = ""; }
+          else { cur += ch; }
+        }
+        cols.push(cur.trim());
+        return cols;
+      });
     } catch { return null; }
   }
 
-  // Calcula países y remarketing leyendo hojas directamente
+  // Lee los encabezados de una hoja para diagnóstico
+  async function verEncabezados() {
+    const sheetId = extractSheetId(sheetUrl);
+    if (!sheetId || !apiKey) return show("Configura URL y API Key primero", "err");
+    const rows = await leerHoja(sheetId, hojaFB, apiKey);
+    if (!rows || !rows[0]) return show("No se pudo leer la hoja: " + hojaFB, "err");
+    show("Columnas de '" + hojaFB + "': " + rows[0].join(" | "), "ok");
+  }
+
   async function calcularPaisesYRemarketing(sheetId, key, parsedBase) {
     // Leer hoja de WP (números que SÍ entraron)
     const rowsWP = await leerHoja(sheetId, hojaWP, key);
@@ -7023,14 +7061,17 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
     const colTelFB = headerFB.findIndex(h => h.includes("tel") || h.includes("phone") || h.includes("numero") || h.includes("número") || h.includes("whatsapp") || h.includes("celular"));
     const telColFB = colTelFB >= 0 ? colTelFB : 0;
 
-    // Detectar columna de nombre del LEAD en FB
-    // Excluir columnas que claramente NO son nombre de persona
-    const EXCLUIR_NOMBRE = ["anuncio","campaign","conjunto","adset","ad_name","ad_id",
-      "campaign_name","conjunto_nombre","creatividad","creative","fecha","date","hora",
-      "time","email","correo","telefon","phone","celular","numero","numero","id","utm",
-      "fuente","source","etiqueta","tag","status","estado","ciudad","pais","country"];
     const colNombreFB = (() => {
-      // 1er intento: columna que claramente sea nombre del lead
+      // Si el usuario configuró el nombre de columna exacto — usarlo directamente
+      if (colNombrePersona.trim()) {
+        const idx = headerFB.findIndex(h => h.toLowerCase() === colNombrePersona.trim().toLowerCase());
+        if (idx >= 0 && idx !== telColFB) return idx;
+      }
+      // Auto-detección: columnas claramente de nombre de persona
+      const EXCLUIR_NOMBRE = ["anuncio","campaign","conjunto","adset","ad_name","ad_id",
+        "campaign_name","conjunto_nombre","creatividad","creative","fecha","date","hora",
+        "time","email","correo","telefon","phone","celular","numero","número","id","utm",
+        "fuente","source","etiqueta","tag","status","estado","ciudad","pais","country"];
       const candidatos = [
         "full_name","nombre_completo","nombre completo","first_name","primer_nombre",
         "nombre_lead","lead_name","nombre del lead","tu nombre","your name","nombre y apellido",
@@ -7062,9 +7103,20 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
       const row = rowsFB[i];
       const rawTel = row?.[telColFB];
       if (!rawTel) continue;
-      const telNorm = extraerTelefono(rawTel);
+      const rawStr = String(rawTel);
+      const telNorm = extraerTelefono(rawStr);
       if (!telNorm || telNorm.length < 7) continue;
-      const nombre = colNombreFB >= 0 ? (row[colNombreFB] || "") : "";
+
+      // Extraer nombre: si la celda tiene formato "Nombre,p:NUM" → parte antes de ",p:"
+      // Si hay columna separada de nombre → usarla
+      // Si no hay nada → vacío
+      let nombre = "";
+      if (rawStr.includes(",p:") || rawStr.includes(", p:")) {
+        // Nombre está antes del separador ,p:
+        nombre = rawStr.split(/,\s*p:/)[0].trim();
+      } else if (colNombreFB >= 0 && colNombreFB !== telColFB) {
+        nombre = (row[colNombreFB] || "").trim();
+      }
       const pais = detectarPais(telNorm);
       if (!mapaP[pais]) mapaP[pais] = { total_form: 0, total_wp: 0 };
       mapaP[pais].total_form++;
@@ -7123,7 +7175,7 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
       parsed = await calcularPaisesYRemarketing(sheetId, apiKey, parsed);
 
       setData(parsed);
-      const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, hojaFB, hojaWP, lastData: parsed, lastSync: new Date().toISOString() } };
+      const updated = { ...client, capturaConfig: { url: sheetUrl, apiKey, hojaFB, hojaWP, colNombrePersona, lastData: parsed, lastSync: new Date().toISOString() } };
       await onUpdate(updated);
       show(`✓ ${parsed.total_wp} en WP · ${parsed.total_con_match||"?"} identificados · ${parsed.total_remarketing} para remarketing`, "ok");
     } catch(e) { show("Error: " + e.message, "err"); }
@@ -7191,8 +7243,19 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
                     placeholder="Ej: Miembros WP, WhatsApp, Contactos..."
                     style={{width:"100%",fontSize:12}} />
                 </div>
+                <div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Columna con nombre de la persona (encabezado exacto)</div>
+                  <input type="text" value={colNombrePersona} onChange={e=>setColNombrePersona(e.target.value)}
+                    placeholder="Ej: Nombre completo, first_name, Nombre..."
+                    style={{width:"100%",fontSize:12}} />
+                </div>
+                <div style={{display:"flex",alignItems:"flex-end"}}>
+                  <button className="btn btn-ghost btn-sm" style={{fontSize:11,width:"100%"}} onClick={verEncabezados}>
+                    🔍 Ver columnas disponibles
+                  </button>
+                </div>
                 <div style={{gridColumn:"1/-1",fontSize:10,color:"var(--muted)"}}>
-                  💡 Estos nombres deben coincidir exactamente con las pestañas de tu Google Sheet. La app leerá estas hojas para calcular países y remarketing directamente.
+                  💡 Usa "Ver columnas" para descubrir el nombre exacto de la columna con el nombre de la persona en tu hoja FB.
                 </div>
               </div>
             )}
