@@ -6813,18 +6813,33 @@ function RemarketingTable({ data, readOnly }) {
 
     if (tipo === "telefonos_csv") {
       if (!contactos.length) { alert("Sincroniza los datos primero para generar la lista."); return; }
-      // Siempre dos columnas: Nombre | Telefono
-      // Teléfono como texto puro — sin fórmulas, sin notación científica
-      const filas = contactos.map(c => `"${c.nombre}"\t"${c.tel}"`);
-      const csv = "Nombre\tTelefono\n" + filas.join("\n");
-      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      // Limpiar cada contacto antes de exportar
+      const limpios = contactos.map(c => {
+        // Teléfono: solo dígitos, sin p:, sin comillas
+        const tel = String(c.tel||"").replace(/[pP]:/g,"").replace(/\D/g,"");
+        // Nombre: sin comillas residuales, sin el fragmento p:NUM si quedó pegado
+        const nombre = String(c.nombre||"").replace(/["']/g,"").replace(/,?\s*[pP]:\d+$/,"").trim();
+        return { nombre, tel };
+      }).filter(c => c.tel.length >= 7);
+
+      // Exportar como Excel HTML — dos columnas reales, teléfono forzado a texto
+      let html = `<html><head><meta charset="UTF-8"></head><body><table>`;
+      html += `<tr><th>Nombre</th><th>Telefono</th></tr>`;
+      limpios.forEach(c => {
+        html += `<tr><td>${c.nombre}</td><td style="mso-number-format:'@'">${c.tel}</td></tr>`;
+      });
+      html += `</table></body></html>`;
+      const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = `remarketing_contactos_${fecha}.csv`; a.click();
+      a.download = `remarketing_contactos_${fecha}.xls`; a.click();
 
     } else if (tipo === "telefonos_txt") {
       if (!contactos.length) { alert("Sincroniza los datos primero para generar la lista."); return; }
-      // TXT: número completo por línea — listo para copiar y pegar en cualquier plataforma masivos
-      const blob = new Blob([contactos.map(c => c.tel).join("\n")], { type: "text/plain;charset=utf-8;" });
+      // Solo números limpios, uno por línea
+      const tels = contactos
+        .map(c => String(c.tel||"").replace(/[pP]:/g,"").replace(/\D/g,""))
+        .filter(t => t.length >= 7);
+      const blob = new Blob([tels.join("\n")], { type: "text/plain;charset=utf-8;" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
       a.download = `remarketing_telefonos_${fecha}.txt`; a.click();
 
@@ -7086,14 +7101,28 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
 
     // Función para extraer teléfono limpio — maneja formatos:
     // "593991234567", "+593 99 123 4567", "p:593991234567", "Nombre,p:593991234567"
+    function limpiarCelda(raw) {
+      // Quitar comillas que quedan del parseo CSV
+      return String(raw || "").replace(/^["']|["']$/g, "").trim();
+    }
+
     function extraerTelefono(raw) {
       if (!raw) return "";
-      const s = String(raw);
-      // Formato con p: → extraer solo el número después de p:
-      const mP = s.match(/p:(\d+)/);
+      const s = limpiarCelda(raw);
+      // Formato con p: → extraer SOLO dígitos después de p:
+      const mP = s.match(/[pP]:(\d+)/);
       if (mP) return mP[1];
-      // Limpiar y retornar solo dígitos
-      return s.replace(/[\s\-\(\)\+\.]/g, "");
+      // Solo dígitos
+      const soloDigitos = s.replace(/\D/g, "");
+      return soloDigitos;
+    }
+
+    function extraerNombre(rawStr) {
+      const s = limpiarCelda(rawStr);
+      // Formato "Nombre,p:NUM" o "Nombre p:NUM"
+      const mSep = s.match(/^(.+?)[,\s]+[pP]:\d+/);
+      if (mSep) return mSep[1].replace(/["']/g,"").trim();
+      return "";
     }
 
     // Procesar cada registro FB
@@ -7107,16 +7136,13 @@ function CapturaWPPanel({ client, onUpdate, readOnly }) {
       const telNorm = extraerTelefono(rawStr);
       if (!telNorm || telNorm.length < 7) continue;
 
-      // Extraer nombre: si la celda tiene formato "Nombre,p:NUM" → parte antes de ",p:"
-      // Si hay columna separada de nombre → usarla
-      // Si no hay nada → vacío
+      // Nombre: columna configurada > extraído de la misma celda > vacío
       let nombre = "";
-      if (rawStr.includes(",p:") || rawStr.includes(", p:")) {
-        // Nombre está antes del separador ,p:
-        nombre = rawStr.split(/,\s*p:/)[0].trim();
-      } else if (colNombreFB >= 0 && colNombreFB !== telColFB) {
-        nombre = (row[colNombreFB] || "").trim();
+      if (colNombreFB >= 0 && colNombreFB !== telColFB) {
+        nombre = limpiarCelda(row[colNombreFB] || "");
       }
+      if (!nombre) nombre = extraerNombre(rawStr);
+
       const pais = detectarPais(telNorm);
       if (!mapaP[pais]) mapaP[pais] = { total_form: 0, total_wp: 0 };
       mapaP[pais].total_form++;
