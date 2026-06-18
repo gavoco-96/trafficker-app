@@ -6017,11 +6017,11 @@ function FacebookPanel({ client, onUpdate }) {
         const d    = await res.json();
         if (d.error) { resultados.push({ id: cuenta.id, nombre: cuenta.nombre, error: d.error.message }); continue; }
         const gastado  = parseFloat(d.amount_spent || 0) / 100;  // gasto total acumulado
-        const umbral   = parseFloat(d.spend_cap   || 0) / 100;   // umbral de cobro (ej. $900)
+        const umbral   = parseFloat(d.spend_cap   || 0) / 100;   // umbral de gasto (puede ser 0 si no está configurado)
         const deuda    = parseFloat(d.balance      || 0) / 100;   // monto pendiente de cobro (deuda actual)
-        // pctUsado: qué % del umbral de cobro se ha acumulado como deuda
+        // pctUsado: solo si hay umbral configurado
         const pctUsado = umbral > 0 ? (deuda / umbral * 100) : null;
-        const restante = umbral > 0 ? umbral - deuda : null;      // cuánto falta para el próximo cobro
+        const restante = umbral > 0 ? umbral - deuda : null;
         const proximoCobro = null;
         const diasParaCobro = null;
         resultados.push({
@@ -6320,65 +6320,69 @@ function FacebookPanel({ client, onUpdate }) {
 
         {billingData && !loadingBilling && billingData.map((d,i) => (
           <div key={i} style={{padding:"12px 14px",borderRadius:10,background:"var(--surface2)",marginBottom:8,
-            border:`1px solid ${d.error?"rgba(239,68,68,.3)":d.pctUsado>=90?"rgba(239,68,68,.4)":d.pctUsado>=75?"rgba(255,222,89,.4)":"var(--border)"}`}}>
+            border:`1px solid ${d.error?"rgba(239,68,68,.3)":d.deuda>500?"rgba(239,68,68,.4)":d.deuda>200?"rgba(255,222,89,.3)":"var(--border)"}`}}>
             {d.error ? (
               <div style={{fontSize:12,color:"var(--red)"}}>❌ {d.nombre}: {d.error}</div>
             ) : (
               <>
+                {/* Header: nombre + estado */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <div>
                     <span style={{fontWeight:600,fontSize:13}}>{d.nombre}</span>
                     {d.cuentaNombre !== d.nombre && <span style={{fontSize:11,color:"var(--muted)",marginLeft:6}}>({d.cuentaNombre})</span>}
                   </div>
-                  {/* Estado de la cuenta */}
-                  {d.pctUsado !== null && (
-                    <span style={{fontSize:11,padding:"2px 10px",borderRadius:10,fontWeight:700,
-                      background:d.pctUsado>=90?"rgba(239,68,68,.15)":d.pctUsado>=75?"rgba(255,222,89,.1)":"rgba(16,185,129,.1)",
-                      color:d.pctUsado>=90?"var(--red)":d.pctUsado>=75?"var(--amber)":"var(--green)"}}>
-                      {d.pctUsado>=90?"🔴 Cobro inminente":d.pctUsado>=75?"🟡 Cerca del umbral":"🟢 OK"} · {fmtNum(d.pctUsado,1)}%
-                    </span>
-                  )}
+                  <span style={{fontSize:11,padding:"2px 10px",borderRadius:10,fontWeight:700,
+                    background:d.deuda>500?"rgba(239,68,68,.15)":d.deuda>200?"rgba(255,222,89,.1)":"rgba(16,185,129,.1)",
+                    color:d.deuda>500?"var(--red)":d.deuda>200?"var(--amber)":"var(--green)"}}>
+                    {d.deuda>500?"🔴 Cobro inminente":d.deuda>200?"🟡 Acumulando":"🟢 Normal"}
+                  </span>
                 </div>
 
-                {/* Barra de deuda vs umbral de cobro */}
-                {d.pctUsado !== null && (
-                  <div style={{marginBottom:10}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
-                      <span style={{color:"var(--muted)"}}>Deuda acumulada</span>
-                      <span style={{color:"var(--muted)"}}>Umbral de cobro</span>
+                {/* Deuda pendiente — siempre visible si hay deuda */}
+                {d.deuda > 0 ? (
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                    padding:"10px 12px",borderRadius:8,marginBottom:8,
+                    background:d.deuda>500?"rgba(239,68,68,.08)":d.deuda>200?"rgba(255,222,89,.06)":"rgba(0,74,173,.06)",
+                    border:`1px solid ${d.deuda>500?"rgba(239,68,68,.3)":d.deuda>200?"rgba(255,222,89,.3)":"rgba(0,74,173,.2)"}`}}>
+                    <div>
+                      <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>💳 Deuda pendiente con Facebook</div>
+                      <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:22,
+                        color:d.deuda>500?"var(--red)":d.deuda>200?"var(--amber)":"var(--text)"}}>
+                        ${fmtNum(d.deuda,2)}
+                      </div>
                     </div>
-                    <div style={{height:10,background:"rgba(255,255,255,.08)",borderRadius:5,overflow:"hidden"}}>
-                      <div style={{height:"100%",width:Math.min(d.pctUsado,100)+"%",borderRadius:5,transition:"width .5s",
+                    {d.umbral > 0 && (
+                      <div style={{textAlign:"right",fontSize:11,color:"var(--muted)"}}>
+                        <div>Umbral de cobro</div>
+                        <div style={{fontFamily:"var(--mono)",fontSize:13,color:"var(--text)",fontWeight:600}}>${fmtNum(d.umbral,2)}</div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{fontSize:12,color:"var(--green)",padding:"6px 10px",background:"rgba(16,185,129,.06)",borderRadius:6,marginBottom:8}}>
+                    ✅ Sin deuda pendiente
+                  </div>
+                )}
+
+                {/* Barra de progreso — solo si hay umbral (spend_cap) configurado */}
+                {d.pctUsado !== null && d.deuda > 0 && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:Math.min(d.pctUsado,100)+"%",borderRadius:4,transition:"width .5s",
                         background:d.pctUsado>=90?"var(--red)":d.pctUsado>=75?"var(--amber)":"#4d9fff"}}/>
                     </div>
-                    <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
-                      <span style={{fontFamily:"var(--mono)",fontSize:13,fontWeight:700,
-                        color:d.pctUsado>=90?"var(--red)":d.pctUsado>=75?"var(--amber)":"var(--text)"}}>
-                        ${fmtNum(d.deuda,2)} <span style={{fontSize:10,color:"var(--muted)",fontWeight:400}}>pendiente</span>
-                      </span>
-                      <span style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--muted)"}}>
-                        ${fmtNum(d.umbral,2)} <span style={{fontSize:10}}>→ cobro automático</span>
-                      </span>
+                    <div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>
+                      {d.pctUsado.toFixed(1)}% del umbral · {d.restante > 0
+                        ? `Faltan $${fmtNum(d.restante,2)} para el cobro automático`
+                        : "⚠️ Umbral superado — cobro en proceso"}
                     </div>
                   </div>
                 )}
 
-                {/* Falta para cobro */}
-                {d.restante !== null && d.restante > 0 && (
-                  <div style={{fontSize:12,color:"var(--muted)",padding:"6px 10px",background:"rgba(0,0,0,.2)",borderRadius:6}}>
-                    Faltan <span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--text)"}}>${fmtNum(d.restante,2)}</span> para que Facebook realice el cobro automático
-                  </div>
-                )}
-                {d.restante !== null && d.restante <= 0 && (
-                  <div style={{fontSize:12,color:"var(--red)",padding:"6px 10px",background:"rgba(239,68,68,.08)",borderRadius:6}}>
-                    ⚠️ Se superó el umbral — cobro pendiente de procesamiento
-                  </div>
-                )}
-
-                {/* Gasto total acumulado */}
+                {/* Gasto histórico total */}
                 {d.gastado > 0 && (
-                  <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>
-                    Gasto total acumulado (historial): <span style={{fontFamily:"var(--mono)",color:"var(--text)"}}>${fmtNum(d.gastado,2)}</span>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>
+                    Gasto total histórico (toda la cuenta): <span style={{fontFamily:"var(--mono)",color:"var(--text)"}}>${fmtNum(d.gastado,2)}</span>
                   </div>
                 )}
               </>
