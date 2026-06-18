@@ -1,5 +1,4 @@
-// Trafficker Pro v2.1 — build 18/06/2026
-import { useState, useEffect, useCallback, useRef, Component } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL || "https://rckcrrdkxmdeexkuuqie.supabase.co";
@@ -4300,7 +4299,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     const anotaciones = (client.cplAnotaciones||[]).filter(a=>a.fecha===r.date);
     // Posición fija: aparece a la derecha del cursor, ajustada para no salirse de pantalla
     const TW = 260, TH = 180;
-    const left = Math.min(tooltipPos.x + 12, (typeof window !== "undefined" ? window.innerWidth : 1200) - TW - 16);
+    const left = Math.min(tooltipPos.x + 12, window.innerWidth - TW - 16);
     const top  = Math.max(tooltipPos.y - TH/2, 8);
     return (
       <div style={{position:"fixed", left, top, zIndex:9999,
@@ -6756,7 +6755,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
               Asegúrate de haber desplegado el archivo <code>api/telegram-webhook.js</code> en Vercel.
             </div>
             <div style={{fontSize:12,fontFamily:"var(--mono)",background:"rgba(0,0,0,.3)",padding:"6px 10px",borderRadius:6,marginBottom:12,wordBreak:"break-all",color:"var(--accent2)"}}>
-              {typeof window !== "undefined" ? window.location.origin : "https://trafficker-app.vercel.app"}/api/telegram-webhook
+              {window.location.origin}/api/telegram-webhook
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
               <button className="btn btn-primary btn-sm" style={{background:"rgba(124,58,237,.8)"}}
@@ -6951,7 +6950,7 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     const result = await detectarChatId(token);
     if (result.ok) {
       if (result.chats.length === 1) {
-        updateDest(chatIds[0].id, "chatId", result.chats[0].id);
+        setChatId(result.chats[0].id);
         show("✓ Chat ID detectado: " + result.chats[0].id + " (" + result.chats[0].nombre + ")", "ok");
       } else {
         setChatsEncontrados(result.chats);
@@ -9901,7 +9900,7 @@ function LinksPanel() {
   const [detalle, setDetalle]     = useState(null);
   const { show, el: toastEl }     = useToast();
 
-  const BASE_URL = typeof window !== "undefined" ? window.location.origin : "https://trafficker-app.vercel.app";
+  const BASE_URL = window.location.origin;
 
   async function cargar() {
     setLoading(true);
@@ -11774,30 +11773,6 @@ function LoginScreen({ onLogin, loading }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
-// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
-class ErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
-  componentDidCatch(e, info) { console.error("App crash:", e, info); }
-  render() {
-    if (this.state.error) {
-      return (
-        <div style={{padding:"2rem",fontFamily:"monospace",background:"#0a0f1e",color:"#fff",minHeight:"100vh"}}>
-          <div style={{fontSize:24,marginBottom:16}}>⚠️ Error de aplicación</div>
-          <div style={{color:"#ef4444",fontSize:14,marginBottom:12}}>{String(this.state.error)}</div>
-          <pre style={{fontSize:12,color:"#888",whiteSpace:"pre-wrap",maxWidth:800}}>
-            {this.state.error?.stack?.slice(0,600)}
-          </pre>
-          <button onClick={()=>window.location.reload()} style={{marginTop:16,padding:"8px 20px",background:"#004aad",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>
-            Recargar
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 export default function App() {
   const [session, setSession] = useState(null);
   const [clients, setClients] = useState([]);
