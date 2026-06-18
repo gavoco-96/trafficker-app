@@ -11184,273 +11184,207 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 }
 
 // ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
-function ClientDashboard({ client, onLogout, banners, onUpdate }) {
-  const [tab, setTab] = useState("hermes");
-  const [period, setPeriod] = useState("mtd");
-  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+// ─── NOTIFICACIONES DEL CLIENTE ───────────────────────────────────────────────
+function getClientNotificaciones(client) {
+  const notifs = [];
+  const hoy = new Date();
+  const records = client.records || [];
 
-  // Defensivo: si client no está listo, mostrar loading
-  if (!client || !client.id) return <div className="app" style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh" }}><div style={{ color:"var(--muted)" }}>Cargando...</div></div>;
+  // CPL subió más del 20% vs ayer
+  if (records.length >= 2) {
+    const ult = records[records.length-1];
+    const ant = records[records.length-2];
+    const cplHoy = parseFloat(ult.inversion)>0&&parseFloat(ult.resultados||ult.formularios||ult.leads)>0
+      ? parseFloat(ult.inversion)/parseFloat(ult.resultados||ult.formularios||ult.leads) : 0;
+    const cplAnt = parseFloat(ant.inversion)>0&&parseFloat(ant.resultados||ant.formularios||ant.leads)>0
+      ? parseFloat(ant.inversion)/parseFloat(ant.resultados||ant.formularios||ant.leads) : 0;
+    if (cplHoy>0 && cplAnt>0 && (cplHoy-cplAnt)/cplAnt > 0.2) {
+      notifs.push({ id:"cpl-up", tipo:"err", icon:"📈", texto:`CPL subió ${Math.round((cplHoy-cplAnt)/cplAnt*100)}% vs ayer ($${fmtNum(cplHoy,2)} vs $${fmtNum(cplAnt,2)})` });
+    }
+    if (cplHoy>0 && cplAnt>0 && (cplAnt-cplHoy)/cplAnt > 0.2) {
+      notifs.push({ id:"cpl-down", tipo:"green", icon:"📉", texto:`CPL bajó ${Math.round((cplAnt-cplHoy)/cplAnt*100)}% vs ayer ($${fmtNum(cplHoy,2)} vs $${fmtNum(cplAnt,2)}) 🎉` });
+    }
+  }
 
-  const isApollo = client.producto?.startsWith("APOLLO");
-  const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
-  const t = buildTotals(client.niche, rows);
-  const isWA = client.niche === "whatsapp", isWeb = client.niche === "web", isLaunch = client.niche === "lanzamiento";
+  // Cuota próxima a vencer
+  (client.contratos||[]).forEach((ct,ci) => {
+    (ct.cuotas||[]).forEach((c,qi) => {
+      if (c.pagado || !c.monto || !c.fecha) return;
+      const dias = Math.ceil((new Date(c.fecha+"T12:00:00")-hoy)/86400000);
+      if (dias < 0) notifs.push({ id:`cuota-${ci}-${qi}`, tipo:"err", icon:"💰", texto:`Cuota de pago VENCIDA hace ${Math.abs(dias)} días ($${c.monto})` });
+      else if (dias <= 5) notifs.push({ id:`cuota-v-${ci}-${qi}`, tipo:"amber", icon:"⏰", texto:`Cuota de pago vence en ${dias} días ($${c.monto})` });
+    });
+  });
+
+  // Misión avanza
+  const duracion = client.apolloData?.duracion || 21;
+  const fechaBase = client.apolloData?.fechaInicioMision || client.contratos?.[0]?.fechaInicio;
+  if (fechaBase) {
+    const dias = Math.floor((hoy-new Date(fechaBase+"T00:00:00"))/86400000);
+    const restantes = duracion - dias;
+    if (restantes <= 3 && restantes >= 0) notifs.push({ id:"mision-end", tipo:"amber", icon:"🚀", texto:`La misión termina en ${restantes} día${restantes!==1?"s":""} — ¡recta final!` });
+  }
+
+  return notifs.slice(0, 5);
+}
+
+function ClientNotificationBell({ client }) {
+  const [open, setOpen] = useState(false);
+  const notifs = getClientNotificaciones(client);
+  const nuevas = notifs.length;
   return (
-    <div className="app">
-      <div className="sidebar">
-        <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
-        <div className="nav">
-          <div className="nav-label">Vistas</div>
-          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura", "calidad"] : ["estudio"]), "embudos", "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : v === "calidad" ? "⭐ Calidad" : v === "embudos" ? "🎯 Embudos" : "📚 Historial"}</div>)}
-        </div>
-        <div className="sidebar-footer">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
-          <button className="btn btn-ghost btn-sm btn-full" onClick={onLogout}>Cerrar sesión</button>
-        </div>
+    <div style={{position:"relative"}}>
+      <div onClick={()=>setOpen(v=>!v)} style={{cursor:"pointer",position:"relative",width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,background:open?"var(--surface2)":"transparent"}}>
+        <span style={{fontSize:18}}>🔔</span>
+        {nuevas>0 && <span style={{position:"absolute",top:4,right:4,background:"var(--red)",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{nuevas}</span>}
       </div>
-      <div className="main">
-        <div className="topbar">
-          <div className="topbar-title">
-            {tab === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : tab === "captura" ? "📊 Captura WP" : tab === "antecedentes" ? "📚 Historial" : tab === "estudio" ? "🎬 Estudio" : tab === "embudos" ? "🎯 Embudos" : "Histórico de pauta"}
-          </div>
-          <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
+      {open && (
+        <div style={{position:"absolute",right:0,top:"calc(100% + 6px)",width:320,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,boxShadow:"0 8px 32px rgba(0,0,0,.4)",zIndex:200,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid var(--border)",fontWeight:600,fontSize:13}}>Notificaciones</div>
+          {notifs.length===0 ? (
+            <div style={{padding:"1rem",textAlign:"center",fontSize:12,color:"var(--muted)"}}>✅ Todo en orden</div>
+          ) : notifs.map(n => (
+            <div key={n.id} style={{padding:"10px 14px",borderBottom:"1px solid var(--border)",display:"flex",gap:10,alignItems:"flex-start"}}>
+              <span style={{fontSize:16,flexShrink:0}}>{n.icon}</span>
+              <span style={{fontSize:12,color:n.tipo==="err"?"var(--red)":n.tipo==="green"?"var(--green)":n.tipo==="amber"?"var(--amber)":"var(--text)"}}>{n.texto}</span>
+            </div>
+          ))}
         </div>
-        <div className="content">
-          {/* Banner de comunicaciones — siempre visible en la parte superior */}
-          {banners && banners.length > 0 && <BannerViewer banners={banners} />}
-          {/* Carroza visible en todas las tabs EXCEPTO hermes */}
-          {tab !== "hermes" && <HermesProgressBar client={client} onUpdate={() => {}} readOnly={true} />}
-          {tab === "hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate || (() => {})} />}
-          {tab === "estudio" && <EstudioPanel client={client} onUpdate={onUpdate || (() => {})} role="client" />}
-          {tab === "captura" && client.capturaConfig?.lastData && (
-            <CapturaWPPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
-          )}
-          {tab === "captura" && !client.capturaConfig?.lastData && (
-            <div className="empty"><div style={{ fontSize:28, opacity:.3 }}>📊</div><div style={{ marginTop:8 }}>El análisis de captura estará disponible pronto.</div></div>
-          )}
-          {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />}
-          {tab === "embudos" && <EmbудоPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />}
-          {tab === "resumen" && <>
-            {banners && banners.length > 0 && (
-              <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
-                <BannerViewer banners={banners} />
+      )}
+    </div>
+  );
+}
+
+// ─── PANTALLA DE INICIO DEL CLIENTE ───────────────────────────────────────────
+function ClientWelcomeScreen({ client, banners, onGoToTab }) {
+  const hoy      = new Date();
+  const hora     = hoy.getHours();
+  const saludo   = hora < 12 ? "Buenos días" : hora < 19 ? "Buenas tardes" : "Buenas noches";
+  const records  = client.records || [];
+  const allRows  = filterByPeriod(records, "mtd", "", "");
+  const t        = buildTotals(client.niche, allRows);
+  const ult      = records[records.length-1];
+  const ant      = records.length>=2 ? records[records.length-2] : null;
+  const isApollo = client.producto?.startsWith("APOLLO");
+
+  // CPL hoy vs ayer
+  const cplHoy = ult && parseFloat(ult.inversion)>0 && parseFloat(ult.resultados||ult.formularios||ult.leads)>0
+    ? parseFloat(ult.inversion)/parseFloat(ult.resultados||ult.formularios||ult.leads) : null;
+  const cplAnt = ant && parseFloat(ant.inversion)>0 && parseFloat(ant.resultados||ant.formularios||ant.leads)>0
+    ? parseFloat(ant.inversion)/parseFloat(ant.resultados||ant.formularios||ant.leads) : null;
+  const cplDelta = cplHoy&&cplAnt ? ((cplHoy-cplAnt)/cplAnt*100) : null;
+
+  // Misión
+  const duracion  = client.apolloData?.duracion || 21;
+  const fechaBase = client.apolloData?.fechaInicioMision || client.contratos?.[0]?.fechaInicio;
+  const diasMision = fechaBase ? Math.max(0,Math.floor((hoy-new Date(fechaBase+"T00:00:00"))/86400000)) : null;
+  const pctMision  = diasMision!==null ? Math.min(100,diasMision/duracion*100) : null;
+  const restMision = diasMision!==null ? Math.max(0,duracion-diasMision) : null;
+
+  // Captura
+  const cap = client.capturaConfig?.lastData;
+  const pctCap = cap?.total_form>0 ? cap.total_wp/cap.total_form*100 : null;
+
+  const notifs = getClientNotificaciones(client);
+
+  return (
+    <div>
+      {banners?.length>0 && <div style={{marginBottom:"1.25rem"}}><BannerViewer banners={banners}/></div>}
+
+      {/* Saludo */}
+      <div style={{marginBottom:"1.5rem"}}>
+        <div style={{fontSize:22,fontWeight:700}}>{saludo}, {client.name.split(" ")[0]} 👋</div>
+        <div style={{fontSize:13,color:"var(--muted)",marginTop:4}}>{hoy.toLocaleDateString("es-EC",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+      </div>
+
+      {/* Alertas si las hay */}
+      {notifs.length>0 && (
+        <div style={{marginBottom:"1.5rem",display:"flex",flexDirection:"column",gap:8}}>
+          {notifs.map(n=>(
+            <div key={n.id} style={{display:"flex",gap:10,alignItems:"center",padding:"10px 14px",borderRadius:10,
+              background:n.tipo==="err"?"rgba(239,68,68,.08)":n.tipo==="green"?"rgba(16,185,129,.08)":"rgba(255,222,89,.06)",
+              border:`1px solid ${n.tipo==="err"?"rgba(239,68,68,.25)":n.tipo==="green"?"rgba(16,185,129,.25)":"rgba(255,222,89,.2)"}`}}>
+              <span style={{fontSize:18}}>{n.icon}</span>
+              <span style={{fontSize:13,color:n.tipo==="err"?"var(--red)":n.tipo==="green"?"var(--green)":"var(--amber)"}}>{n.texto}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Métricas clave — 3 cards grandes */}
+      <div className="grid3" style={{marginBottom:"1.5rem",gap:"1rem"}}>
+        {/* Misión */}
+        {pctMision!==null && (
+          <div className="card" style={{padding:"1.25rem",cursor:"pointer",borderColor:"rgba(77,159,255,.3)"}} onClick={()=>onGoToTab("hermes")}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>🚀 {isApollo?"APOLLO":"Misión"}</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:32,color:"var(--accent)"}}>{Math.round(pctMision)}%</div>
+            <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{diasMision}d transcurridos · {restMision}d restantes</div>
+            <div style={{marginTop:10,height:4,background:"rgba(255,255,255,.08)",borderRadius:2}}>
+              <div style={{height:"100%",width:pctMision+"%",background:"var(--accent)",borderRadius:2,transition:"width .5s"}}/>
+            </div>
+          </div>
+        )}
+
+        {/* CPL */}
+        {cplHoy!==null ? (
+          <div className="card" style={{padding:"1.25rem",cursor:"pointer"}} onClick={()=>onGoToTab("hermes")}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>💰 CPL último día</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:32,color:cplDelta===null?"var(--text)":cplDelta>20?"var(--red)":cplDelta<-20?"var(--green)":"var(--amber)"}}>
+              ${fmtNum(cplHoy,2)}
+            </div>
+            {cplDelta!==null && (
+              <div style={{fontSize:12,color:cplDelta>0?"var(--red)":"var(--green)",marginTop:4}}>
+                {cplDelta>0?"▲":"▼"} {Math.abs(cplDelta).toFixed(1)}% vs día anterior
               </div>
             )}
-            <div style={{ marginBottom: "1.25rem" }}><div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Inversión del período</div><div style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--mono)" }}>${t.inversion || "0.00"}</div><div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{rows.length} días con datos</div></div>
-            <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Alcance" value={t.alcance || "—"} /><MetricCard label="CPM" value={"$" + (t.cpm || "—")} /><MetricCard label="CPC" value={"$" + (t.cpc || "—")} /><MetricCard label="CTR" value={(t.ctr || "—") + "%"} /></div>
-            {isWA && <div className="grid4"><MetricCard label="Leads" value={t.leads || "—"} /><MetricCard label="Contactados" value={t.contactados || "—"} /><MetricCard label="Ventas" value={t.ventas || "—"} /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
-            {isWeb && <div className="grid4"><MetricCard label="Sesiones" value={t.sesiones || "—"} /><MetricCard label="Compras" value={t.compras || "—"} /><MetricCard label="Ingresos" value={"$" + (t.ingreso || "0")} highlight /><MetricCard label="ROAS" value={(t.roas || "—") + "x"} highlight /></div>}
-            {isLaunch && <><div className="grid4">
-              <MetricCard label="Potenciales" value={t.clientesPotenciales || "—"} />
-              <MetricCard label="Formularios" value={t.formularios || "—"} />
-              <MetricCard label="Resultados" value={t.resultados || "—"} highlight />
-              <MetricCard label="CPA" value={"$" + (t.cpa || "—")} />
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{ult?.date}</div>
+          </div>
+        ) : (
+          <div className="card" style={{padding:"1.25rem",cursor:"pointer"}} onClick={()=>onGoToTab("hermes")}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>📊 Inversión del mes</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:32}}>${t.inversion||"0,00"}</div>
+            <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{allRows.length} días registrados</div>
+          </div>
+        )}
+
+        {/* Captura WP */}
+        {pctCap!==null ? (
+          <div className="card" style={{padding:"1.25rem",cursor:"pointer"}} onClick={()=>onGoToTab("captura")}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>📱 Captura FB→WP</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:32,color:pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)"}}>
+              {fmtNum(pctCap,1)}%
             </div>
-            <div className="grid3" style={{ marginTop: "0.75rem" }}>
-              <MetricCard label="Costo/formulario" value={"$" + (t.costo_formulario || "—")} />
-              <MetricCard label="Ventas" value={t.ventas || "—"} />
-              <MetricCard label="Ingresos" value={"$" + (t.ingreso || "0")} highlight />
-            </div></>}
-            {rows.length > 1 && <div className="card" style={{ marginTop: "1.25rem" }}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color} /><div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--muted)", marginTop: 6 }}><span>{rows[0].date}</span><span>{rows[rows.length - 1].date}</span></div></div>}
-          </>}
-          {tab === "antecedentes" && (
-            <div>
-              <MisionesPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
-              <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
-                <AntecedentesPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />
-              </div>
+            <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{fmtNum(cap.total_wp)} en WP de {fmtNum(cap.total_form)} leads</div>
+          </div>
+        ) : (
+          <div className="card" style={{padding:"1.25rem",cursor:"pointer",opacity:.6}} onClick={()=>onGoToTab("captura")}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,textTransform:"uppercase",letterSpacing:".06em"}}>📱 Captura FB→WP</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:32,color:"var(--muted)"}}>—</div>
+            <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>Datos próximamente</div>
+          </div>
+        )}
+      </div>
+
+      {/* Accesos rápidos */}
+      <div style={{marginBottom:"1rem"}}>
+        <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Accesos rápidos</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {[
+            { tab:"hermes", label: isApollo?"🚀 APOLLO":"✦ HERMES", desc:"Misión y KPIs" },
+            { tab:"captura", label:"📊 Captura WP", desc:"FB → WhatsApp" },
+            { tab:"embudos", label:"🎯 Embudos", desc:"Tracking completo" },
+            { tab:"antecedentes", label:"📚 Historial", desc:"Misiones pasadas" },
+          ].map(a => (
+            <div key={a.tab} onClick={()=>onGoToTab(a.tab)} style={{padding:"10px 16px",borderRadius:10,background:"var(--surface2)",border:"1px solid var(--border)",cursor:"pointer",transition:"border-color .15s",minWidth:120}} onMouseEnter={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseLeave={e=>e.currentTarget.style.borderColor="var(--border)"}>
+              <div style={{fontWeight:600,fontSize:13}}>{a.label}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{a.desc}</div>
             </div>
-          )}
+          ))}
         </div>
       </div>
     </div>
   );
 }
-
-// ─── CAMPAÑAS MASIVAS ────────────────────────────────────────────────────────
-function CampanasPanel({ clients }) {
-  const [campanas, setCampanas] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [sending, setSending] = useState(null); // id de campaña enviando
-  const { show, el: toastEl } = useToast();
-
-  const blank = {
-    id: "", nombre: "", mensaje: "", destinatarios: "todos",
-    clientesSeleccionados: [], programado: false,
-    fechaEnvio: new Date().toISOString().slice(0,10),
-    horaEnvio: "08:00", estado: "borrador"
-  };
-  const [form, setForm] = useState({ ...blank });
-  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
-
-  function toggleCliente(id) {
-    setForm(p => {
-      const sel = p.clientesSeleccionados;
-      return { ...p, clientesSeleccionados: sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id] };
-    });
-  }
-
-  function getDestinatarios(campana) {
-    if (campana.destinatarios === "todos") return clients.filter(c => c.tgConfig?.token && c.tgConfig?.chatId);
-    return clients.filter(c => campana.clientesSeleccionados.includes(c.id) && c.tgConfig?.token && c.tgConfig?.chatId);
-  }
-
-  function saveCampana() {
-    if (!form.nombre || !form.mensaje) return show("Completa nombre y mensaje", "err");
-    if (form.destinatarios === "seleccionados" && !form.clientesSeleccionados.length) return show("Selecciona al menos un cliente", "err");
-    const nueva = { ...form, id: form.id || "camp" + Date.now(), estado: "borrador" };
-    setCampanas(prev => {
-      const idx = prev.findIndex(c => c.id === nueva.id);
-      return idx >= 0 ? prev.map((c, i) => i === idx ? nueva : c) : [...prev, nueva];
-    });
-    setForm({ ...blank });
-    setShowForm(false);
-    show("✓ Campaña guardada", "ok");
-  }
-
-  async function sendCampana(campana) {
-    const dest = getDestinatarios(campana);
-    if (!dest.length) return show("Ningún destinatario tiene Telegram configurado", "err");
-    setSending(campana.id);
-    let ok = 0; let err = 0;
-    for (const client of dest) {
-      try {
-        const r = await sendTelegram(client.tgConfig.token, client.tgConfig.chatId, campana.mensaje);
-        if (r.ok) ok++; else err++;
-      } catch { err++; }
-    }
-    setCampanas(prev => prev.map(c => c.id === campana.id ? { ...c, estado: "enviada", ultimoEnvio: new Date().toLocaleString("es-EC") } : c));
-    show(`✓ Enviado: ${ok} clientes${err > 0 ? ` · ${err} errores` : ""}`, ok > 0 ? "ok" : "err");
-    setSending(null);
-  }
-
-  function editCampana(c) { setForm({ ...c }); setShowForm(true); }
-  function deleteCampana(id) { if (window.confirm("¿Eliminar esta campaña?")) setCampanas(prev => prev.filter(c => c.id !== id)); }
-
-  const estadoBadge = (e) => e === "enviada" ? "badge-paid" : e === "programada" ? "badge-progress" : "badge-pending";
-
-  return (
-    <>
-      {toastEl}
-      <div>
-        <div className="sec-header">
-          <div>
-            <div className="sec-title">Campañas de mensajería</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Envía mensajes a grupos de clientes a la vez</div>
-          </div>
-          <button className="btn btn-primary btn-sm" onClick={() => { setForm({ ...blank }); setShowForm(true); }}>+ Nueva campaña</button>
-        </div>
-
-        {/* FORMULARIO */}
-        {showForm && (
-          <div className="card" style={{ borderColor: "rgba(124,58,237,.4)" }}>
-            <div className="card-title">{form.id ? "Editar campaña" : "Nueva campaña"}</div>
-            <div className="form-row">
-              <div className="field"><label>Nombre de la campaña</label><input type="text" value={form.nombre} onChange={e => f("nombre", e.target.value)} placeholder="Ej: Reporte semanal junio" /></div>
-              <div className="field"><label>Destinatarios</label>
-                <select value={form.destinatarios} onChange={e => f("destinatarios", e.target.value)}>
-                  <option value="todos">Todos los clientes con Telegram</option>
-                  <option value="seleccionados">Clientes especificos</option>
-                </select>
-              </div>
-            </div>
-
-            {form.destinatarios === "seleccionados" && (
-              <div className="field" style={{ marginBottom: "1rem" }}>
-                <label>Selecciona clientes</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                  {clients.map(c => {
-                    const tgOk = !!(c.tgConfig?.token && c.tgConfig?.chatId);
-                    const sel = form.clientesSeleccionados.includes(c.id);
-                    return (
-                      <div key={c.id}
-                        className={"fb-chip " + (sel ? "active" : "")}
-                        style={{ opacity: tgOk ? 1 : 0.4 }}
-                        onClick={() => tgOk && toggleCliente(c.id)}>
-                        {sel ? "✓ " : ""}{c.name}
-                        {!tgOk && <span style={{ fontSize: 10, marginLeft: 4, color: "var(--red)" }}>sin TG</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="field" style={{ marginBottom: "1rem" }}>
-              <label>Mensaje</label>
-              <textarea value={form.mensaje} onChange={e => f("mensaje", e.target.value)}
-                placeholder="Escribe el mensaje que recibirán los clientes..." style={{ minHeight: 120 }} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                {form.destinatarios === "todos"
-                  ? `Se enviara a ${clients.filter(c => c.tgConfig?.token && c.tgConfig?.chatId).length} clientes con Telegram configurado`
-                  : `Se enviara a ${form.clientesSeleccionados.length} clientes seleccionados`}
-              </div>
-            </div>
-
-            <div className="form-row" style={{ marginBottom: "1rem" }}>
-              <label style={{ fontSize: 12, color: "var(--muted)", fontWeight: 500, textTransform: "uppercase", letterSpacing: ".06em", gridColumn: "1/-1", marginBottom: 4 }}>
-                <input type="checkbox" checked={form.programado} onChange={e => f("programado", e.target.checked)} style={{ width: 14, height: 14, marginRight: 6, accentColor: "var(--accent)" }} />
-                Programar envio para mas tarde
-              </label>
-              {form.programado && <>
-                <div className="field" style={{ marginBottom: 0 }}><label>Fecha</label><input type="date" value={form.fechaEnvio} onChange={e => f("fechaEnvio", e.target.value)} /></div>
-                <div className="field" style={{ marginBottom: 0 }}><label>Hora (Quito)</label><input type="time" value={form.horaEnvio} onChange={e => f("horaEnvio", e.target.value)} /></div>
-              </>}
-            </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="btn btn-primary btn-sm" onClick={saveCampana}>Guardar campaña</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>Cancelar</button>
-            </div>
-          </div>
-        )}
-
-        {/* LISTA DE CAMPAÑAS */}
-        {campanas.length === 0 && !showForm && (
-          <div className="empty"><div style={{ fontSize: 28, marginBottom: 8, opacity: .3 }}>📣</div><div>Sin campañas. Crea la primera.</div></div>
-        )}
-
-        {campanas.map(c => {
-          const dest = getDestinatarios(c);
-          const isSending = sending === c.id;
-          return (
-            <div key={c.id} className="card" style={{ marginBottom: "0.75rem" }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{c.nombre}</div>
-                    <span className={"badge " + estadoBadge(c.estado)} style={{ fontSize: 10 }}>{c.estado}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
-                    {c.destinatarios === "todos" ? `Todos (${dest.length} con Telegram)` : `${dest.length} clientes seleccionados`}
-                    {c.programado && ` · Programado: ${c.fechaEnvio} ${c.horaEnvio}`}
-                    {c.ultimoEnvio && ` · Último envio: ${c.ultimoEnvio}`}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--text)", background: "var(--surface2)", padding: "6px 10px", borderRadius: 6, fontFamily: "var(--mono)", whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>
-                    {c.mensaje.slice(0, 120)}{c.mensaje.length > 120 ? "..." : ""}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button className="btn btn-ghost btn-sm" onClick={() => editCampana(c)}>✏️</button>
-                  <button className="btn btn-primary btn-sm" disabled={isSending || !dest.length}
-                    style={{ background: "var(--accent)" }} onClick={() => sendCampana(c)}>
-                    {isSending ? "Enviando..." : "📤 Enviar"}
-                  </button>
-                  <button className="btn btn-danger btn-sm" onClick={() => deleteCampana(c.id)}>×</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-
-
-
 // ─── GESTIÓN DE FILMMAKERS (Admin) ────────────────────────────────────────────
 function FilmakersAdminPanel({ filmmakers, clients, onSave }) {
   const [showForm, setShowForm] = useState(false);
