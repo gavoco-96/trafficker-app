@@ -6677,7 +6677,7 @@ const PLANTILLAS_DEFAULT = [
   { id: "p4", nombre: "Mensaje personalizado", tipo: "custom", texto: "" },
 ];
 
-function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
+function TelegramPanel({ client, records, tgConfig, onSaveConfig, onUpdate }) {
   const [token, setToken]     = useState(tgConfig?.token || "");
   const [sending, setSending] = useState(false);
   const [saving, setSaving]   = useState(false);
@@ -6689,6 +6689,9 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
   const [editingMensaje, setEditingMensaje] = useState(false);
   const [mensajeEditado, setMensajeEditado] = useState("");
   const { show, el: toastEl } = useToast();
+
+  // Sub-tabs: mensajeria | programador
+  const [subTab, setSubTab] = useState("mensajeria");
 
   // ── NUEVO: múltiples destinatarios ───────────────────────────────────────
   const [chatIds, setChatIds] = useState(() => {
@@ -6849,6 +6852,17 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
     <>
       {toastEl}
 
+      {/* Sub-tabs: Mensajería | Programador */}
+      <div className="tab-row" style={{ marginBottom:"1.25rem" }}>
+        <button className={`tab ${subTab === "mensajeria" ? "active" : ""}`} onClick={() => setSubTab("mensajeria")}>✈️ Mensajería</button>
+        <button className={`tab ${subTab === "programador" ? "active" : ""}`} onClick={() => setSubTab("programador")}>⏰ Programador</button>
+      </div>
+
+      {subTab === "programador" && (
+        <SchedulerPanel client={client} onUpdate={onUpdate || (async () => {})} />
+      )}
+
+      {subTab === "mensajeria" && <>
       {/* ── Config: token + destinatarios ───────────────────────────────── */}
       <div className="tg-card">
         <div className="tg-header">
@@ -7090,11 +7104,10 @@ function TelegramPanel({ client, records, tgConfig, onSaveConfig }) {
           )}
         </div>
       )}
+      </>}
     </>
   );
 }
-
-// ─── MÓDULO ANÁLISIS DE CAPTURA FB→WP ────────────────────────────────────────
 
 const DEFAULT_SHEETS_URL = "https://docs.google.com/spreadsheets/d/1j6FZO1DU2sbQDPx3-TUyfIQQ7IkaK8wkY4psvhdHW0M";
 
@@ -10552,24 +10565,13 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", "historial", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "programador"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "historial" ? "📚 Historial" : t2 === "estudio" ? "🎬 Estudio" : t2 === "cuentas" ? "Cuentas" : t2 === "contratos" ? "Contratos" : t2 === "antecedentes" ? "Antecedentes" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "telegram" ? "✈️ Telegram" : "⏰ Programador"}
+              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
             </button>
           ))}
         </div>
         {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
-        {tab === "historial" && (
-          <div>
-            <MisionesPanel client={client} onUpdate={handleUpdate} />
-            <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
-              <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />
-            </div>
-          </div>
-        )}
-        {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
-        {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
-        {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
@@ -10606,6 +10608,13 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                 <ContratosPanel client={client} onUpdate={handleUpdate} />
               </div>
             </div>
+            {/* Historial: misiones + antecedentes — fusionado en Perfil */}
+            <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+              <MisionesPanel client={client} onUpdate={handleUpdate} />
+              <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+                <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />
+              </div>
+            </div>
           </div>
         )}
 
@@ -10621,6 +10630,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
             )}
           </div>
         )}
+        {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
+        {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
+        {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "facebook" && (
           <FacebookPanel client={client} onUpdate={handleUpdate} />
         )}
@@ -10629,13 +10641,11 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
             client={client}
             records={rows}
             tgConfig={client.tgConfig || {}}
+            onUpdate={handleUpdate}
             onSaveConfig={async (cfg) => {
               await handleUpdate({ ...client, tgConfig: cfg });
             }}
           />
-        )}
-        {tab === "programador" && (
-          <SchedulerPanel client={client} onUpdate={handleUpdate} />
         )}
       </div>
     </div>
