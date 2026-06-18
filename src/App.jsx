@@ -6012,14 +6012,14 @@ function FacebookPanel({ client, onUpdate }) {
     const resultados = [];
     for (const cuenta of activas) {
       try {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}?fields=name,amount_spent,spend_cap,balance,currency,daily_spend_limit&access_token=${token}`;
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}?fields=name,amount_spent,spend_cap,balance,currency&access_token=${token}`;
         const res  = await fetch(url);
         const d    = await res.json();
         if (d.error) { resultados.push({ id: cuenta.id, nombre: cuenta.nombre, error: d.error.message }); continue; }
         const gastado  = parseFloat(d.amount_spent || 0) / 100;
         const limite   = parseFloat(d.spend_cap   || 0) / 100;
         const balance  = parseFloat(d.balance     || 0) / 100;
-        const limDia   = parseFloat(d.daily_spend_limit || 0) / 100;
+        const limDia = 0;
         const restante = limite > 0 ? limite - gastado : null;
         const pctUsado = limite > 0 ? (gastado / limite * 100) : null;
         const proximoCobro = null;  // next_bill_date no disponible en este nivel de acceso
