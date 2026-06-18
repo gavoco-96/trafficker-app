@@ -5998,11 +5998,89 @@ function FacebookPanel({ client, onUpdate }) {
     }
   }
 
+  // ── Alertas de presupuesto ────────────────────────────────────────────────
+  const [billingData, setBillingData]   = useState(fbConfig.billingData || null);   // datos de facturación por cuenta
+  const [loadingBilling, setLoadingBilling] = useState(false);
+  const [billingAlerts, setBillingAlerts] = useState(() =>
+    fbConfig.billingAlerts || { enabled: false, pctThreshold: 15, diasThreshold: 2 }
+  );
+
+  async function fetchBillingData() {
+    const activas = cuentas.filter(c => c.adAccountId);
+    if (!token || !activas.length) return show("Configura token y cuentas primero", "err");
+    setLoadingBilling(true);
+    const resultados = [];
+    for (const cuenta of activas) {
+      try {
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}?fields=name,amount_spent,spend_cap,balance,currency,next_bill_date,daily_spend_limit&access_token=${token}`;
+        const res  = await fetch(url);
+        const d    = await res.json();
+        if (d.error) { resultados.push({ id: cuenta.id, nombre: cuenta.nombre, error: d.error.message }); continue; }
+        const gastado  = parseFloat(d.amount_spent || 0) / 100;
+        const limite   = parseFloat(d.spend_cap   || 0) / 100;
+        const balance  = parseFloat(d.balance     || 0) / 100;
+        const limDia   = parseFloat(d.daily_spend_limit || 0) / 100;
+        const restante = limite > 0 ? limite - gastado : null;
+        const pctUsado = limite > 0 ? (gastado / limite * 100) : null;
+        const proximoCobro = d.next_bill_date || null;
+        const diasParaCobro = proximoCobro
+          ? Math.ceil((new Date(proximoCobro) - new Date()) / 86400000)
+          : null;
+        resultados.push({
+          id: cuenta.id, nombre: cuenta.nombre,
+          adAccountId: cuenta.adAccountId,
+          cuentaNombre: d.name || cuenta.nombre,
+          gastado, limite, restante, pctUsado,
+          balance, limDia, proximoCobro, diasParaCobro,
+          currency: d.currency || "USD",
+        });
+      } catch(e) { resultados.push({ id: cuenta.id, nombre: cuenta.nombre, error: e.message }); }
+    }
+    setBillingData(resultados);
+    setLoadingBilling(false);
+    // Guardar en config para persistir
+    const updated = { ...client, fbConfig: { token, cuentas, selectedMetrics, lastSync, autoSync,
+      tokenSavedAt: fbConfig.tokenSavedAt || new Date().toISOString(),
+      billingData: resultados, billingAlerts,
+      billingLastCheck: new Date().toISOString()
+    }};
+    await onUpdate(updated);
+    // Verificar si disparar alertas de Telegram
+    checkAndSendBillingAlerts(resultados);
+  }
+
+  async function checkAndSendBillingAlerts(datos) {
+    if (!billingAlerts.enabled) return;
+    const tgToken  = client.tgConfig?.token;
+    const tgChatId = client.tgConfig?.chatIds?.[0]?.chatId || client.tgConfig?.chatId;
+    if (!tgToken || !tgChatId) return;
+    for (const d of datos) {
+      if (d.error) continue;
+      const alertas = [];
+      // Alerta % gasto
+      if (d.pctUsado !== null && d.pctUsado >= (100 - billingAlerts.pctThreshold)) {
+        alertas.push(`⚠️ *Límite de gasto al ${fmtNum(d.pctUsado,1)}%*\nGastado: $${fmtNum(d.gastado,2)} / Límite: $${fmtNum(d.limite,2)}\nQueda: $${fmtNum(d.restante,2)}`);
+      }
+      // Alerta días para cobro
+      if (d.diasParaCobro !== null && d.diasParaCobro <= billingAlerts.diasThreshold && d.diasParaCobro >= 0) {
+        alertas.push(`📅 *Cobro en ${d.diasParaCobro} día${d.diasParaCobro !== 1 ? "s" : ""}*\nFecha: ${d.proximoCobro}\nSaldo pendiente: $${fmtNum(d.gastado,2)}`);
+      }
+      if (alertas.length) {
+        const msg = `🔔 *Alerta de facturación — ${d.nombre}*\n_Cuenta: ${d.cuentaNombre}_\n\n${alertas.join("\n\n")}\n\n_Trafficker Pro · ${new Date().toLocaleString("es-EC")}_`;
+        await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: tgChatId, text: msg, parse_mode: "Markdown" })
+        });
+      }
+    }
+  }
+
   async function saveConfig() {
     setSaving(true);
     const updated = { ...client, fbConfig: {
       token, cuentas, selectedMetrics, lastSync,
-      autoSync,
+      autoSync, billingAlerts,
+      billingData: billingData || fbConfig.billingData,
       tokenSavedAt: fbConfig.tokenSavedAt || new Date().toISOString()
     }};
     await onUpdate(updated);
@@ -6187,7 +6265,115 @@ function FacebookPanel({ client, onUpdate }) {
         )}
       </div>
 
-      {/* ── Sección 5: Campañas activas ──────────────────────────────────── */}
+      {/* ── Sección 5: Alertas de presupuesto ──────────────────────────── */}
+      <div className="card" style={{marginBottom:"1rem"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:13}}>💳 Facturación y alertas de presupuesto</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Monitorea el gasto y recibe alertas en Telegram automáticamente</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {/* Toggle alertas */}
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:11,color:"var(--muted)"}}>Alertas</span>
+              <div style={{position:"relative",width:36,height:20,cursor:"pointer"}}
+                onClick={()=>setBillingAlerts(a=>({...a,enabled:!a.enabled}))}>
+                <div style={{position:"absolute",inset:0,borderRadius:10,background:billingAlerts.enabled?"var(--green)":"var(--border)",transition:"background .2s"}}/>
+                <div style={{position:"absolute",top:2,left:billingAlerts.enabled?18:2,width:16,height:16,borderRadius:8,background:"#fff",transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.3)"}}/>
+              </div>
+            </div>
+            <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={fetchBillingData} disabled={loadingBilling||!token||!cuentas.some(c=>c.adAccountId)}>
+              {loadingBilling?"⟳":"🔄"} {loadingBilling?"Consultando...":"Consultar"}
+            </button>
+          </div>
+        </div>
+
+        {/* Configuración de umbrales */}
+        {billingAlerts.enabled && (
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:"10px 12px",background:"rgba(16,185,129,.06)",borderRadius:8,marginBottom:12,border:"1px solid rgba(16,185,129,.2)"}}>
+            <div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>⚠️ Alerta cuando quede menos del</div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <input type="number" min="5" max="50" value={billingAlerts.pctThreshold}
+                  onChange={e=>setBillingAlerts(a=>({...a,pctThreshold:parseInt(e.target.value)||15}))}
+                  style={{width:60,fontSize:13,textAlign:"center"}} />
+                <span style={{fontSize:12,color:"var(--muted)"}}>% del límite de gasto</span>
+              </div>
+            </div>
+            <div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>📅 Alerta cuando falten menos de</div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <input type="number" min="1" max="7" value={billingAlerts.diasThreshold}
+                  onChange={e=>setBillingAlerts(a=>({...a,diasThreshold:parseInt(e.target.value)||2}))}
+                  style={{width:60,fontSize:13,textAlign:"center"}} />
+                <span style={{fontSize:12,color:"var(--muted)"}}>días para el próximo cobro</span>
+              </div>
+            </div>
+            <div style={{gridColumn:"1/-1",fontSize:10,color:"var(--muted)"}}>
+              {client.tgConfig?.token && (client.tgConfig?.chatIds?.[0]?.chatId || client.tgConfig?.chatId)
+                ? "✅ Las alertas se enviarán por Telegram al consultar."
+                : "⚠️ Configura Telegram primero para recibir alertas."}
+            </div>
+          </div>
+        )}
+
+        {/* Datos de facturación */}
+        {loadingBilling && <div style={{textAlign:"center",padding:"1rem",color:"var(--muted)",fontSize:13}}>⟳ Consultando Facebook Ads...</div>}
+
+        {billingData && !loadingBilling && billingData.map((d,i) => (
+          <div key={i} style={{padding:"12px 14px",borderRadius:10,background:"var(--surface2)",marginBottom:8,
+            border:`1px solid ${d.error?"rgba(239,68,68,.3)":d.pctUsado>=90?"rgba(239,68,68,.3)":d.pctUsado>=75?"rgba(255,222,89,.3)":"var(--border)"}`}}>
+            {d.error ? (
+              <div style={{fontSize:12,color:"var(--red)"}}>❌ {d.nombre}: {d.error}</div>
+            ) : (
+              <>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div>
+                    <span style={{fontWeight:600,fontSize:13}}>{d.nombre}</span>
+                    {d.cuentaNombre !== d.nombre && <span style={{fontSize:11,color:"var(--muted)",marginLeft:6}}>({d.cuentaNombre})</span>}
+                  </div>
+                  {d.diasParaCobro !== null && (
+                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,
+                      background:d.diasParaCobro<=2?"rgba(239,68,68,.15)":d.diasParaCobro<=5?"rgba(255,222,89,.1)":"rgba(16,185,129,.1)",
+                      color:d.diasParaCobro<=2?"var(--red)":d.diasParaCobro<=5?"var(--amber)":"var(--green)"}}>
+                      📅 Cobro en {d.diasParaCobro}d · {d.proximoCobro}
+                    </span>
+                  )}
+                </div>
+                {/* Barra de gasto */}
+                {d.pctUsado !== null && (
+                  <div style={{marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--muted)",marginBottom:4}}>
+                      <span>Gastado: <b style={{color:"var(--text)",fontFamily:"var(--mono)"}}>${fmtNum(d.gastado,2)}</b></span>
+                      <span>Límite: <b style={{color:"var(--text)",fontFamily:"var(--mono)"}}>${fmtNum(d.limite,2)}</b></span>
+                      <span style={{color:d.pctUsado>=90?"var(--red)":d.pctUsado>=75?"var(--amber)":"var(--green)",fontWeight:700}}>{fmtNum(d.pctUsado,1)}%</span>
+                    </div>
+                    <div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:d.pctUsado+"%",borderRadius:4,transition:"width .5s",
+                        background:d.pctUsado>=90?"var(--red)":d.pctUsado>=75?"var(--amber)":"var(--green)"}}/>
+                    </div>
+                    <div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>
+                      Restante: <span style={{fontFamily:"var(--mono)",color:d.restante<50?"var(--red)":"var(--text)"}}>${fmtNum(d.restante,2)}</span>
+                      {d.limDia > 0 && <span style={{marginLeft:12}}>Límite diario: ${fmtNum(d.limDia,2)}</span>}
+                    </div>
+                  </div>
+                )}
+                {d.balance > 0 && (
+                  <div style={{fontSize:11,color:"var(--muted)"}}>💰 Balance prepagado: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(d.balance,2)}</span></div>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+
+        {!billingData && !loadingBilling && (
+          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>
+            Presiona "🔄 Consultar" para ver el estado de facturación de tus cuentas en tiempo real.
+          </div>
+        )}
+      </div>
+
+      {/* ── Sección 6: Campañas activas ──────────────────────────────────── */}
       <div className="card" style={{marginBottom:"1rem"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div style={{fontWeight:700,fontSize:13}}>📡 Campañas activas ahora</div>
