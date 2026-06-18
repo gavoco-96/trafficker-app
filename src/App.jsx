@@ -10166,21 +10166,55 @@ function LinksPanel() {
 
 // ─── TARJETA DE LINK ───────────────────────────────────────────
 function generarQR(url, size = 256) {
-  // QR usando la API pública de QR Server (no requiere librería)
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}&color=4d9fff&bgcolor=0a0f1e&format=png&margin=2`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}&color=4d9fff&bgcolor=0a0f1e&format=png&margin=3`;
 }
 
 async function descargarQR(url, nombre) {
   try {
-    const qrUrl = generarQR(url, 512);
+    // Generar QR con espacio para branding abajo
+    const qrUrl = generarQR(url, 480);
     const res = await fetch(qrUrl);
     const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `qr-${nombre || "link"}.png`;
-    a.click();
+    // Usar canvas para agregar el ícono TP abajo
+    const img = new Image();
+    img.src = URL.createObjectURL(blob);
+    await new Promise(r => img.onload = r);
+    const canvas = document.createElement("canvas");
+    canvas.width = 512; canvas.height = 560;
+    const ctx = canvas.getContext("2d");
+    // Fondo oscuro
+    ctx.fillStyle = "#0a0f1e";
+    ctx.fillRect(0, 0, 512, 560);
+    // QR centrado
+    ctx.drawImage(img, 16, 16, 480, 480);
+    // Banda de branding
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(0, 496, 512, 64);
+    // Ícono cuadrado TP
+    const grad = ctx.createLinearGradient(192, 510, 222, 540);
+    grad.addColorStop(0, "#4d9fff");
+    grad.addColorStop(1, "#a855f7");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(192, 510, 30, 30, 6);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("TP", 207, 530);
+    // Texto
+    ctx.fillStyle = "#9ca3af";
+    ctx.font = "500 13px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("Trafficker Pro", 232, 530);
+    // Descargar
+    canvas.toBlob(b => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = `qr-${nombre || "link"}.png`;
+      a.click();
+    });
   } catch {
-    // Fallback: abrir en nueva pestaña para guardar manualmente
     window.open(generarQR(url, 512), "_blank");
   }
 }
@@ -10275,7 +10309,7 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
               <button className="btn btn-primary btn-sm" onClick={()=>descargarQR(url,link.nombre)}>⬇️ Descargar PNG</button>
               <button className="btn btn-ghost btn-sm" onClick={()=>setShowQR(false)}>Cerrar</button>
             </div>
-            <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>512×512px · fondo oscuro · azul Trafficker Pro</div>
+            <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>512×560px · fondo oscuro · ícono TP incluido</div>
           </div>
         </div>
       )}
@@ -10496,6 +10530,14 @@ function LinkAnalytics({ link, onClose }) {
   const browsers  = Object.entries(agrupar("browser")).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const destStats = Object.entries(agrupar("destino_id")).sort((a,b)=>b[1]-a[1]);
 
+  // ── UTMs ──────────────────────────────────────────────────────────────────
+  const tieneUtms = clicks.some(c => c.utm_source || c.utm_campaign || c.utm_medium);
+  const campaigns = Object.entries(agrupar("utm_campaign")).filter(([k])=>k!=="Unknown").sort((a,b)=>b[1]-a[1]);
+  const adsets    = Object.entries(agrupar("utm_medium")).filter(([k])=>k!=="Unknown").sort((a,b)=>b[1]-a[1]);
+  const ads       = Object.entries(agrupar("utm_content")).filter(([k])=>k!=="Unknown").sort((a,b)=>b[1]-a[1]);
+  const placements= Object.entries(agrupar("utm_placement")).filter(([k])=>k!=="Unknown").sort((a,b)=>b[1]-a[1]);
+  const sources   = Object.entries(agrupar("utm_source")).filter(([k])=>k!=="Unknown").sort((a,b)=>b[1]-a[1]);
+
   // Clicks por día (últimos 14 días)
   const hoy = new Date();
   const clicksPorDia = Array.from({length:14},(_,i)=>{
@@ -10506,17 +10548,17 @@ function LinkAnalytics({ link, onClose }) {
 
   const maxDay = Math.max(...clicksPorDia.map(d=>d.count),1);
 
-  function BarsSimple({ data, total }) {
+  function BarsSimple({ data, total: tot, color = "var(--accent)" }) {
     return (
       <div style={{display:"flex", flexDirection:"column", gap:6}}>
         {data.map(([label, count]) => (
           <div key={label} style={{display:"flex", gap:8, alignItems:"center", fontSize:12}}>
-            <div style={{width:100, color:"var(--muted)", textAlign:"right", fontSize:11, flexShrink:0}}>{label}</div>
+            <div style={{width:120, color:"var(--muted)", textAlign:"right", fontSize:11, flexShrink:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}} title={label}>{label}</div>
             <div style={{flex:1, background:"var(--surface2)", borderRadius:20, height:8, overflow:"hidden"}}>
-              <div style={{width:(count/Math.max(...data.map(d=>d[1]),1)*100)+"%", height:"100%", background:"var(--accent)", borderRadius:20}}/>
+              <div style={{width:(count/Math.max(...data.map(d=>d[1]),1)*100)+"%", height:"100%", background:color, borderRadius:20}}/>
             </div>
             <div style={{fontFamily:"var(--mono)", fontWeight:600, width:32, textAlign:"right"}}>{count}</div>
-            <div style={{color:"var(--muted)", fontSize:10, width:36}}>{total>0?(count/total*100).toFixed(0)+"%":""}</div>
+            <div style={{color:"var(--muted)", fontSize:10, width:36}}>{(tot||total)>0?(count/(tot||total)*100).toFixed(0)+"%":""}</div>
           </div>
         ))}
       </div>
@@ -10536,7 +10578,12 @@ function LinkAnalytics({ link, onClose }) {
         <div>
           {/* Resumen */}
           <div className="grid4" style={{marginBottom:"1rem"}}>
-            {[["Total clicks", total, "var(--accent2)"],["Países", Object.keys(agrupar("country")).length, "var(--text)"],["Dispositivos", Object.keys(agrupar("device")).length, "var(--text)"],["Fuentes", Object.keys(agrupar("platform")).length, "var(--text)"]].map(([l,v,c])=>(
+            {[
+              ["Total clicks", total, "var(--accent2)"],
+              ["Países", Object.keys(agrupar("country")).length, "var(--text)"],
+              ["Fuentes", Object.keys(agrupar("platform")).length, "var(--text)"],
+              tieneUtms ? ["Campañas FB", campaigns.length, "var(--green)"] : ["Dispositivos", Object.keys(agrupar("device")).length, "var(--text)"]
+            ].map(([l,v,c])=>(
               <div key={l} className="card" style={{padding:"1rem",textAlign:"center"}}>
                 <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>{l}</div>
                 <div style={{fontSize:22,fontFamily:"var(--mono)",fontWeight:700,color:c}}>{v}</div>
@@ -10557,11 +10604,50 @@ function LinkAnalytics({ link, onClose }) {
             </div>
           </div>
 
+          {/* ── Sección UTMs — solo si hay datos ── */}
+          {tieneUtms && (
+            <div style={{background:"rgba(77,159,255,.04)",border:"1px solid rgba(77,159,255,.15)",borderRadius:10,padding:"14px 16px",marginBottom:"1.5rem"}}>
+              <div style={{fontWeight:700,fontSize:13,marginBottom:12,color:"var(--accent2)"}}>🏷️ Análisis de UTMs (Facebook Ads)</div>
+              <div className="grid2" style={{gap:"1.5rem"}}>
+                {campaigns.length>0 && (
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por campaña <span style={{fontSize:10}}>(utm_campaign)</span></div>
+                    <BarsSimple data={campaigns} color="var(--accent2)" />
+                  </div>
+                )}
+                {adsets.length>0 && (
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por conjunto <span style={{fontSize:10}}>(utm_medium)</span></div>
+                    <BarsSimple data={adsets} color="#a855f7" />
+                  </div>
+                )}
+                {ads.length>0 && (
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por anuncio <span style={{fontSize:10}}>(utm_content)</span></div>
+                    <BarsSimple data={ads} color="var(--green)" />
+                  </div>
+                )}
+                {placements.length>0 && (
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por placement <span style={{fontSize:10}}>(utm_placement)</span></div>
+                    <BarsSimple data={placements} color="var(--amber)" />
+                  </div>
+                )}
+                {sources.length>0 && (
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por fuente <span style={{fontSize:10}}>(utm_source)</span></div>
+                    <BarsSimple data={sources} color="var(--text)" />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="grid2" style={{gap:"1.5rem"}}>
-            {paises.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por país</div><BarsSimple data={paises} total={total}/></div>}
-            {platafs.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por plataforma</div><BarsSimple data={platafs} total={total}/></div>}
-            {devices.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por dispositivo</div><BarsSimple data={devices} total={total}/></div>}
-            {browsers.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por navegador</div><BarsSimple data={browsers} total={total}/></div>}
+            {paises.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por país</div><BarsSimple data={paises} /></div>}
+            {platafs.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por plataforma</div><BarsSimple data={platafs} /></div>}
+            {devices.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por dispositivo</div><BarsSimple data={devices} /></div>}
+            {browsers.length>0 && <div><div style={{fontSize:12,fontWeight:600,color:"var(--muted)",marginBottom:8}}>Por navegador</div><BarsSimple data={browsers} /></div>}
           </div>
 
           {/* Por destino */}
@@ -10581,12 +10667,18 @@ function LinkAnalytics({ link, onClose }) {
             </div>
           )}
 
-          {/* Export */}
+          {/* Export — incluye columnas UTM */}
           <div style={{marginTop:"1rem",display:"flex",justifyContent:"flex-end"}}>
             <BotonesExportar
-              headers={["Fecha/Hora","País","Ciudad","Plataforma","Dispositivo","OS","Navegador","Destino"]}
-              rows={clicks.map(c=>[c.ts?.slice(0,19)||"",c.country||"",c.city||"",c.platform||"",c.device||"",c.os||"",c.browser||"",c.destino_url||""])}
-              nombreArchivo={"clicks_"+link.slug}
+              headers={["Fecha/Hora","País","Ciudad","Plataforma","Dispositivo","OS","Navegador","Destino","utm_source","utm_medium (conjunto)","utm_campaign","utm_content (anuncio)","utm_placement"]}
+              rows={clicks.map(c=>[
+                c.ts?.slice(0,19)||"", c.country||"", c.city||"",
+                c.platform||"", c.device||"", c.os||"", c.browser||"",
+                c.destino_url||"",
+                c.utm_source||"", c.utm_medium||"", c.utm_campaign||"",
+                c.utm_content||"", c.utm_placement||""
+              ])}
+              nombreArchivo={"clicks_utms_"+link.slug}
             />
           </div>
         </div>
@@ -10594,8 +10686,6 @@ function LinkAnalytics({ link, onClose }) {
     </div>
   );
 }
-
-
 
 // ─── ADMIN CLIENT DETAIL ──────────────────────────────────────────────────────
 // Cambio de contraseña inline desde el perfil admin
