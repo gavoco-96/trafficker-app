@@ -9395,6 +9395,313 @@ const LinksDB = {
   }
 };
 
+// ─── EMBUDOS DE CONVERSIÓN ────────────────────────────────────────────────────
+const SUPA_FUNNELS_URL = SUPA_URL + "/rest/v1/funnels";
+
+const FunnelDB = {
+  async getByClient(clientId) {
+    try {
+      const r = await fetch(`${SUPA_FUNNELS_URL}?client_id=eq.${clientId}&select=*&order=created_at.desc`, { headers: HL });
+      if (!r.ok) return [];
+      return await r.json();
+    } catch { return []; }
+  },
+  async create(data) {
+    try {
+      const r = await fetch(SUPA_FUNNELS_URL, { method:"POST", headers:{...HL,Prefer:"return=representation"}, body:JSON.stringify(data) });
+      const txt = await r.text();
+      if (!r.ok) return { ok:false, error:txt };
+      return { ok:true, data: JSON.parse(txt)[0] };
+    } catch(e) { return { ok:false, error:e.message }; }
+  },
+  async update(id, data) {
+    try {
+      const r = await fetch(`${SUPA_FUNNELS_URL}?id=eq.${id}`, { method:"PATCH", headers:{...HL,Prefer:"return=minimal"}, body:JSON.stringify(data) });
+      return { ok: r.ok };
+    } catch(e) { return { ok:false, error:e.message }; }
+  },
+  async delete(id) {
+    try {
+      const r = await fetch(`${SUPA_FUNNELS_URL}?id=eq.${id}`, { method:"DELETE", headers:HL });
+      return { ok: r.ok };
+    } catch { return { ok:false }; }
+  }
+};
+
+const FUNNEL_TIPOS = [
+  { id:"lanzamiento", label:"🚀 Lanzamiento", etapasDefault:["Registro","Encuesta","Clase","Venta"] },
+  { id:"ecommerce",   label:"🛒 Ecommerce",   etapasDefault:["Anuncio","Producto","Carrito","Compra"] },
+  { id:"whatsapp",    label:"💬 WhatsApp",     etapasDefault:["Anuncio","WA","Contacto","Cierre"] },
+  { id:"custom",      label:"⚙️ Personalizado", etapasDefault:["Etapa 1","Etapa 2","Etapa 3"] },
+];
+
+const ETAPA_COLORS = ["#4d9fff","#a855f7","#f59e0b","#10b981","#ef4444","#06b6d4"];
+
+// Calcular fingerprint aproximado del lead para cruce entre etapas
+// (se hace en el slug.js — aquí solo mostramos el análisis)
+function calcFunnelStats(funnel, allLinks) {
+  const etapas = funnel.etapas || [];
+  return etapas.map((etapa, i) => {
+    const link = allLinks.find(l => l.id === etapa.link_id);
+    const clicks = link?.total_clicks || 0;
+    const prevClicks = i > 0 ? (allLinks.find(l => l.id === etapas[i-1]?.link_id)?.total_clicks || 0) : null;
+    const conv = prevClicks > 0 ? Math.round(clicks / prevClicks * 100) : null;
+    // Cruce de leads: IPs que aparecen en esta etapa Y en etapa anterior
+    const ipsEtapa = new Set((link?.clicks||[]).map(c => c.ip).filter(Boolean));
+    const ipsPrev  = i > 0 ? new Set((allLinks.find(l=>l.id===etapas[i-1]?.link_id)?.clicks||[]).map(c=>c.ip).filter(Boolean)) : null;
+    const leadsCruzados = ipsPrev ? [...ipsEtapa].filter(ip => ipsPrev.has(ip)).length : null;
+    return { ...etapa, link, clicks, conv, leadsCruzados, ipsEtapa };
+  });
+}
+
+function EmbудоForm({ funnel, allLinks, onSave, onCancel }) {
+  const isEdit = !!funnel;
+  const [nombre, setNombre]   = useState(funnel?.nombre || "");
+  const [tipo, setTipo]       = useState(funnel?.tipo || "lanzamiento");
+  const [etapas, setEtapas]   = useState(() => {
+    if (funnel?.etapas?.length) return funnel.etapas;
+    const t = FUNNEL_TIPOS.find(x=>x.id==="lanzamiento");
+    return t.etapasDefault.map((n,i) => ({ id:"e"+i, nombre:n, link_id:"", color:ETAPA_COLORS[i], meta_clicks:null, crear_nuevo:false, nuevo_slug:"", nuevo_url:"" }));
+  });
+  const [saving, setSaving]   = useState(false);
+
+  function setTipoYEtapas(t) {
+    setTipo(t);
+    const def = FUNNEL_TIPOS.find(x=>x.id===t)?.etapasDefault || [];
+    setEtapas(def.map((n,i) => ({ id:"e"+i, nombre:n, link_id:"", color:ETAPA_COLORS[i], meta_clicks:null, crear_nuevo:false, nuevo_slug:"", nuevo_url:"" })));
+  }
+  function updEtapa(id, k, v) { setEtapas(p => p.map(e => e.id===id?{...e,[k]:v}:e)); }
+  function addEtapa() { setEtapas(p => [...p, { id:"e"+Date.now(), nombre:"Nueva etapa", link_id:"", color:ETAPA_COLORS[p.length%6], meta_clicks:null, crear_nuevo:false, nuevo_slug:genSlug(), nuevo_url:"" }]); }
+  function delEtapa(id) { if(etapas.length>1) setEtapas(p=>p.filter(e=>e.id!==id)); }
+
+  async function handleSave() {
+    if (!nombre.trim()) return alert("Ingresa un nombre para el embudo");
+    if (etapas.some(e => !e.link_id && !e.crear_nuevo)) return alert("Cada etapa necesita un link asignado o marcada para crear uno nuevo");
+    setSaving(true);
+    // Crear links nuevos si los hay
+    const etapasFinales = [...etapas];
+    for (let i = 0; i < etapasFinales.length; i++) {
+      const e = etapasFinales[i];
+      if (e.crear_nuevo && e.nuevo_url) {
+        const slug = e.nuevo_slug || genSlug();
+        const newLink = { id:"lnk_"+Date.now()+"_"+i, nombre:nombre+" — "+e.nombre, slug, grupo:"Embudo", destinos:[{id:"d1",nombre:"Destino",url:e.nuevo_url,paises:[],limite_clicks:null,clicks:0,activo:true}], active:true, total_clicks:0, clicks:[], created_at:new Date().toISOString() };
+        const res = await LinksDB.create(newLink);
+        if (res.ok) etapasFinales[i] = { ...e, link_id: res.data?.id || newLink.id };
+      }
+    }
+    onSave({ nombre, tipo, etapas: etapasFinales });
+    setSaving(false);
+  }
+
+  return (
+    <div className="card" style={{borderColor:"rgba(0,74,173,.3)",marginBottom:"1rem"}}>
+      <div className="card-title">{isEdit?"Editar embudo":"Nuevo embudo de conversión"}</div>
+      <div className="form-row">
+        <div className="field"><label>Nombre del embudo</label><input type="text" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Ej: Lanzamiento IMCH Junio 2026"/></div>
+        <div className="field"><label>Tipo</label>
+          <select value={tipo} onChange={e=>setTipoYEtapas(e.target.value)}>
+            {FUNNEL_TIPOS.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",margin:"1rem 0 .5rem"}}>
+        Etapas del embudo
+      </div>
+
+      {etapas.map((e,i) => (
+        <div key={e.id} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:10,padding:"10px 12px",background:"var(--surface2)",borderRadius:10,borderLeft:`3px solid ${e.color}`}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+              <span style={{fontSize:11,fontWeight:700,color:e.color,minWidth:16}}>{i+1}</span>
+              <input type="text" value={e.nombre} onChange={ev=>updEtapa(e.id,"nombre",ev.target.value)} style={{flex:1,fontSize:12}} placeholder="Nombre de la etapa"/>
+              <input type="number" value={e.meta_clicks||""} onChange={ev=>updEtapa(e.id,"meta_clicks",ev.target.value?parseInt(ev.target.value):null)} style={{width:80,fontSize:12}} placeholder="Meta clicks"/>
+            </div>
+            {/* Toggle: link existente o crear nuevo */}
+            <div style={{display:"flex",gap:6,marginBottom:6}}>
+              <button className={"btn btn-sm "+(e.crear_nuevo?"btn-ghost":"btn-primary")} style={{fontSize:10}} onClick={()=>updEtapa(e.id,"crear_nuevo",false)}>Asignar link existente</button>
+              <button className={"btn btn-sm "+(e.crear_nuevo?"btn-primary":"btn-ghost")} style={{fontSize:10}} onClick={()=>updEtapa(e.id,"crear_nuevo",true)}>+ Crear link nuevo</button>
+            </div>
+            {!e.crear_nuevo ? (
+              <select value={e.link_id} onChange={ev=>updEtapa(e.id,"link_id",ev.target.value)} style={{width:"100%",fontSize:12}}>
+                <option value="">— Selecciona un link —</option>
+                {allLinks.map(l=><option key={l.id} value={l.id}>{l.nombre} ({l.slug}) · {l.total_clicks||0} clicks</option>)}
+              </select>
+            ) : (
+              <div style={{display:"flex",gap:8}}>
+                <input type="text" value={e.nuevo_url} onChange={ev=>updEtapa(e.id,"nuevo_url",ev.target.value)} placeholder="URL destino (WA, landing, etc.)" style={{flex:1,fontSize:12,fontFamily:"var(--mono)"}}/>
+                <input type="text" value={e.nuevo_slug||""} onChange={ev=>updEtapa(e.id,"nuevo_slug",ev.target.value)} placeholder="slug" style={{width:100,fontSize:12,fontFamily:"var(--mono)"}}/>
+              </div>
+            )}
+          </div>
+          <button onClick={()=>delEtapa(e.id)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:16,padding:"2px 4px",flexShrink:0}}>×</button>
+        </div>
+      ))}
+
+      <button className="btn btn-ghost btn-sm" onClick={addEtapa} style={{marginBottom:"1rem"}}>+ Agregar etapa</button>
+
+      <div style={{display:"flex",gap:8}}>
+        <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving?"Guardando...":isEdit?"💾 Guardar cambios":"✅ Crear embudo"}</button>
+        <button className="btn btn-ghost" onClick={onCancel}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+function EmbudoView({ funnel, allLinks, onEdit, onDelete }) {
+  const stats = calcFunnelStats(funnel, allLinks);
+  const tipo  = FUNNEL_TIPOS.find(t=>t.id===funnel.tipo);
+  const maxClicks = Math.max(...stats.map(s=>s.clicks), 1);
+
+  return (
+    <div className="card" style={{marginBottom:"1rem"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:15}}>{funnel.nombre}</div>
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{tipo?.label} · {stats.length} etapas · creado {new Date(funnel.created_at).toLocaleDateString("es-EC")}</div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button className="btn btn-ghost btn-sm" onClick={onEdit}>✏️</button>
+          <button className="btn btn-ghost btn-sm" style={{color:"var(--red)"}} onClick={onDelete}>🗑</button>
+        </div>
+      </div>
+
+      {/* Funnel visual */}
+      <div style={{position:"relative",marginBottom:16}}>
+        {stats.map((s,i) => {
+          const pct = maxClicks > 0 ? s.clicks/maxClicks*100 : 0;
+          const width = Math.max(100 - i*8, 40);
+          return (
+            <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+              {/* Barra del funnel */}
+              <div style={{flex:1,position:"relative",height:40,display:"flex",alignItems:"center"}}>
+                <div style={{position:"absolute",left:0,top:0,width:width+"%",height:"100%",background:s.color+"22",borderRadius:8,border:`1px solid ${s.color}44`}}/>
+                <div style={{position:"absolute",left:0,top:0,width:pct*width/100+"%",height:"100%",background:s.color+"66",borderRadius:8,transition:"width .5s"}}/>
+                <div style={{position:"relative",padding:"0 12px",display:"flex",alignItems:"center",gap:8,zIndex:1}}>
+                  <span style={{width:20,height:20,borderRadius:"50%",background:s.color,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{i+1}</span>
+                  <span style={{fontWeight:600,fontSize:13}}>{s.nombre}</span>
+                  {s.link && <span style={{fontSize:10,color:"var(--muted)",fontFamily:"var(--mono)"}}>/{s.link.slug}</span>}
+                </div>
+              </div>
+              {/* Stats */}
+              <div style={{textAlign:"right",minWidth:80}}>
+                <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:16,color:s.color}}>{s.clicks.toLocaleString()}</div>
+                <div style={{fontSize:10,color:"var(--muted)"}}>clicks</div>
+              </div>
+              {/* Conversión vs etapa anterior */}
+              <div style={{textAlign:"right",minWidth:60}}>
+                {s.conv !== null ? (
+                  <div>
+                    <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13,color:s.conv>=50?"var(--green)":s.conv>=25?"var(--amber)":"var(--red)"}}>{s.conv}%</div>
+                    <div style={{fontSize:10,color:"var(--muted)"}}>conv.</div>
+                  </div>
+                ) : <div style={{fontSize:10,color:"var(--muted)"}}>—</div>}
+              </div>
+              {/* Leads cruzados */}
+              <div style={{textAlign:"right",minWidth:60}}>
+                {s.leadsCruzados !== null ? (
+                  <div>
+                    <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13,color:"var(--accent2)"}}>{s.leadsCruzados}</div>
+                    <div style={{fontSize:10,color:"var(--muted)"}}>leads</div>
+                  </div>
+                ) : <div style={{fontSize:10,color:"var(--muted)"}}>—</div>}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Flechas entre etapas */}
+        <div style={{position:"absolute",left:12,top:0,bottom:0,width:2,background:"rgba(255,255,255,.05)",zIndex:0}}/>
+      </div>
+
+      {/* Resumen total */}
+      {stats.length >= 2 && stats[0].clicks > 0 && (
+        <div style={{display:"flex",gap:12,padding:"10px 14px",background:"var(--surface2)",borderRadius:8,fontSize:12,flexWrap:"wrap"}}>
+          <div><span style={{color:"var(--muted)"}}>Entrada: </span><span style={{fontFamily:"var(--mono)",fontWeight:700}}>{stats[0].clicks}</span></div>
+          <div><span style={{color:"var(--muted)"}}>Salida: </span><span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--green)"}}>{stats[stats.length-1].clicks}</span></div>
+          <div><span style={{color:"var(--muted)"}}>Conv. total: </span><span style={{fontFamily:"var(--mono)",fontWeight:700,color:stats[stats.length-1].clicks/stats[0].clicks>=0.1?"var(--green)":"var(--amber)"}}>{(stats[stats.length-1].clicks/stats[0].clicks*100).toFixed(1)}%</span></div>
+          {(() => {
+            const totalLeadsCruzados = stats[stats.length-1].leadsCruzados;
+            if (totalLeadsCruzados !== null) return <div><span style={{color:"var(--muted)"}}>Leads que completaron el embudo: </span><span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--accent2)"}}>{totalLeadsCruzados}</span></div>;
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmbудоPanel({ client, onUpdate, readOnly = false }) {
+  const [funnels, setFunnels]   = useState([]);
+  const [allLinks, setAllLinks] = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editFunnel, setEditFunnel] = useState(null);
+  const { show, el: toastEl }   = useToast();
+
+  async function cargar() {
+    setLoading(true);
+    const [fs, ls] = await Promise.all([
+      FunnelDB.getByClient(client.id),
+      LinksDB.getAll()
+    ]);
+    setFunnels(fs);
+    setAllLinks(ls);
+    setLoading(false);
+  }
+
+  useEffect(() => { cargar(); }, [client.id]);
+
+  async function handleSave(data) {
+    const payload = { ...data, client_id: client.id, created_at: editFunnel?.created_at || new Date().toISOString() };
+    let res;
+    if (editFunnel) { res = await FunnelDB.update(editFunnel.id, payload); }
+    else { res = await FunnelDB.create({ ...payload, id:"fun_"+Date.now() }); }
+    if (!res.ok) return show("Error al guardar: " + (res.error||""), "err");
+    show(editFunnel ? "✓ Embudo actualizado" : "✓ Embudo creado", "ok");
+    setShowForm(false); setEditFunnel(null);
+    cargar();
+  }
+
+  async function handleDelete(id) {
+    if (!window.confirm("¿Eliminar este embudo?")) return;
+    await FunnelDB.delete(id);
+    show("Embudo eliminado", "ok");
+    cargar();
+  }
+
+  if (loading) return <div className="empty">⏳ Cargando embudos...</div>;
+
+  return (
+    <>
+      {toastEl}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem"}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:16}}>🎯 Embudos de conversión</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Trackea el recorrido completo del lead desde el anuncio hasta la venta</div>
+        </div>
+        {!readOnly && <button className="btn btn-primary" onClick={()=>{setEditFunnel(null);setShowForm(true);}}>+ Nuevo embudo</button>}
+      </div>
+
+      {showForm && !readOnly && (
+        <EmbудоForm funnel={editFunnel} allLinks={allLinks} onSave={handleSave} onCancel={()=>{setShowForm(false);setEditFunnel(null);}} />
+      )}
+
+      {funnels.length === 0 && !showForm && (
+        <div className="empty">
+          <div style={{fontSize:32,opacity:.3}}>🎯</div>
+          <div style={{marginTop:8}}>{readOnly?"El trafficker configurará tus embudos pronto.":"Crea tu primer embudo para trackear el recorrido del lead."}</div>
+        </div>
+      )}
+
+      {funnels.map(f => (
+        <EmbudoView key={f.id} funnel={f} allLinks={allLinks}
+          onEdit={readOnly ? undefined : ()=>{setEditFunnel(f);setShowForm(true);}}
+          onDelete={readOnly ? undefined : ()=>handleDelete(f.id)} />
+      ))}
+    </>
+  );
+}
+
 // ─── SELECTOR DE GRUPOS ───────────────────────────────────────
 function GruposSelector({ grupos, seleccionados, onChange, label }) {
   const [abierto, setAbierto]   = useState(false);
@@ -10788,9 +11095,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
+              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
             </button>
           ))}
         </div>
@@ -10854,6 +11161,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
           </div>
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
+        {tab === "embudos" && <EmbудоPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "facebook" && (
@@ -10894,7 +11202,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura", "calidad"] : ["estudio"]), "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : v === "calidad" ? "⭐ Calidad" : "📚 Historial"}</div>)}
+          {(["hermes", ...(client.producto?.startsWith("APOLLO") ? ["captura", "calidad"] : ["estudio"]), "embudos", "antecedentes"]).map(v => <div key={v} className={`nav-item ${tab === v ? "active" : ""}`} onClick={() => setTab(v)}><div className="nav-dot" style={{ background: tab === v ? "var(--accent)" : "var(--border)" }} />{v === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : v === "estudio" ? "🎬 Estudio" : v === "captura" ? "📊 Captura WP" : v === "calidad" ? "⭐ Calidad" : v === "embudos" ? "🎯 Embudos" : "📚 Historial"}</div>)}
         </div>
         <div className="sidebar-footer">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><div className="avatar" style={{ background: client.color + "22", color: client.color }}>{client.logo || client.name.slice(0, 2).toUpperCase()}</div><div><div style={{ fontSize: 13, fontWeight: 500 }}>{client.name}</div><div style={{ fontSize: 11, color: "var(--muted)" }}>Vista de cliente</div></div></div>
@@ -10904,7 +11212,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
       <div className="main">
         <div className="topbar">
           <div className="topbar-title">
-            {tab === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : tab === "captura" ? "📊 Captura WP" : tab === "antecedentes" ? "📚 Historial" : tab === "estudio" ? "🎬 Estudio" : "Histórico de pauta"}
+            {tab === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : tab === "captura" ? "📊 Captura WP" : tab === "antecedentes" ? "📚 Historial" : tab === "estudio" ? "🎬 Estudio" : tab === "embudos" ? "🎯 Embudos" : "Histórico de pauta"}
           </div>
           <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} />
         </div>
@@ -10922,6 +11230,7 @@ function ClientDashboard({ client, onLogout, banners, onUpdate }) {
             <div className="empty"><div style={{ fontSize:28, opacity:.3 }}>📊</div><div style={{ marginTop:8 }}>El análisis de captura estará disponible pronto.</div></div>
           )}
           {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />}
+          {tab === "embudos" && <EmbудоPanel client={client} onUpdate={onUpdate || (() => {})} readOnly={true} />}
           {tab === "resumen" && <>
             {banners && banners.length > 0 && (
               <div style={{ marginBottom: "1.25rem", borderRadius: "var(--r2)", overflow: "hidden" }}>
