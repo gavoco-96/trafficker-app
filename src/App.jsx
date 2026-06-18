@@ -10018,6 +10018,7 @@ function LinksPanel() {
   const [editLink, setEditLink]   = useState(null);
   const [filtroGrupo, setFiltroG] = useState("todos");
   const [busqueda, setBusqueda]   = useState("");
+  const [filtroInactividad, setFiltroInactividad] = useState("todos"); // todos | activos | inactivos_7 | inactivos_30
   const [detalle, setDetalle]     = useState(null);
   const { show, el: toastEl }     = useToast();
 
@@ -10027,7 +10028,6 @@ function LinksPanel() {
     setLoading(true);
     const data = await LinksDB.getAll();
     setLinks(data);
-    // Extraer grupos únicos
     const gs = [...new Set(data.map(l => l.grupo).filter(Boolean))];
     setGrupos(gs);
     setLoading(false);
@@ -10069,9 +10069,25 @@ function LinksPanel() {
     show("✓ Link copiado: " + url, "ok");
   }
 
+  function getDiasInactivo(link) {
+    const ref = link.ultimo_click || link.created_at;
+    if (!ref) return 999;
+    return Math.floor((Date.now() - new Date(ref).getTime()) / 86400000);
+  }
+
   const linksFiltrados = links
     .filter(l => filtroGrupo === "todos" || l.grupo === filtroGrupo)
-    .filter(l => !busqueda || l.nombre?.toLowerCase().includes(busqueda.toLowerCase()) || l.slug?.includes(busqueda));
+    .filter(l => !busqueda || l.nombre?.toLowerCase().includes(busqueda.toLowerCase()) || l.slug?.includes(busqueda))
+    .filter(l => {
+      if (filtroInactividad === "todos") return true;
+      if (filtroInactividad === "activos") return getDiasInactivo(l) < 7;
+      if (filtroInactividad === "inactivos_7") return getDiasInactivo(l) >= 7 && getDiasInactivo(l) < 30;
+      if (filtroInactividad === "inactivos_30") return getDiasInactivo(l) >= 30;
+      return true;
+    });
+
+  const inactivos7  = links.filter(l => getDiasInactivo(l) >= 7 && getDiasInactivo(l) < 30).length;
+  const inactivos30 = links.filter(l => getDiasInactivo(l) >= 30).length;
 
   if (loading) return <div className="empty"><div style={{opacity:.3}}>⏳</div><div>Cargando links...</div></div>;
 
@@ -10085,7 +10101,21 @@ function LinksPanel() {
             <div style={{fontWeight:700, fontSize:18}}>🔗 Links Enmascarados</div>
             <div style={{fontSize:12, color:"var(--muted)", marginTop:2}}>{links.length} links · Base URL: <code style={{background:"var(--surface2)", padding:"1px 6px", borderRadius:4}}>{BASE_URL}/r/...</code></div>
           </div>
-          <button className="btn btn-primary" onClick={() => { setEditLink(null); setShowForm(true); }}>+ Nuevo link</button>
+          <div style={{display:"flex", gap:8, alignItems:"center"}}>
+            {inactivos30 > 0 && (
+              <span style={{fontSize:11,padding:"3px 10px",borderRadius:10,background:"rgba(239,68,68,.12)",color:"var(--red)",fontWeight:600,cursor:"pointer"}}
+                onClick={()=>setFiltroInactividad("inactivos_30")}>
+                ⚠️ {inactivos30} sin clicks 30d+
+              </span>
+            )}
+            {inactivos7 > 0 && (
+              <span style={{fontSize:11,padding:"3px 10px",borderRadius:10,background:"rgba(255,222,89,.1)",color:"var(--amber)",fontWeight:600,cursor:"pointer"}}
+                onClick={()=>setFiltroInactividad("inactivos_7")}>
+                🕐 {inactivos7} sin clicks 7d+
+              </span>
+            )}
+            <button className="btn btn-primary" onClick={() => { setEditLink(null); setShowForm(true); }}>+ Nuevo link</button>
+          </div>
         </div>
 
         {/* Filtros */}
@@ -10093,6 +10123,12 @@ function LinksPanel() {
           <div className="period-pills">
             <button className={"pill "+(filtroGrupo==="todos"?"active":"")} onClick={()=>setFiltroG("todos")}>Todos</button>
             {grupos.map(g => <button key={g} className={"pill "+(filtroGrupo===g?"active":"")} onClick={()=>setFiltroG(g)}>{g}</button>)}
+          </div>
+          <div className="period-pills">
+            <button className={"pill "+(filtroInactividad==="todos"?"active":"")} onClick={()=>setFiltroInactividad("todos")}>Todos</button>
+            <button className={"pill "+(filtroInactividad==="activos"?"active":"")} onClick={()=>setFiltroInactividad("activos")}>🟢 Activos</button>
+            <button className={"pill "+(filtroInactividad==="inactivos_7"?"active":"")} onClick={()=>setFiltroInactividad("inactivos_7")}>🟡 +7d sin click</button>
+            <button className={"pill "+(filtroInactividad==="inactivos_30"?"active":"")} onClick={()=>setFiltroInactividad("inactivos_30")}>🔴 +30d sin click</button>
           </div>
           <div style={{position:"relative", flex:1, maxWidth:280}}>
             <input type="text" value={busqueda} onChange={e=>setBusqueda(e.target.value)}
@@ -10129,12 +10165,42 @@ function LinksPanel() {
 }
 
 // ─── TARJETA DE LINK ───────────────────────────────────────────
+function generarQR(url, size = 256) {
+  // QR usando la API pública de QR Server (no requiere librería)
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}&color=4d9fff&bgcolor=0a0f1e&format=png&margin=2`;
+}
+
+async function descargarQR(url, nombre) {
+  try {
+    const qrUrl = generarQR(url, 512);
+    const res = await fetch(qrUrl);
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `qr-${nombre || "link"}.png`;
+    a.click();
+  } catch {
+    // Fallback: abrir en nueva pestaña para guardar manualmente
+    window.open(generarQR(url, 512), "_blank");
+  }
+}
+
 function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle }) {
+  const [showQR, setShowQR] = useState(false);
   const url = `${baseUrl}/r/${link.slug}`;
   const destinos = link.destinos || [];
   const clicks = link.total_clicks || 0;
   const activo = link.active !== false;
-  const ultimoClick = link.ultimo_click ? new Date(link.ultimo_click).toLocaleDateString("es-EC") : "—";
+  const ultimoClick = link.ultimo_click ? new Date(link.ultimo_click).toLocaleDateString("es-EC") : null;
+
+  // ── Contador de inactividad ───────────────────────────────────────────────
+  const diasSinClick = (() => {
+    if (!link.ultimo_click && !link.created_at) return null;
+    const ref = link.ultimo_click || link.created_at;
+    return Math.floor((Date.now() - new Date(ref).getTime()) / 86400000);
+  })();
+  const inactivoAlerta = diasSinClick !== null && diasSinClick >= 7;
+  const inactivoCritico = diasSinClick !== null && diasSinClick >= 30;
 
   // Calcular distribución de países
   const paises = (link.clicks || []).reduce((acc, c) => {
@@ -10148,27 +10214,30 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
   })();
 
   return (
-    <div className="card" style={{borderLeft: `3px solid ${activo?"var(--accent)":"var(--border)"}`, opacity:activo?1:0.6}}>
+    <div className="card" style={{borderLeft: `3px solid ${inactivoCritico?"var(--red)":inactivoAlerta?"var(--amber)":activo?"var(--accent)":"var(--border)"}`, opacity:activo?1:0.6}}>
       <div style={{display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap"}}>
         {/* Info principal */}
         <div style={{flex:1, minWidth:200}}>
-          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
+          <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap"}}>
             <span style={{fontWeight:700, fontSize:14}}>{link.nombre || link.slug}</span>
             {link.grupo && <span style={{fontSize:10, background:"rgba(77,159,255,.15)", color:"#4d9fff", padding:"2px 8px", borderRadius:10}}>{link.grupo}</span>}
             {!activo && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>Inactivo</span>}
             {link.usar_landing && <span style={{fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"2px 8px", borderRadius:10}}>🛡️ Landing</span>}
             {link.rotacion_automatica && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>🔄 Rotación</span>}
+            {/* Badge de inactividad */}
+            {inactivoCritico && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>⚠️ {diasSinClick}d sin clicks</span>}
+            {inactivoAlerta && !inactivoCritico && <span style={{fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"2px 8px", borderRadius:10}}>🕐 {diasSinClick}d sin clicks</span>}
           </div>
           <div style={{fontFamily:"var(--mono)", fontSize:11, color:"var(--accent)", marginBottom:6}}>{url}</div>
           <div style={{fontSize:11, color:"var(--muted)"}}>
-            {destinos.length} destino{destinos.length!==1?"s":""} · Último click: {ultimoClick}
+            {destinos.length} destino{destinos.length!==1?"s":""} · {ultimoClick ? `Último click: ${ultimoClick}` : "Sin clicks aún"}
           </div>
           {destinos.length > 0 && (
             <div style={{marginTop:4, fontSize:11, color:"var(--muted)"}}>
               {destinos.map((d,i) => (
                 <div key={i} style={{display:"flex", gap:6, alignItems:"center", marginTop:2}}>
                   <span style={{color: d.activo===false?"var(--red)":"var(--green)", fontSize:8}}>●</span>
-                  <span style={{color: "var(--muted)"}}>{d.nombre || "Destino "+(i+1)}</span>
+                  <span style={{color:"var(--muted)"}}>{d.nombre || "Destino "+(i+1)}</span>
                   {d.paises?.length > 0 && <span style={{fontSize:9, color:"var(--accent2)"}}>[{d.paises.join(",")}]</span>}
                   {d.limite_clicks && <span style={{fontSize:9, color:"var(--muted)"}}>{d.clicks||0}/{d.limite_clicks} clicks</span>}
                 </div>
@@ -10187,15 +10256,33 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
         {/* Acciones */}
         <div style={{display:"flex", gap:6, flexWrap:"wrap"}}>
           <button className="btn btn-primary btn-sm" onClick={onCopy} title="Copiar link">📋</button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setShowQR(v=>!v)} title="Ver / descargar QR">◻️ QR</button>
           <button className="btn btn-ghost btn-sm" onClick={onDetalle} title="Ver analytics">📊</button>
           <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Editar">✏️</button>
           <button className="btn btn-ghost btn-sm" onClick={onToggle} title={activo?"Desactivar":"Activar"} style={{color:activo?"var(--red)":"var(--green)"}}>{activo?"⏸":"▶"}</button>
           <button className="btn btn-ghost btn-sm" onClick={onDelete} title="Eliminar" style={{color:"var(--red)"}}>🗑</button>
         </div>
       </div>
+
+      {/* Panel QR */}
+      {showQR && (
+        <div style={{marginTop:12,padding:"14px 16px",background:"var(--surface2)",borderRadius:10,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap"}}>
+          <img src={generarQR(url, 160)} alt="QR" style={{width:160,height:160,borderRadius:8,imageRendering:"pixelated"}} />
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>Código QR — {link.nombre}</div>
+            <div style={{fontFamily:"var(--mono)",fontSize:11,color:"var(--accent)",marginBottom:12,wordBreak:"break-all"}}>{url}</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button className="btn btn-primary btn-sm" onClick={()=>descargarQR(url,link.nombre)}>⬇️ Descargar PNG</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setShowQR(false)}>Cerrar</button>
+            </div>
+            <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>512×512px · fondo oscuro · azul Trafficker Pro</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─── FORMULARIO DE LINK ────────────────────────────────────────
 function LinkForm({ link, onSave, onCancel, baseUrl }) {
@@ -10213,8 +10300,28 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
     rotacion_automatica: link?.rotacion_automatica ?? false,
     destinos: link?.destinos || [{ id:"d1", nombre:"Grupo 1", url:"", paises:[], limite_clicks:null, clicks:0, activo:true }],
     notas: link?.notas || "",
+    // UTMs
+    utm_source: link?.utm_source || "",
+    utm_medium: link?.utm_medium || "link",
+    utm_campaign: link?.utm_campaign || "",
+    utm_content: link?.utm_content || "",
+    utm_term: link?.utm_term || "",
   });
   const f = (k, v) => setForm(p => ({...p, [k]: v}));
+
+  // Preview URL con UTMs aplicados al primer destino activo
+  const buildUrlConUtm = (destUrl) => {
+    if (!destUrl) return "";
+    const utms = [
+      form.utm_source   && `utm_source=${encodeURIComponent(form.utm_source)}`,
+      form.utm_medium   && `utm_medium=${encodeURIComponent(form.utm_medium)}`,
+      form.utm_campaign && `utm_campaign=${encodeURIComponent(form.utm_campaign)}`,
+      form.utm_content  && `utm_content=${encodeURIComponent(form.utm_content)}`,
+      form.utm_term     && `utm_term=${encodeURIComponent(form.utm_term)}`,
+    ].filter(Boolean).join("&");
+    if (!utms) return destUrl;
+    return destUrl + (destUrl.includes("?") ? "&" : "?") + utms;
+  };
 
   function addDestino() {
     setForm(p => ({...p, destinos: [...p.destinos, { id:"d"+Date.now(), nombre:"Grupo "+(p.destinos.length+1), url:"", paises:[], limite_clicks:null, clicks:0, activo:true }]}));
@@ -10335,6 +10442,32 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
         </div>
       ))}
       <button className="btn btn-ghost btn-sm" onClick={addDestino} style={{marginBottom:"1rem"}}>+ Agregar destino</button>
+
+      {/* UTMs */}
+      <div style={{background:"var(--surface2)", borderRadius:10, padding:"12px 16px", marginBottom:"0.75rem"}}>
+        <div style={{fontWeight:600, fontSize:13, marginBottom:2}}>🏷️ Parámetros UTM</div>
+        <div style={{fontSize:11, color:"var(--muted)", marginBottom:10}}>
+          Se agregan automáticamente a cada URL de destino. Facebook los lee para atribución. Usa <code style={{color:"var(--accent)"}}>{"{{slug}}"}</code> como valor dinámico.
+        </div>
+        <div className="form-row">
+          <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>utm_source</label><input type="text" value={form.utm_source} onChange={e=>f("utm_source",e.target.value)} placeholder="facebook, tiktok, email..." style={{fontSize:12}}/></div>
+          <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>utm_medium</label><input type="text" value={form.utm_medium} onChange={e=>f("utm_medium",e.target.value)} placeholder="cpc, link, post..." style={{fontSize:12}}/></div>
+        </div>
+        <div className="form-row" style={{marginTop:8}}>
+          <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>utm_campaign</label><input type="text" value={form.utm_campaign} onChange={e=>f("utm_campaign",e.target.value)} placeholder="nombre de campaña" style={{fontSize:12}}/></div>
+          <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>utm_content</label><input type="text" value={form.utm_content} onChange={e=>f("utm_content",e.target.value)} placeholder="variante del anuncio" style={{fontSize:12}}/></div>
+        </div>
+        <div style={{marginTop:8}}>
+          <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>utm_term</label><input type="text" value={form.utm_term} onChange={e=>f("utm_term",e.target.value)} placeholder="palabra clave" style={{fontSize:12}}/></div>
+        </div>
+        {/* Preview del primer destino con UTMs */}
+        {form.destinos[0]?.url && (form.utm_source || form.utm_campaign) && (
+          <div style={{marginTop:10, padding:"6px 10px", background:"rgba(0,0,0,.2)", borderRadius:6}}>
+            <div style={{fontSize:10, color:"var(--muted)", marginBottom:2}}>Preview URL con UTMs:</div>
+            <div style={{fontSize:10, fontFamily:"var(--mono)", color:"var(--accent)", wordBreak:"break-all"}}>{buildUrlConUtm(form.destinos[0].url)}</div>
+          </div>
+        )}
+      </div>
 
       <div className="field"><label>Notas internas</label><input type="text" value={form.notas} onChange={e=>f("notas",e.target.value)} placeholder="Uso interno..." /></div>
 
