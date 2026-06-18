@@ -5866,13 +5866,19 @@ function FacebookPanel({ client, onUpdate }) {
     : null;
   const tokenExpirando = tokenAge !== null && tokenAge >= 50;
 
-  // ── Auto-sync al montar ───────────────────────────────────────────────────
+  // ── Auto-sync y auto-carga al montar ─────────────────────────────────────
   useEffect(() => {
-    if (autoSync && token && cuentas.some(c=>c.adAccountId)) {
+    if (!token || !cuentas.some(c=>c.adAccountId)) return;
+    // Auto-sync de métricas si está activado
+    if (autoSync) {
       const today = new Date().toISOString().slice(0,10);
       setSyncDate(today);
-      setTimeout(() => ejecutarSync([today]), 500);
+      setTimeout(() => ejecutarSync([today]), 300);
     }
+    // Facturación — siempre cargar al abrir (datos críticos)
+    setTimeout(() => fetchBillingData(), 600);
+    // Campañas activas — cargar al abrir
+    setTimeout(() => cargarCampanas(), 900);
   }, []);
 
   // ── Verificar token ───────────────────────────────────────────────────────
