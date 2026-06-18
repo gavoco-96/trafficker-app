@@ -1,3 +1,4 @@
+// Trafficker Pro v2.1 — build 18/06/2026
 import { useState, useEffect, useCallback, useRef, Component } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
