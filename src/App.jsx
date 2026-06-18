@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Component } from "react";
 
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL || "https://rckcrrdkxmdeexkuuqie.supabase.co";
@@ -11773,6 +11773,30 @@ function LoginScreen({ onLogin, loading }) {
 }
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
+// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error("App crash:", e, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:"2rem",fontFamily:"monospace",background:"#0a0f1e",color:"#fff",minHeight:"100vh"}}>
+          <div style={{fontSize:24,marginBottom:16}}>⚠️ Error de aplicación</div>
+          <div style={{color:"#ef4444",fontSize:14,marginBottom:12}}>{String(this.state.error)}</div>
+          <pre style={{fontSize:12,color:"#888",whiteSpace:"pre-wrap",maxWidth:800}}>
+            {this.state.error?.stack?.slice(0,600)}
+          </pre>
+          <button onClick={()=>window.location.reload()} style={{marginTop:16,padding:"8px 20px",background:"#004aad",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>
+            Recargar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [clients, setClients] = useState([]);
