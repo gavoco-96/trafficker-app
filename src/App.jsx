@@ -6012,7 +6012,7 @@ function FacebookPanel({ client, onUpdate }) {
     const resultados = [];
     for (const cuenta of activas) {
       try {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}?fields=name,amount_spent,spend_cap,balance,currency,next_bill_date,daily_spend_limit&access_token=${token}`;
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}?fields=name,amount_spent,spend_cap,balance,currency,daily_spend_limit&access_token=${token}`;
         const res  = await fetch(url);
         const d    = await res.json();
         if (d.error) { resultados.push({ id: cuenta.id, nombre: cuenta.nombre, error: d.error.message }); continue; }
@@ -6022,10 +6022,8 @@ function FacebookPanel({ client, onUpdate }) {
         const limDia   = parseFloat(d.daily_spend_limit || 0) / 100;
         const restante = limite > 0 ? limite - gastado : null;
         const pctUsado = limite > 0 ? (gastado / limite * 100) : null;
-        const proximoCobro = d.next_bill_date || null;
-        const diasParaCobro = proximoCobro
-          ? Math.ceil((new Date(proximoCobro) - new Date()) / 86400000)
-          : null;
+        const proximoCobro = null;  // next_bill_date no disponible en este nivel de acceso
+        const diasParaCobro = null;
         resultados.push({
           id: cuenta.id, nombre: cuenta.nombre,
           adAccountId: cuenta.adAccountId,
