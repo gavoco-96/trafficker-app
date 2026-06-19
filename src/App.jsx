@@ -3342,6 +3342,325 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const ingreso    = resolverFuente("sum_ingreso", allRecords, capturaData);
   const ventasReal = resolverFuente("sum_ventas", allRecords, capturaData);
 
+  // ── Config guardada por separado: real vs proyección ─────────────────────
+  const cfgReal  = client.apolloData?.embудоReal  || {};
+  const cfgProyec = client.apolloData?.proyeccionFunnel || {};
+
+  const [modo, setModo] = useState("real"); // "real" | "proyeccion"
+  const [editandoReal, setEditandoReal] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  // ── Estado: modo REAL (porcentajes ajustables por producto) ───────────────
+  const pctCapRealDefault = personasFB > 0 && personasWP > 0 ? parseFloat((personasWP/personasFB*100).toFixed(1)) : 60;
+  const [pctCapReal,     setPctCapReal]     = useState(cfgReal.pctCaptura    ?? pctCapRealDefault);
+  const [pctAsistReal,   setPctAsistReal]   = useState(cfgReal.pctAsistencia ?? 10);
+  const [pctConvReal,    setPctConvReal]    = useState(cfgReal.pctConversion  ?? 10);
+  const [precioReal,     setPrecioReal]     = useState(cfgReal.precio         ?? 297);
+
+  // ── Estado: modo PROYECCIÓN ───────────────────────────────────────────────
+  // Inversión diaria — punto de partida de la cascada
+  const diasMision  = allRecords.length || 1;
+  const invDiaProm  = gasto > 0 ? parseFloat((gasto / diasMision).toFixed(2)) : 100;
+  const cplHistorico = personasFB > 0 && gasto > 0 ? gasto / personasFB : 0;
+
+  const [invDiaria,    setInvDiaria]    = useState(cfgProyec.invDiaria    ?? invDiaProm);
+  const [diasProyec,   setDiasProyec]   = useState(cfgProyec.diasProyec   ?? 7);
+  const [pctCapProyec, setPctCapProyec] = useState(cfgProyec.pctCaptura   ?? pctCapRealDefault);
+  const [pctAsistProyec,setPctAsistProyec]=useState(cfgProyec.pctAsistencia?? pctAsistReal);
+  const [pctConvProyec, setPctConvProyec]=useState(cfgProyec.pctConversion ?? pctConvReal);
+  const [precioProyec,  setPrecioProyec] = useState(cfgProyec.precio       ?? precioReal);
+  const [savingProyec,  setSavingProyec] = useState(false);
+  const [acumularMision, setAcumularMision] = useState(cfgProyec.acumular ?? true);
+
+  // ── Cálculos REAL ─────────────────────────────────────────────────────────
+  const pctCapActual = personasFB > 0 && personasWP > 0 ? personasWP/personasFB*100 : 0;
+  const cpaFb  = personasFB > 0 && gasto > 0 ? gasto / personasFB : 0;
+  const cpaWp  = personasWP > 0 && gasto > 0 ? gasto / personasWP : 0;
+
+  // Usar porcentajes editables para calcular asistentes/ventas reales ajustados
+  const asistentesReal = Math.round(personasWP * (pctAsistReal / 100));
+  const ventasAjust    = ventasReal > 0 ? ventasReal : Math.round(asistentesReal * (pctConvReal / 100));
+  const revenueReal    = ventasAjust * precioReal;
+  const roasReal       = gasto > 0 && revenueReal > 0 ? revenueReal / gasto : 0;
+
+  // ── Cálculos PROYECCIÓN — cascada completa ────────────────────────────────
+  // 1. Inversión total del período proyectado
+  const invTotal = invDiaria * diasProyec;
+  // 2. Registros FB: basado en CPL histórico (o CPL de misión en curso)
+  const cplBase  = cplHistorico > 0 ? cplHistorico : (cpaFb > 0 ? cpaFb : 5);
+  const fbProyec = cplBase > 0 ? Math.round(invTotal / cplBase) : 0;
+  // 3. Personas WP
+  const wpProyec = Math.round(fbProyec * (pctCapProyec / 100));
+  // 4. Asistentes
+  const asistProyec = Math.round(wpProyec * (pctAsistProyec / 100));
+  // 5. Ventas
+  const ventasProyec = Math.round(asistProyec * (pctConvProyec / 100));
+  // 6. Revenue
+  const revenueProyec = ventasProyec * precioProyec;
+  const roasProyec    = invTotal > 0 && revenueProyec > 0 ? revenueProyec / invTotal : 0;
+  // 7. Costos por etapa
+  const cpFbProyec = fbProyec > 0 ? invTotal / fbProyec : 0;
+  const cpWpProyec = wpProyec > 0 ? invTotal / wpProyec : 0;
+
+  // ── Proyección acumulada (proyección + lo ya trabajado en misión) ─────────
+  const fbTotal   = acumularMision ? personasFB + fbProyec   : fbProyec;
+  const wpTotal   = acumularMision ? personasWP + wpProyec   : wpProyec;
+  const asistTotal= acumularMision ? asistentesReal + asistProyec : asistProyec;
+  const ventTotal = acumularMision ? ventasAjust + ventasProyec   : ventasProyec;
+  const invTotalFinal = acumularMision ? gasto + invTotal : invTotal;
+  const revTotalFinal = acumularMision ? revenueReal + revenueProyec : revenueProyec;
+  const roasFinal = invTotalFinal > 0 && revTotalFinal > 0 ? revTotalFinal / invTotalFinal : 0;
+
+  async function guardarReal() {
+    const updated = { ...client, apolloData: { ...(client.apolloData||{}),
+      embудоReal: { pctCaptura: pctCapReal, pctAsistencia: pctAsistReal, pctConversion: pctConvReal, precio: precioReal }
+    }};
+    await onUpdate(updated);
+    show("✓ Porcentajes del embudo real guardados", "ok");
+    setEditandoReal(false);
+  }
+
+  async function guardarProyeccion() {
+    setSavingProyec(true);
+    const updated = { ...client, apolloData: { ...(client.apolloData||{}),
+      proyeccionFunnel: { invDiaria, diasProyec, pctCaptura: pctCapProyec, pctAsistencia: pctAsistProyec, pctConversion: pctConvProyec, precio: precioProyec, acumular: acumularMision }
+    }};
+    await onUpdate(updated);
+    show("✓ Proyección guardada", "ok");
+    setSavingProyec(false);
+  }
+
+  // ── Etapas del embudo según modo ──────────────────────────────────────────
+  const stagesReal = [
+    { label:"Registros Facebook",   val:personasFB,    sub:`$${fmtNum(cpaFb,2)}/registro`, color:"#004AAD", topW:300, botW:240, h:56 },
+    { label:"Personas en WhatsApp", val:personasWP,    sub:`${fmtNum(pctCapActual,1)}% captura · $${fmtNum(cpaWp,2)}/persona`, color:"#0066cc", topW:240, botW:180, h:48 },
+    { label:"Asistentes a la clase",val:asistentesReal,sub:`${pctAsistReal}% de WP`, color:"#FF914D", topW:180, botW:120, h:40 },
+    { label:"Ventas",               val:ventasAjust,   sub:`${pctConvReal}% asistentes · $${precioReal}/venta`, color:"#10B981", topW:120, botW:70, h:32 },
+  ];
+
+  const stagesProyec = [
+    { label:"Registros FB (proyectado)",   val:fbProyec,     sub:`$${fmtNum(invDiaria,0)}/día · $${fmtNum(cpFbProyec,2)}/reg`, color:"#004AAD", topW:300, botW:240, h:56 },
+    { label:"WhatsApp (proyectado)",       val:wpProyec,     sub:`${pctCapProyec}% captura · $${fmtNum(cpWpProyec,2)}/persona`, color:"#0066cc", topW:240, botW:180, h:48 },
+    { label:"Asistentes (proyectado)",     val:asistProyec,  sub:`${pctAsistProyec}% de WP`, color:"#FF914D", topW:180, botW:120, h:40 },
+    { label:"Ventas (proyectado)",         val:ventasProyec, sub:`${pctConvProyec}% asistentes · $${precioProyec}/venta`, color:"#10B981", topW:120, botW:70, h:32 },
+  ];
+
+  const stages = modo === "real" ? stagesReal : stagesProyec;
+  const svgW = 300, gap = 4;
+  const totalH = stages.reduce((a,s) => a + s.h + gap, 0) - gap;
+  const cx = svgW / 2;
+
+  function SliderNum({ label, val, setVal, min=1, max=100, step=1, suffix="%", hint="" }) {
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+          <span style={{fontSize:11,color:"var(--muted)"}}>{label}</span>
+          <span style={{fontSize:12,fontWeight:700,color:"var(--accent2)"}}>{val}{suffix}</span>
+        </div>
+        <input type="range" min={min} max={max} step={step} value={val}
+          onChange={e=>setVal(parseFloat(e.target.value))}
+          style={{width:"100%",accentColor:"var(--accent)"}}/>
+        {hint && <div style={{fontSize:10,color:"var(--muted)",marginTop:1}}>{hint}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="card" style={{height:"100%"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div className="card-title" style={{margin:0}}>Embudo de la Misión</div>
+          <div className="period-pills">
+            <button className={"pill "+(modo==="real"?"active":"")} onClick={()=>setModo("real")}>📊 Real</button>
+            <button className={"pill "+(modo==="proyeccion"?"active":"")}
+              style={modo==="proyeccion"?{background:"rgba(255,145,77,.2)",borderColor:"rgba(255,145,77,.4)",color:"var(--orange)"}:{}}
+              onClick={()=>setModo("proyeccion")}>🎯 Proyección</button>
+          </div>
+        </div>
+
+        {/* ── PANEL REAL EDITABLE ─────────────────────────────────────────── */}
+        {modo === "real" && (
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:11,color:"var(--muted)"}}>Porcentajes del embudo · ajustables por producto</span>
+              {onUpdate && (
+                editandoReal
+                  ? <div style={{display:"flex",gap:6}}>
+                      <button className="btn btn-green btn-sm" style={{fontSize:10}} onClick={guardarReal}>💾 Guardar</button>
+                      <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={()=>setEditandoReal(false)}>Cancelar</button>
+                    </div>
+                  : <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={()=>setEditandoReal(true)}>✏️ Editar %</button>
+              )}
+            </div>
+            {editandoReal && (
+              <div style={{background:"rgba(0,74,173,.06)",border:"1px solid rgba(0,74,173,.2)",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <SliderNum label="% Captura FB→WP" val={pctCapReal} setVal={setPctCapReal} min={1} max={100}
+                    hint={`Actual real: ${fmtNum(pctCapActual,1)}%`}/>
+                  <SliderNum label="% Asistencia a la clase" val={pctAsistReal} setVal={setPctAsistReal} min={1} max={100}
+                    hint={`${Math.round(personasWP*(pctAsistReal/100))} personas asistirían`}/>
+                  <SliderNum label="% Conversión a venta" val={pctConvReal} setVal={setPctConvReal} min={1} max={100}
+                    hint={`${Math.round(personasWP*(pctAsistReal/100)*(pctConvReal/100))} ventas estimadas`}/>
+                  <div>
+                    <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>Precio del producto ($)</div>
+                    <input type="number" value={precioReal} onChange={e=>setPrecioReal(parseFloat(e.target.value)||0)}
+                      style={{width:"100%"}} min={1}/>
+                    <div style={{fontSize:10,color:"var(--muted)",marginTop:1}}>Revenue: ${fmtNum(Math.round(personasWP*(pctAsistReal/100)*(pctConvReal/100))*precioReal,2)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PANEL PROYECCIÓN — simulador de cascada ─────────────────────── */}
+        {modo === "proyeccion" && (
+          <div style={{background:"rgba(255,145,77,.06)",border:"1px solid rgba(255,145,77,.2)",borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:600,color:"var(--orange)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>
+              Simulador — cambia una variable y todo se recalcula
+            </div>
+
+            {/* Inversión diaria — palanca principal */}
+            <div style={{padding:"10px 12px",background:"rgba(0,0,0,.2)",borderRadius:8,marginBottom:10,border:"1px solid rgba(255,145,77,.3)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:12,fontWeight:600}}>💵 Inversión diaria</span>
+                <span style={{fontSize:18,fontFamily:"var(--mono)",fontWeight:700,color:"var(--orange)"}}>${fmtNum(invDiaria,0)}/día</span>
+              </div>
+              <input type="range" min={10} max={2000} step={10} value={invDiaria}
+                onChange={e=>setInvDiaria(parseFloat(e.target.value))}
+                style={{width:"100%",accentColor:"var(--orange)"}}/>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"var(--muted)",marginTop:2}}>
+                <span>$10/día</span>
+                <span style={{color:"var(--muted)"}}>Promedio actual: ${fmtNum(invDiaProm,0)}/día</span>
+                <span>$2,000/día</span>
+              </div>
+            </div>
+
+            {/* Período y porcentajes */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>Días a proyectar</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {[3,7,14,21,30].map(d=>(
+                    <button key={d} className={"btn btn-sm "+(diasProyec===d?"btn-primary":"btn-ghost")}
+                      style={{fontSize:10,padding:"2px 8px"}} onClick={()=>setDiasProyec(d)}>{d}d</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                <input type="checkbox" checked={acumularMision} onChange={e=>setAcumularMision(e.target.checked)}
+                  style={{width:14,height:14,accentColor:"var(--accent)"}}/>
+                <span style={{color:"var(--muted)"}}>Sumar a datos actuales de la misión</span>
+              </div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <SliderNum label="% Captura FB→WP" val={pctCapProyec} setVal={setPctCapProyec} min={1} max={100}
+                hint={`${wpProyec} personas irían a WP`}/>
+              <SliderNum label="% Asistencia" val={pctAsistProyec} setVal={setPctAsistProyec} min={1} max={100}
+                hint={`${asistProyec} asistirían`}/>
+              <SliderNum label="% Conversión" val={pctConvProyec} setVal={setPctConvProyec} min={1} max={100}
+                hint={`${ventasProyec} ventas`}/>
+              <div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:3}}>Precio del producto ($)</div>
+                <input type="number" value={precioProyec} onChange={e=>setPrecioProyec(parseFloat(e.target.value)||0)}
+                  style={{width:"100%"}} min={1}/>
+              </div>
+            </div>
+
+            {/* Resumen de la proyección */}
+            <div style={{background:"rgba(0,0,0,.25)",borderRadius:8,padding:"10px 12px",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:600,color:"var(--orange)",marginBottom:6}}>
+                Proyección {diasProyec} días {acumularMision?"+ misión actual":"solo"}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,fontSize:11}}>
+                {[
+                  ["Inversión",`$${fmtNum(acumularMision?invTotalFinal:invTotal,0)}`,"var(--text)"],
+                  ["Registros FB",fmtNum(acumularMision?fbTotal:fbProyec),"#4d9fff"],
+                  ["En WhatsApp",fmtNum(acumularMision?wpTotal:wpProyec),"var(--green)"],
+                  ["Asistentes",fmtNum(acumularMision?asistTotal:asistProyec),"var(--amber)"],
+                  ["Ventas",fmtNum(acumularMision?ventTotal:ventasProyec),"var(--accent2)"],
+                  ["Revenue",`$${fmtNum(acumularMision?revTotalFinal:revenueProyec,0)}`,"var(--green)"],
+                  ["ROAS",`${fmtNum(roasFinal,2)}x`,(roasFinal>=4?"var(--green)":roasFinal>=2?"var(--amber)":"var(--red)")],
+                  ["CP/Registro",`$${fmtNum(cpFbProyec,2)}`,"var(--muted)"],
+                  ["CP/WP",`$${fmtNum(cpWpProyec,2)}`,"var(--muted)"],
+                ].map(([l,v,c])=>(
+                  <div key={l} style={{textAlign:"center",padding:"6px 4px",background:"rgba(255,255,255,.03)",borderRadius:6}}>
+                    <div style={{color:"var(--muted)",fontSize:9,marginBottom:2}}>{l}</div>
+                    <div style={{fontFamily:"var(--mono)",fontWeight:700,color:c,fontSize:13}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button className="btn btn-primary btn-sm" disabled={savingProyec} onClick={guardarProyeccion}
+                style={{background:"var(--orange)",borderColor:"var(--orange)"}}>
+                {savingProyec?"Guardando...":"💾 Guardar proyección"}
+              </button>
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11}}
+                onClick={()=>{setInvDiaria(invDiaProm);setPctCapProyec(pctCapRealDefault);setPctAsistProyec(pctAsistReal);setPctConvProyec(pctConvReal);}}>
+                ↺ Restablecer
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── SVG EMBUDO VISUAL ────────────────────────────────────────────── */}
+        <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
+          <svg width={svgW} height={totalH} viewBox={`0 0 ${svgW} ${totalH}`}>
+            {stages.map((s,i)=>{
+              const y = stages.slice(0,i).reduce((a,p)=>a+p.h+gap,0);
+              const x1 = cx-s.topW/2, x2 = cx+s.topW/2;
+              const x3 = cx+s.botW/2, x4 = cx-s.botW/2;
+              const nextStage = stages[i+1];
+              const pct = i > 0 && stages[i-1].val > 0 ? (s.val/stages[i-1].val*100) : 100;
+              return (
+                <g key={i}>
+                  <polygon points={`${x1},${y} ${x2},${y} ${x3},${y+s.h} ${x4},${y+s.h}`}
+                    fill={s.color} fillOpacity={0.85-i*0.08} stroke={s.color} strokeWidth={1} strokeOpacity={0.4}/>
+                  <text x={cx} y={y+s.h/2-4} textAnchor="middle" fill="#fff" fontSize="11" fontWeight="700">
+                    {s.label}
+                  </text>
+                  <text x={cx} y={y+s.h/2+9} textAnchor="middle" fill="rgba(255,255,255,.7)" fontSize="9">
+                    {s.val > 0 ? fmtNum(s.val,0) : "—"} {i>0&&pct<100?`(${fmtNum(pct,0)}%)`:""}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* Métricas clave del modo actual */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+          {modo === "real" ? [
+            ["Gasto total",`$${fmtNum(gasto,2)}`,"var(--text)"],
+            ["ROAS real",roasReal>0?`${fmtNum(roasReal,2)}x`:"—",roasReal>=4?"var(--green)":roasReal>=2?"var(--amber)":"var(--red)"],
+            ["Revenue",revenueReal>0?`$${fmtNum(revenueReal,0)}`:"—","var(--green)"],
+          ] : [
+            ["Inversión",`$${fmtNum(invDiaria,0)}/día`,"var(--orange)"],
+            ["ROAS proy.",`${fmtNum(roasProyec,2)}x`,roasProyec>=4?"var(--green)":roasProyec>=2?"var(--amber)":"var(--red)"],
+            ["Revenue",`$${fmtNum(revenueProyec,0)}`,"var(--green)"],
+          ].map(([l,v,c])=>(
+            <div key={l} style={{textAlign:"center",padding:"6px",background:"var(--surface2)",borderRadius:8}}>
+              <div style={{fontSize:9,color:"var(--muted)"}}>{l}</div>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,color:c,fontSize:12}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+  // ── Datos REALES desde el motor de KPIs ──────────────────────────────────
+  const personasFB = resolverFuente("sum_resultados", allRecords, capturaData) || resolverFuente("cap_total_form", allRecords, capturaData);
+  const personasWP = resolverFuente("cap_total_wp", allRecords, capturaData) || resolverFuente("sum_personas_wp", allRecords, capturaData);
+  const gasto      = resolverFuente("sum_inversion", allRecords, capturaData);
+  const ingreso    = resolverFuente("sum_ingreso", allRecords, capturaData);
+  const ventasReal = resolverFuente("sum_ventas", allRecords, capturaData);
+
   // ── Config de proyección guardada en el cliente ──────────────────────────
   const proyConfig = client.apolloData?.proyeccionFunnel || {};
   const [modoProyeccion, setModoProyeccion] = useState(false);
@@ -3397,179 +3716,6 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const gap    = 4;
   const totalH = stages.reduce((a,s) => a + s.h + gap, 0) - gap;
   const cx     = svgW / 2;
-
-  return (
-    <>
-      {toastEl}
-      <div className="card" style={{ height:"100%" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-          <div className="card-title" style={{ margin:0 }}>Embudo de la Misión</div>
-          <div className="period-pills">
-            <button className={"pill " + (!modoProyeccion ? "active" : "")} onClick={() => setModoProyeccion(false)}>📊 Real</button>
-            <button className={"pill " + (modoProyeccion ? "active" : "")}
-              style={modoProyeccion ? { background:"rgba(255,145,77,.2)", borderColor:"rgba(255,145,77,.4)", color:"var(--orange)" } : {}}
-              onClick={() => setModoProyeccion(true)}>🎯 Proyección</button>
-          </div>
-        </div>
-
-        {/* PANEL DE PROYECCIÓN */}
-        {modoProyeccion && (
-          <div style={{ background:"rgba(255,145,77,.06)", border:"1px solid rgba(255,145,77,.2)", borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:"var(--orange)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:10 }}>
-              Ajusta los parámetros de proyección
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-              <div className="field" style={{ marginBottom:0 }}>
-                <label style={{ fontSize:11 }}>% Asistencia al evento</label>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <input type="number" min="1" max="100" step="1" value={pctAsistencia}
-                    onChange={e => setPctAsistencia(Math.min(100, Math.max(1, parseFloat(e.target.value)||10)))}
-                    style={{ width:70 }} />
-                  <span style={{ color:"var(--muted)", fontSize:12 }}>% de {fmtNum(personasWP,0)} WP = <strong style={{ color:"var(--orange)" }}>{asistentesProyec}</strong></span>
-                </div>
-              </div>
-              <div className="field" style={{ marginBottom:0 }}>
-                <label style={{ fontSize:11 }}>% Conversión a ventas</label>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <input type="number" min="1" max="100" step="0.5" value={pctConversion}
-                    onChange={e => setPctConversion(Math.min(100, Math.max(0.1, parseFloat(e.target.value)||10)))}
-                    style={{ width:70 }} />
-                  <span style={{ color:"var(--muted)", fontSize:12 }}>% de {asistentesProyec} = <strong style={{ color:"var(--green)" }}>{ventasProyec}</strong></span>
-                </div>
-              </div>
-              <div className="field" style={{ marginBottom:0 }}>
-                <label style={{ fontSize:11 }}>Precio del producto ($)</label>
-                <input type="number" min="1" step="1" value={precioProducto}
-                  onChange={e => setPrecioProducto(Math.max(1, parseFloat(e.target.value)||297))}
-                  style={{ width:100 }} />
-              </div>
-              <div className="field" style={{ marginBottom:0 }}>
-                <label style={{ fontSize:11 }}>ROAS meta</label>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <input type="number" min="0.1" max="100" step="0.5" value={metaRoasProyec}
-                    onChange={e => setMetaRoasProyec(Math.max(0.1, parseFloat(e.target.value)||4))}
-                    style={{ width:70 }} />
-                  <span style={{ color:"var(--muted)", fontSize:11 }}>x</span>
-                </div>
-              </div>
-            </div>
-            {/* Resumen de proyección */}
-            <div style={{ marginTop:10, display:"flex", gap:16, flexWrap:"wrap", borderTop:"1px solid rgba(255,145,77,.2)", paddingTop:10 }}>
-              <div style={{ fontSize:12 }}>
-                <span style={{ color:"var(--muted)" }}>Revenue proyectado: </span>
-                <strong style={{ color:"var(--green)", fontSize:15, fontFamily:"var(--mono)" }}>${fmtNum(revenueProyec,2)}</strong>
-              </div>
-              <div style={{ fontSize:12 }}>
-                <span style={{ color:"var(--muted)" }}>ROAS proyectado: </span>
-                <strong style={{ color: roasProyec >= metaRoasProyec ? "var(--green)" : roasProyec >= metaRoasProyec*0.7 ? "var(--amber)" : "var(--red)", fontFamily:"var(--mono)" }}>
-                  {gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}
-                </strong>
-                <span style={{ color:"var(--muted)", fontSize:10 }}> / meta {metaRoasProyec}x</span>
-              </div>
-              <div style={{ fontSize:12 }}>
-                <span style={{ color:"var(--muted)" }}>CPA proyectado: </span>
-                <strong style={{ fontFamily:"var(--mono)", color:"var(--accent2)" }}>
-                  {ventasProyec > 0 && gasto > 0 ? "$"+fmtNum(gasto/ventasProyec,2) : "—"}
-                </strong>
-              </div>
-              {inversionNecesaria > 0 && (
-                <div style={{ fontSize:12 }}>
-                  <span style={{ color:"var(--muted)" }}>Inversión para ROAS {metaRoasProyec}x: </span>
-                  <strong style={{ fontFamily:"var(--mono)", color: gasto >= inversionNecesaria ? "var(--green)" : "var(--orange)" }}>
-                    ${fmtNum(inversionNecesaria,2)}
-                  </strong>
-                  {gasto > 0 && <span style={{ fontSize:10, color:"var(--muted)" }}> (actual ${fmtNum(gasto,2)})</span>}
-                </div>
-              )}
-              {onUpdate && (
-                <button className="btn btn-ghost btn-sm" style={{ marginLeft:"auto", fontSize:11 }}
-                  disabled={savingProyec} onClick={guardarProyeccion}>
-                  {savingProyec ? "Guardando..." : "💾 Guardar parámetros"}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div style={{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" }}>
-          <svg width={svgW} height={totalH} viewBox={"0 0 "+svgW+" "+totalH} style={{ flexShrink:0, display:"block" }}>
-            <defs>
-              {stages.map((s,i) => (
-                <linearGradient key={i} id={"afg"+i} x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor={s.color} stopOpacity={modoProyeccion && i >= 2 ? "0.5" : "1"} />
-                  <stop offset="100%" stopColor={s.color} stopOpacity={modoProyeccion && i >= 2 ? "0.25" : "0.55"} />
-                </linearGradient>
-              ))}
-            </defs>
-            {stages.map((s,i) => {
-              const y = stages.slice(0,i).reduce((a,p) => a+p.h+gap, 0);
-              const tl = cx-s.topW/2, tr = cx+s.topW/2;
-              const bl = cx-s.botW/2, br = cx+s.botW/2;
-              const ey = s.h*0.18;
-              return (
-                <g key={i}>
-                  {/* Línea punteada para etapas proyectadas */}
-                  <path d={"M "+tl+" "+(y+ey)+" L "+bl+" "+(y+s.h-ey*0.5)+" L "+br+" "+(y+s.h-ey*0.5)+" L "+tr+" "+(y+ey)+" Z"}
-                    fill={"url(#afg"+i+")"}
-                    strokeDasharray={modoProyeccion && i >= 2 ? "4 3" : "none"}
-                    stroke={modoProyeccion && i >= 2 ? s.color : "none"}
-                    strokeWidth={modoProyeccion && i >= 2 ? "1.5" : "0"} />
-                  <ellipse cx={cx} cy={y+s.h-ey*0.5} rx={s.botW/2} ry={ey*0.6} fill={s.color} fillOpacity={modoProyeccion && i>=2 ? "0.25" : "0.5"} />
-                  <ellipse cx={cx} cy={y+ey} rx={s.topW/2} ry={ey} fill={s.color} fillOpacity="0.2"
-                    stroke={s.color} strokeWidth="1.5" strokeOpacity="0.7"
-                    strokeDasharray={modoProyeccion && i >= 2 ? "4 3" : "none"} />
-                  <text x={cx} y={y+s.h*0.52} textAnchor="middle" dominantBaseline="middle"
-                    fill="#fff" fontSize={Math.max(s.h*0.28, 11)} fontWeight="800" fontFamily="var(--mono)">
-                    {s.val > 0 ? s.val.toLocaleString("es-EC") : "—"}
-                  </text>
-                  {/* Ícono de proyección */}
-                  {modoProyeccion && i >= 2 && (
-                    <text x={cx+s.topW/2-10} y={y+10} fontSize="10" fill={s.color} fillOpacity="0.8">~</text>
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-
-          {/* Leyenda lateral */}
-          <div style={{ display:"flex", flexDirection:"column", gap:4, paddingTop:4, flex:1 }}>
-            {stages.map((s,i) => (
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:8, minHeight:(s.h+gap)+"px" }}>
-                <div style={{ width:10, height:10, borderRadius:"50%", background:s.color,
-                  boxShadow:"0 0 6px "+s.color, flexShrink:0,
-                  opacity: modoProyeccion && i >= 2 ? 0.6 : 1 }} />
-                <div>
-                  <div style={{ fontWeight:700, fontSize:12, color:s.color,
-                    opacity: modoProyeccion && i >= 2 ? 0.8 : 1 }}>
-                    {s.label}
-                    {modoProyeccion && i >= 2 && <span style={{ fontSize:9, marginLeft:4, color:"var(--orange)" }}>proyección</span>}
-                  </div>
-                  <div style={{ fontSize:10, color:"var(--muted)" }}>{s.sub}</div>
-                </div>
-              </div>
-            ))}
-            {/* Métricas reales */}
-            <div style={{ marginTop:8, borderTop:"1px solid var(--border)", paddingTop:8, display:"flex", flexDirection:"column", gap:4 }}>
-              {cpaFb > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA FB: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaFb,2)}</span></div>}
-              {cpaWp > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>CPA WP: <span style={{ color:"var(--accent2)", fontWeight:700 }}>${fmtNum(cpaWp,2)}</span></div>}
-              {modoProyeccion
-                ? <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS proy: <span style={{ color: roasProyec >= metaRoasProyec ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{gasto > 0 ? fmtNum(roasProyec,2)+"x" : "—"}</span></div>
-                : roasReal > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>ROAS: <span style={{ color: roasReal >= (client.apolloData?.kpisApollo?.find(k=>k.id==="roas")?.meta || 4) ? "var(--green)" : "var(--amber)", fontWeight:700 }}>{fmtNum(roasReal,2)}x</span></div>}
-              {gasto > 0 && <div style={{ fontSize:11, color:"var(--muted)" }}>Gasto: <span style={{ fontFamily:"var(--mono)", color:"var(--text)" }}>${fmtNum(gasto,2)}</span></div>}
-              {modoProyeccion && revenueProyec > 0 && (
-                <div style={{ fontSize:12, fontWeight:700, color:"var(--green)", marginTop:4, padding:"4px 8px", background:"rgba(16,185,129,.1)", borderRadius:6 }}>
-                  💰 ${fmtNum(revenueProyec,2)} revenue estimado
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-
 // ─── CALENDARIO HERMES ────────────────────────────────────────────────────────
 const TIPO_AGENDA = [
   { id: "grabacion",    label: "Grabacion",              cls: "cal-event-grabacion" },
