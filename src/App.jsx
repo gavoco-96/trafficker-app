@@ -3343,7 +3343,7 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
   const ventasReal = resolverFuente("sum_ventas", allRecords, capturaData);
 
   // ── Config guardada por separado: real vs proyección ─────────────────────
-  const cfgReal  = client.apolloData?.embудоReal  || {};
+  const cfgReal  = client.apolloData?.embudoReal  || {};
   const cfgProyec = client.apolloData?.proyeccionFunnel || {};
 
   const [modo, setModo] = useState("real"); // "real" | "proyeccion"
@@ -3413,7 +3413,7 @@ function ApolloFunnel({ client, period, from, to, onUpdate }) {
 
   async function guardarReal() {
     const updated = { ...client, apolloData: { ...(client.apolloData||{}),
-      embудоReal: { pctCaptura: pctCapReal, pctAsistencia: pctAsistReal, pctConversion: pctConvReal, precio: precioReal }
+      embudoReal: { pctCaptura: pctCapReal, pctAsistencia: pctAsistReal, pctConversion: pctConvReal, precio: precioReal }
     }};
     await onUpdate(updated);
     show("✓ Porcentajes del embudo real guardados", "ok");
