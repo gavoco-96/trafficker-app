@@ -9940,28 +9940,19 @@ function ConexionWAPanel() {
               );
             })()}
 
-            {/* QR — solo cuando es necesario */}
-            {(status.qr_pendiente || status.estado === "esperando_qr") && !status.connected && (
+            {/* QR — mostrar cuando no está conectado, independientemente del estado exacto */}
+            {!status.connected && (
               <div style={{textAlign:"center",marginBottom:16}}>
                 <div style={{fontSize:13,color:"var(--muted)",marginBottom:12}}>
                   Escanea desde WhatsApp → <strong>⋮ → Dispositivos vinculados → Vincular dispositivo</strong>
                 </div>
                 <iframe
                   src={`${BOT_URL}/qr`}
-                  style={{width:"100%",maxWidth:380,height:400,border:"none",borderRadius:12,background:"var(--bg)",display:"block",margin:"0 auto"}}
+                  style={{width:"100%",maxWidth:380,height:420,border:"none",borderRadius:12,background:"var(--bg)",display:"block",margin:"0 auto"}}
                   title="QR WhatsApp"
                   key={checkingAt?.getTime()}
                 />
                 <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>El QR expira en ~60 segundos. Se genera uno nuevo automáticamente.</div>
-              </div>
-            )}
-
-            {/* Desconectado sin QR — reconectando */}
-            {!status.connected && !status.qr_pendiente && !status.error && status.estado !== "esperando_qr" && (
-              <div style={{textAlign:"center",padding:"1.5rem",color:"var(--muted)",fontSize:13}}>
-                <div style={{fontSize:24,marginBottom:8}}>⟳</div>
-                El bot está reconectando automáticamente...<br/>
-                <span style={{fontSize:11}}>El QR aparecerá aquí cuando esté listo.</span>
               </div>
             )}
 
