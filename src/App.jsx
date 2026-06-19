@@ -1222,21 +1222,37 @@ const DEFAULT_COLS_WA     = ["date","inversion","alcance","cpm","cpc","ctr","lea
 const DEFAULT_COLS_WEB    = ["date","inversion","alcance","cpm","cpc","ctr","sesiones","agregar_carrito","compras","ingreso","roas"];
 const DEFAULT_COLS_LAUNCH = ["date","inversion","alcance","cpm","cpc","ctr","clientesPotenciales","formularios","personas_wp","costo_wp","pct_captura_wp","resultados","cpa","ingreso"];
 
-function useColPrefs(client, isWA, isWeb) {
+function useColPrefs(client, isWA, isWeb, onUpdate) {
   const storageKey = "cols_" + (client?.id || "default");
   const defaults = isWA ? DEFAULT_COLS_WA : isWeb ? DEFAULT_COLS_WEB : DEFAULT_COLS_LAUNCH;
   const [cols, setCols] = useState(() => {
+    // Prioridad: Supabase → localStorage → defaults
+    if (client?.metricasConfig?.colsCliente?.length) return client.metricasConfig.colsCliente;
     try {
       const s = typeof localStorage !== "undefined" ? localStorage.getItem(storageKey) : null;
       if (s) { const parsed = JSON.parse(s); if (Array.isArray(parsed) && parsed.length > 0) return parsed; }
     } catch {}
     return defaults;
   });
+
+  // Sincronizar si client.metricasConfig.colsCliente cambia externamente
+  useEffect(() => {
+    if (client?.metricasConfig?.colsCliente?.length) {
+      setCols(client.metricasConfig.colsCliente);
+    }
+  }, [client?.id]);
+
   function toggle(key) {
     if (key === "date") return;
     setCols(prev => {
       const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      // Guardar en localStorage (inmediato)
       try { if (typeof localStorage !== "undefined") localStorage.setItem(storageKey, JSON.stringify(next)); } catch {}
+      // Guardar en Supabase si hay onUpdate
+      if (onUpdate && client?.id) {
+        const updated = { ...client, metricasConfig: { ...(client.metricasConfig||{}), colsCliente: next } };
+        onUpdate(updated).catch(() => {});
+      }
       return next;
     });
   }
@@ -4411,7 +4427,7 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
 // Tabla de métricas diarias para el cliente — componente separado para evitar IIFEs
 function ClientMetricasTable({ client, period, from, to, onUpdate }) {
   const isApollo = client.producto?.startsWith("APOLLO");
-  const { cols: rawCols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web");
+  const { cols: rawCols, toggle } = useColPrefs(client, client.niche === "whatsapp", client.niche === "web", onUpdate);
   const cols = isApollo
     ? [...new Set([...rawCols, "personas_wp", "costo_wp", "pct_captura_wp"])]
     : rawCols;
@@ -13059,7 +13075,21 @@ function LoginScreen({ onLogin, loading }) {
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [session, setSession] = useState(null);
+  // Persistir sesión en sessionStorage para sobrevivir F5 sin relogin
+  const [session, setSession] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem("tp_session");
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  function saveSession(s) {
+    setSession(s);
+    try {
+      if (s) sessionStorage.setItem("tp_session", JSON.stringify(s));
+      else sessionStorage.removeItem("tp_session");
+    } catch {}
+  }
   const [clients, setClients] = useState([]);
   const [banners, setBanners] = useState([]);
   const [globalConfig, setGlobalConfig] = useState({ commands: DEFAULT_COMMANDS_FRONT, webhookToken: "" });
@@ -13119,7 +13149,7 @@ export default function App() {
 
   async function handleLogin(username, password) {
     setLoginLoading(true);
-    if (username === ADMIN.username && password === ADMIN.password) { setSession({ role: "admin" }); setLoginLoading(false); return true; }
+    if (username === ADMIN.username && password === ADMIN.password) { saveSession({ role: "admin" }); setLoginLoading(false); return true; }
     try {
       const r = await fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: H });
       if (!r.ok) throw new Error("Sin conexión a BD");
@@ -13127,7 +13157,7 @@ export default function App() {
       const all = rows.map(row => row.data).filter(item => item && !item.id?.startsWith("__"));
       setClients(all);
       const found = all.find(c => c.username === username && c.password === password);
-      if (found) { setSession({ role: "client", clientId: found.id }); setLoginLoading(false); return true; }
+      if (found) { saveSession({ role: "client", clientId: found.id }); setLoginLoading(false); return true; }
     } catch (e) { console.error("Login error:", e); }
     setLoginLoading(false); return false;
   }
@@ -13175,7 +13205,7 @@ export default function App() {
       {session?.role === "admin" && (
         <AdminPanel
           clients={clients}
-          onLogout={() => setSession(null)}
+          onLogout={() => saveSession(null)}
           onUpdate={updateClient}
           onAddClient={addClient}
           onDeleteClient={deleteClient}
@@ -13190,10 +13220,10 @@ export default function App() {
       {session?.role === "filmmaker" && (() => {
         const fm = filmmakers.find(f => f.id === session.filmmakerId);
         if (!fm) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
-        return <FilmakerDashboard filmmaker={fm} allClients={clients} onLogout={() => setSession(null)} onUpdate={updateFilmmaker} />;
+        return <FilmakerDashboard filmmaker={fm} allClients={clients} onLogout={() => saveSession(null)} onUpdate={updateFilmmaker} />;
       })()}
       {session?.role === "client" && clientSession && (
-        <ClientDashboard client={clientSession} onLogout={() => setSession(null)} banners={clientBanners} onUpdate={updateClient} />
+        <ClientDashboard client={clientSession} onLogout={() => saveSession(null)} banners={clientBanners} onUpdate={updateClient} />
       )}
       {session?.role === "client" && !clientSession && <LoginScreen onLogin={handleLogin} loading={loginLoading} />}
     </>
