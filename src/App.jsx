@@ -8861,7 +8861,7 @@ function MiniLineChart({ titulo, rows, metricas }) {
 
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
-function CplTradingChart({ client, onUpdate }) {
+function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const { token, cuentas: _cuentas } = client.fbConfig || {};
   const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
 
@@ -8877,6 +8877,16 @@ function CplTradingChart({ client, onUpdate }) {
   });
   const fetchCount = useRef(0);
   const INTERVALO  = 30;
+
+  // Merge external puntos (from parent interval) with local
+  useEffect(() => {
+    if (!externalPuntos?.length) return;
+    setPuntosRT(prev => {
+      const mapa = {};
+      [...prev, ...externalPuntos].forEach(p => { mapa[p.ts] = p; });
+      return Object.values(mapa).sort((a,b) => a.ts-b.ts).slice(-2880);
+    });
+  }, [externalPuntos]);
 
   // ── Historial diario ──────────────────────────────────────────────────────
   const histDiario = [
@@ -8998,8 +9008,15 @@ function CplTradingChart({ client, onUpdate }) {
     if (!token || !adAccountId) return;
     fetchHistoricoHoy();
     fetchCplActual();
-    const t = setInterval(fetchCplActual, INTERVALO*1000);
-    return () => clearInterval(t);
+    // Intervalo persistente — no se detiene al cambiar de tab
+    // Se limpia solo cuando el componente padre (AdminClientDetail) desmonta
+    const t = setInterval(fetchCplActual, INTERVALO * 1000);
+    // Guardar referencia global para que persista entre renders
+    window.__cplInterval = t;
+    return () => {
+      clearInterval(t);
+      if (window.__cplInterval === t) delete window.__cplInterval;
+    };
   }, [token, adAccountId]);
 
   // ── Construir datos según rango ────────────────────────────────────────────
@@ -10447,6 +10464,22 @@ function LinksPanel() {
         {/* Formulario */}
         {showForm && <LinkForm link={editLink} onSave={handleSave} onCancel={()=>{setShowForm(false);setEditLink(null);}} baseUrl={BASE_URL} />}
 
+        {/* Exportar lista — CSV y XLS */}
+        {links.length > 0 && !showForm && (
+          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+            <BotonesExportar
+              headers={["Nombre","Slug","URL completa","Grupo","Clicks","Último click","Activo","UTM source","UTM medium","UTM campaign","Destinos"]}
+              rows={linksFiltrados.map(l=>[
+                l.nombre||"", l.slug||"", `${BASE_URL}/r/${l.slug}`, l.grupo||"",
+                l.total_clicks||0, l.ultimo_click||"", l.active!==false?"Sí":"No",
+                l.utm_source||"", l.utm_medium||"", l.utm_campaign||"",
+                (l.destinos||[]).map(d=>d.nombre+": "+d.url).join(" | ")
+              ])}
+              nombreArchivo={"links-"+new Date().toISOString().slice(0,10)}
+            />
+          </div>
+        )}
+
         {/* Lista de links */}
         {linksFiltrados.length === 0 ? (
           <div className="empty"><div style={{fontSize:32,opacity:.3}}>🔗</div><div style={{marginTop:8}}>Sin links aún. Crea el primero.</div></div>
@@ -11071,6 +11104,47 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
   const t = buildTotals(client.niche, rows);
   const nicheLabel = isWA ? "WhatsApp" : isWeb ? "Sitio web" : "Lanzamiento";
 
+  // ── CPL en tiempo real persistente — sobrevive al cambio de tabs ─────────
+  const cplIntervalRef = useRef(null);
+  const [cplRtPuntos, setCplRtPuntos] = useState(() => {
+    const hoy = new Date().toISOString().slice(0,10);
+    return client.cplRtData?.[hoy] || [];
+  });
+
+  useEffect(() => {
+    const fbToken = client.fbConfig?.token;
+    const accId   = client.fbConfig?.cuentas?.[0]?.adAccountId || client.fbConfig?.adAccountId;
+    if (!fbToken || !accId) return;
+
+    async function fetchCpl() {
+      try {
+        const hoy = new Date().toISOString().slice(0,10);
+        const url = `https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${fbToken}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (!json.error && json.data?.length) {
+          const d = json.data[0];
+          const inv = parseFloat(d.spend)||0;
+          const la  = (d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
+          const nl  = la ? parseFloat(la.value) : 0;
+          if (inv>0 && nl>0) {
+            const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
+            setCplRtPuntos(prev => {
+              const mapa={};
+              [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
+              return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+            });
+          }
+        }
+      } catch {}
+    }
+
+    fetchCpl();
+    cplIntervalRef.current = setInterval(fetchCpl, 30000);
+    return () => { if (cplIntervalRef.current) clearInterval(cplIntervalRef.current); };
+  }, [client.id]);
+
+
   async function handleUpdate(updated) {
     onUpdate(updated);
     const r = await db.upsert(updated);
@@ -11151,7 +11225,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         {tab === "metricas" && (
           <div>
             {/* Gráfica CPL tiempo real — primera */}
-            {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} onUpdate={handleUpdate} />}
+            {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} onUpdate={handleUpdate} externalPuntos={cplRtPuntos} />}
             <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
             {client.producto?.startsWith("APOLLO") && (
               <div style={{ marginTop:"1.5rem" }}>
@@ -11517,6 +11591,109 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── CAMPAÑAS DE MENSAJERÍA ───────────────────────────────────────────────────
+function CampanasPanel({ clients }) {
+  const [campanas, setCampanas] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [sending, setSending]   = useState(null);
+  const { show, el: toastEl }   = useToast();
+  const blank = { id:"", nombre:"", mensaje:"", destinatarios:"todos", clientesSeleccionados:[], programado:false, fechaEnvio:new Date().toISOString().slice(0,10), horaEnvio:"08:00", estado:"borrador" };
+  const [form, setForm] = useState({...blank});
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  function toggleCliente(id) { setForm(p=>{ const sel=p.clientesSeleccionados; return {...p,clientesSeleccionados:sel.includes(id)?sel.filter(x=>x!==id):[...sel,id]}; }); }
+  function getDestinatarios(c) {
+    if (c.destinatarios==="todos") return clients.filter(x=>x.tgConfig?.token&&(x.tgConfig?.chatId||x.tgConfig?.chatIds?.[0]?.chatId));
+    return clients.filter(x=>c.clientesSeleccionados.includes(x.id)&&x.tgConfig?.token&&(x.tgConfig?.chatId||x.tgConfig?.chatIds?.[0]?.chatId));
+  }
+  function saveCampana() {
+    if (!form.nombre||!form.mensaje) return show("Completa nombre y mensaje","err");
+    if (form.destinatarios==="seleccionados"&&!form.clientesSeleccionados.length) return show("Selecciona al menos un cliente","err");
+    const nueva={...form,id:form.id||"camp"+Date.now(),estado:"borrador"};
+    setCampanas(prev=>{const idx=prev.findIndex(c=>c.id===nueva.id);return idx>=0?prev.map((c,i)=>i===idx?nueva:c):[...prev,nueva];});
+    setForm({...blank}); setShowForm(false); show("✓ Campaña guardada","ok");
+  }
+  async function sendCampana(campana) {
+    const dest=getDestinatarios(campana);
+    if (!dest.length) return show("Ningún destinatario tiene Telegram configurado","err");
+    setSending(campana.id); let ok=0,err=0;
+    for (const c of dest) {
+      try {
+        const chatId=c.tgConfig?.chatIds?.[0]?.chatId||c.tgConfig?.chatId;
+        const r=await sendTelegram(c.tgConfig.token,chatId,campana.mensaje);
+        if (r.ok) ok++; else err++;
+      } catch { err++; }
+    }
+    setCampanas(prev=>prev.map(c=>c.id===campana.id?{...c,estado:"enviada",ultimoEnvio:new Date().toLocaleString("es-EC")}:c));
+    show(`✓ Enviado: ${ok} clientes${err>0?` · ${err} errores`:""}`,ok>0?"ok":"err"); setSending(null);
+  }
+  function editCampana(c) { setForm({...c}); setShowForm(true); }
+  function deleteCampana(id) { if(window.confirm("¿Eliminar?")) setCampanas(prev=>prev.filter(c=>c.id!==id)); }
+  const estadoBadge=(e)=>e==="enviada"?"badge-paid":e==="programada"?"badge-progress":"badge-pending";
+
+  return (
+    <>
+      {toastEl}
+      <div>
+        <div className="sec-header">
+          <div><div className="sec-title">Campañas de mensajería</div><div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Envía mensajes a grupos de clientes a la vez</div></div>
+          <button className="btn btn-primary btn-sm" onClick={()=>{setForm({...blank});setShowForm(true);}}>+ Nueva campaña</button>
+        </div>
+        {showForm && (
+          <div className="card" style={{borderColor:"rgba(124,58,237,.4)"}}>
+            <div className="card-title">{form.id?"Editar campaña":"Nueva campaña"}</div>
+            <div className="form-row">
+              <div className="field"><label>Nombre</label><input type="text" value={form.nombre} onChange={e=>f("nombre",e.target.value)} placeholder="Ej: Reporte semanal junio"/></div>
+              <div className="field"><label>Destinatarios</label>
+                <select value={form.destinatarios} onChange={e=>f("destinatarios",e.target.value)}>
+                  <option value="todos">Todos los clientes con Telegram</option>
+                  <option value="seleccionados">Clientes específicos</option>
+                </select>
+              </div>
+            </div>
+            {form.destinatarios==="seleccionados" && (
+              <div className="field" style={{marginBottom:"1rem"}}><label>Selecciona clientes</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+                  {clients.map(c=>{const tgOk=!!(c.tgConfig?.token&&(c.tgConfig?.chatId||c.tgConfig?.chatIds?.[0]?.chatId));const sel=form.clientesSeleccionados.includes(c.id);return(<div key={c.id} className={"fb-chip "+(sel?"active":"")} style={{opacity:tgOk?1:0.4}} onClick={()=>tgOk&&toggleCliente(c.id)}>{sel?"✓ ":""}{c.name}{!tgOk&&<span style={{fontSize:10,marginLeft:4,color:"var(--red)"}}>sin TG</span>}</div>);})}
+                </div>
+              </div>
+            )}
+            <div className="field" style={{marginBottom:"1rem"}}>
+              <label>Mensaje</label>
+              <textarea value={form.mensaje} onChange={e=>f("mensaje",e.target.value)} placeholder="Escribe el mensaje..." style={{minHeight:120}}/>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>{form.destinatarios==="todos"?`Se enviará a ${clients.filter(c=>c.tgConfig?.token&&(c.tgConfig?.chatId||c.tgConfig?.chatIds?.[0]?.chatId)).length} clientes`:`Se enviará a ${form.clientesSeleccionados.length} clientes`}</div>
+            </div>
+            <div className="form-row" style={{marginBottom:"1rem"}}>
+              <label style={{fontSize:12,color:"var(--muted)",fontWeight:500,textTransform:"uppercase",letterSpacing:".06em",gridColumn:"1/-1",marginBottom:4}}>
+                <input type="checkbox" checked={form.programado} onChange={e=>f("programado",e.target.checked)} style={{width:14,height:14,marginRight:6,accentColor:"var(--accent)"}}/>Programar envío
+              </label>
+              {form.programado && <><div className="field" style={{marginBottom:0}}><label>Fecha</label><input type="date" value={form.fechaEnvio} onChange={e=>f("fechaEnvio",e.target.value)}/></div><div className="field" style={{marginBottom:0}}><label>Hora (Quito)</label><input type="time" value={form.horaEnvio} onChange={e=>f("horaEnvio",e.target.value)}/></div></>}
+            </div>
+            <div style={{display:"flex",gap:8}}><button className="btn btn-primary btn-sm" onClick={saveCampana}>Guardar</button><button className="btn btn-ghost btn-sm" onClick={()=>setShowForm(false)}>Cancelar</button></div>
+          </div>
+        )}
+        {campanas.length===0&&!showForm&&<div className="empty"><div style={{fontSize:28,marginBottom:8,opacity:.3}}>📣</div><div>Sin campañas. Crea la primera.</div></div>}
+        {campanas.map(c=>{const dest=getDestinatarios(c);const isSending=sending===c.id;return(
+          <div key={c.id} className="card" style={{marginBottom:"0.75rem"}}>
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><div style={{fontWeight:600,fontSize:14}}>{c.nombre}</div><span className={"badge "+estadoBadge(c.estado)} style={{fontSize:10}}>{c.estado}</span></div>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>{c.destinatarios==="todos"?`Todos (${dest.length} con Telegram)`:`${dest.length} clientes`}{c.programado&&` · ${c.fechaEnvio} ${c.horaEnvio}`}{c.ultimoEnvio&&` · Último: ${c.ultimoEnvio}`}</div>
+                <div style={{fontSize:12,color:"var(--text)",background:"var(--surface2)",padding:"6px 10px",borderRadius:6,fontFamily:"var(--mono)",whiteSpace:"pre-wrap",maxHeight:60,overflow:"hidden"}}>{c.mensaje.slice(0,120)}{c.mensaje.length>120?"...":""}</div>
+              </div>
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button className="btn btn-ghost btn-sm" onClick={()=>editCampana(c)}>✏️</button>
+                <button className="btn btn-primary btn-sm" disabled={isSending||!dest.length} style={{background:"var(--accent)"}} onClick={()=>sendCampana(c)}>{isSending?"Enviando...":"📤 Enviar"}</button>
+                <button className="btn btn-danger btn-sm" onClick={()=>deleteCampana(c.id)}>×</button>
+              </div>
+            </div>
+          </div>
+        );})}
+      </div>
+    </>
   );
 }
 
