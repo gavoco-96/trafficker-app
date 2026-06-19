@@ -11581,7 +11581,6 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
             {tab==="inicio"?"🏠 Inicio":tab==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):tab==="captura"?"📊 Captura WP":tab==="antecedentes"?"📚 Historial":tab==="estudio"?"🎬 Estudio":tab==="embudos"?"🎯 Embudos":"Histórico de pauta"}
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {tab!=="inicio" && <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo}/>}
             <button className="btn btn-ghost btn-sm" disabled={generandoPdf} onClick={generarPDF} style={{fontSize:11,whiteSpace:"nowrap"}}>
               {generandoPdf?"⏳":"📄 Reporte"}
             </button>
