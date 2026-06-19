@@ -3164,7 +3164,7 @@ function SemaforoMision({ client }) {
 }
 
 // ─── TARJETA DE MÉTRICA CON GRÁFICA DESPLEGABLE ──────────────────────────────
-function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocultar, onOcultar, onSubir, onBajar, meta, onSetMeta, clientId }) {
+function MetricaCard({ label, value, rawVal, color, records, campo, prefix, suffix, ocultar, onOcultar, onSubir, onBajar, meta, onSetMeta, clientId }) {
   const [open, setOpen] = useState(false);
   const [editingMeta, setEditingMeta] = useState(false);
   const [metaInput, setMetaInput] = useState(meta ? String(meta) : "");
@@ -3223,7 +3223,11 @@ function MetricaCard({ label, value, color, records, campo, prefix, suffix, ocul
           )}
           {/* Barra de progreso hacia meta */}
           {meta > 0 && (() => {
-            const numVal = parseFloat(String(value).replace(/[^0-9.-]/g,"")) || 0;
+            // Usar rawVal (valor numérico puro) si está disponible,
+            // si no, parsear el value eliminando símbolos de moneda y formato ES-EC
+            const numVal = rawVal !== undefined && rawVal !== null
+              ? parseFloat(rawVal) || 0
+              : parseFloat(String(value).replace(/\./g,"").replace(",",".").replace(/[^0-9.-]/g,"")) || 0;
             const pct = Math.min((numVal / meta) * 100, 100);
             const bajaMejor = ["cpa","cpm","cpl","cpc"].some(k => campo?.toLowerCase().includes(k));
             const barColor = bajaMejor
@@ -4039,17 +4043,17 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   }
 
   const TODAS_TARJETAS = [
-    { id:"inversion",   label:"Inversión",         val:"$"+fmtNum(inv,2),              color:"var(--text)",     campo:"inversion",  prefix:"$" },
-    { id:"alcance",     label:"Alcance",            val:fmtNum(alc),                    color:"var(--text)",     campo:"alcance" },
-    { id:"cpm",         label:"CPM",                val:"$"+fmtNum(cpm,2),              color:"var(--text)",     campo:"cpm",        prefix:"$" },
-    { id:"roas",        label:"ROAS",               val:roas>0?fmtNum(roas,2)+"x":"0,00x", color:roas>=4?"var(--green)":roas>=2?"var(--amber)":"#4d9fff", campo:"roas", suffix:"x" },
-    { id:"formularios", label:"Formularios/Leads FB", val:fmtNum(forms),               color:"var(--accent2)",  campo:"resultados" },
-    { id:"cpl",         label:"Costo x Lead",       val:cpl>0?"$"+fmtNum(cpl,2):"—",   color:"var(--text)",     campo:"cpa",        prefix:"$" },
-    { id:"ventas",      label:"Ventas",             val:fmtNum(ventas),                 color:"var(--text)",     campo:"ventas" },
-    { id:"ingreso",     label:"Ingresos",           val:"$"+fmtNum(ingreso,2),          color:ingreso>0?"var(--green)":"#4d9fff", campo:"ingreso", prefix:"$" },
-    { id:"personas_wp", label:"Personas WP",        val:fmtNum(wpPersons),              color:"var(--green)",    campo:"personas_wp" },
-    { id:"pct_captura", label:"% Captura FB→WP",    val:pctCap>0?fmtNum(pctCap,1)+"%":"—", color:pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)", campo:"pct_captura_wp" },
-    { id:"remarketing", label:"Para remarketing",   val:fmtNum(remarketing),            color:"var(--orange)",   campo:"personas_wp" },
+    { id:"inversion",   label:"Inversión",         val:"$"+fmtNum(inv,2),              rawVal:inv,       color:"var(--text)",     campo:"inversion",  prefix:"$" },
+    { id:"alcance",     label:"Alcance",            val:fmtNum(alc),                    rawVal:alc,       color:"var(--text)",     campo:"alcance" },
+    { id:"cpm",         label:"CPM",                val:"$"+fmtNum(cpm,2),              rawVal:cpm,       color:"var(--text)",     campo:"cpm",        prefix:"$" },
+    { id:"roas",        label:"ROAS",               val:roas>0?fmtNum(roas,2)+"x":"0,00x", rawVal:roas,   color:roas>=4?"var(--green)":roas>=2?"var(--amber)":"#4d9fff", campo:"roas", suffix:"x" },
+    { id:"formularios", label:"Formularios/Leads FB", val:fmtNum(forms),               rawVal:forms,     color:"var(--accent2)",  campo:"resultados" },
+    { id:"cpl",         label:"Costo x Lead",       val:cpl>0?"$"+fmtNum(cpl,2):"—",   rawVal:cpl,       color:"var(--text)",     campo:"cpa",        prefix:"$" },
+    { id:"ventas",      label:"Ventas",             val:fmtNum(ventas),                 rawVal:ventas,    color:"var(--text)",     campo:"ventas" },
+    { id:"ingreso",     label:"Ingresos",           val:"$"+fmtNum(ingreso,2),          rawVal:ingreso,   color:ingreso>0?"var(--green)":"#4d9fff", campo:"ingreso", prefix:"$" },
+    { id:"personas_wp", label:"Personas WP",        val:fmtNum(wpPersons),              rawVal:wpPersons, color:"var(--green)",    campo:"personas_wp" },
+    { id:"pct_captura", label:"% Captura FB→WP",    val:pctCap>0?fmtNum(pctCap,1)+"%":"—", rawVal:pctCap, color:pctCap>=70?"var(--green)":pctCap>=50?"var(--amber)":"var(--red)", campo:"pct_captura_wp" },
+    { id:"remarketing", label:"Para remarketing",   val:fmtNum(remarketing),            rawVal:remarketing, color:"var(--orange)", campo:"personas_wp" },
   ];
 
   const tarjetasVisibles = tarjetasConfig
@@ -4255,14 +4259,14 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
       {/* Tarjetas personalizadas */}
       <div className="grid4" style={{ marginBottom:"0.5rem" }}>
         {tarjetasVisibles.slice(0,4).map(t=>(
-          <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+          <MetricaCard key={t.id} label={t.label} value={t.val} rawVal={t.rawVal} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
             meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
         ))}
       </div>
       {tarjetasVisibles.length > 4 && (
         <div className="grid4" style={{ marginBottom:"0.5rem" }}>
           {tarjetasVisibles.slice(4,8).map(t=>(
-            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+            <MetricaCard key={t.id} label={t.label} value={t.val} rawVal={t.rawVal} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
               meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
           ))}
         </div>
@@ -4270,7 +4274,7 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
       {tarjetasVisibles.length > 8 && (
         <div className="grid4" style={{ marginBottom:"1rem" }}>
           {tarjetasVisibles.slice(8).map(t=>(
-            <MetricaCard key={t.id} label={t.label} value={t.val} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
+            <MetricaCard key={t.id} label={t.label} value={t.val} rawVal={t.rawVal} color={t.color} records={allRows} campo={t.campo} prefix={t.prefix} suffix={t.suffix}
               meta={metasConfig[t.id]||0} onSetMeta={onUpdate?(v=>guardarMeta(t.id,v)):null} />
           ))}
         </div>
