@@ -9454,7 +9454,7 @@ function calcFunnelStats(funnel, allLinks) {
   });
 }
 
-function EmbудоForm({ funnel, allLinks, onSave, onCancel }) {
+function EmbudoForm({ funnel, allLinks, onSave, onCancel }) {
   const isEdit = !!funnel;
   const [nombre, setNombre]   = useState(funnel?.nombre || "");
   const [tipo, setTipo]       = useState(funnel?.tipo || "lanzamiento");
@@ -9630,7 +9630,7 @@ function EmbudoView({ funnel, allLinks, onEdit, onDelete }) {
   );
 }
 
-function EmbудоPanel({ client, onUpdate, readOnly = false }) {
+function EmbudoPanel({ client, onUpdate, readOnly = false }) {
   const [funnels, setFunnels]   = useState([]);
   const [allLinks, setAllLinks] = useState([]);
   const [loading, setLoading]   = useState(true);
@@ -9683,7 +9683,7 @@ function EmbудоPanel({ client, onUpdate, readOnly = false }) {
       </div>
 
       {showForm && !readOnly && (
-        <EmbудоForm funnel={editFunnel} allLinks={allLinks} onSave={handleSave} onCancel={()=>{setShowForm(false);setEditFunnel(null);}} />
+        <EmbudoForm funnel={editFunnel} allLinks={allLinks} onSave={handleSave} onCancel={()=>{setShowForm(false);setEditFunnel(null);}} />
       )}
 
       {funnels.length === 0 && !showForm && (
@@ -11161,7 +11161,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
           </div>
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
-        {tab === "embudos" && <EmbудоPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
+        {tab === "embudos" && <EmbudoPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "facebook" && (
@@ -11385,6 +11385,141 @@ function ClientWelcomeScreen({ client, banners, onGoToTab }) {
     </div>
   );
 }
+// ─── CLIENT DASHBOARD ─────────────────────────────────────────────────────────
+function ClientDashboard({ client, onLogout, banners, onUpdate }) {
+  const [tab, setTab] = useState("inicio");
+  const [period, setPeriod] = useState("mtd");
+  const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+
+  if (!client || !client.id) return <div className="app" style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh" }}><div style={{ color:"var(--muted)" }}>Cargando...</div></div>;
+
+  const isApollo = client.producto?.startsWith("APOLLO");
+  const rows = filterByPeriod(client.records || [], period, from, to).sort((a, b) => a.date.localeCompare(b.date));
+  const t = buildTotals(client.niche, rows);
+  const isWA = client.niche === "whatsapp", isWeb = client.niche === "web", isLaunch = client.niche === "lanzamiento";
+
+  async function generarPDF() {
+    setGenerandoPdf(true);
+    try {
+      const hoy = new Date().toLocaleDateString("es-EC",{day:"2-digit",month:"2-digit",year:"numeric"});
+      const cap = client.capturaConfig?.lastData;
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body{font-family:Arial,sans-serif;color:#1a1a2e;margin:0;padding:32px;background:#fff}
+  .header{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #4d9fff;padding-bottom:16px;margin-bottom:24px}
+  .logo{font-size:20px;font-weight:900;color:#4d9fff;letter-spacing:.05em}
+  .logo span{color:#a855f7}
+  h1{font-size:24px;font-weight:700;margin:0 0 4px}
+  .sub{color:#6b7280;font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+  .card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:16px}
+  .card-label{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  .card-val{font-size:28px;font-weight:700;color:#1a1a2e;font-family:monospace}
+  .section{margin-bottom:24px}
+  .section-title{font-size:14px;font-weight:700;color:#4d9fff;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #e5e7eb}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:#f1f5f9;padding:8px 10px;text-align:left;font-weight:600;color:#374151}
+  td{padding:7px 10px;border-bottom:1px solid #f1f5f9;color:#374151}
+  .footer{margin-top:32px;text-align:center;font-size:11px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:16px}
+</style></head><body>
+<div class="header">
+  <div><div class="logo">TRAFFICK<span>PRO</span></div><div class="sub">Reporte · ${hoy}</div></div>
+  <div style="text-align:right"><h1>${client.name}</h1><div class="sub">${client.producto||client.niche}</div></div>
+</div>
+<div class="section"><div class="section-title">Métricas del período</div>
+<div class="grid">
+  <div class="card"><div class="card-label">Inversión</div><div class="card-val">$${t.inversion||"0,00"}</div></div>
+  <div class="card"><div class="card-label">Leads</div><div class="card-val">${t.leads||t.resultados||t.formularios||"—"}</div></div>
+  <div class="card"><div class="card-label">CPL</div><div class="card-val">$${t.cpa||t.cpl||"—"}</div></div>
+  <div class="card"><div class="card-label">Alcance</div><div class="card-val">${t.alcance||"—"}</div></div>
+  <div class="card"><div class="card-label">CPM</div><div class="card-val">$${t.cpm||"—"}</div></div>
+  <div class="card"><div class="card-label">CTR</div><div class="card-val">${t.ctr||"—"}%</div></div>
+</div></div>
+${cap ? `<div class="section"><div class="section-title">Captura FB → WhatsApp</div><div class="grid">
+  <div class="card"><div class="card-label">En WP</div><div class="card-val">${cap.total_wp||0}</div></div>
+  <div class="card"><div class="card-label">Registros FB</div><div class="card-val">${cap.total_form||0}</div></div>
+  <div class="card"><div class="card-label">% Captura</div><div class="card-val">${cap.total_form>0?Math.round(cap.total_wp/cap.total_form*100):0}%</div></div>
+</div></div>` : ""}
+${rows.length>0 ? `<div class="section"><div class="section-title">Historial (últimos ${Math.min(rows.length,14)} días)</div>
+<table><thead><tr><th>Fecha</th><th>Inversión</th><th>Leads</th><th>CPL</th><th>Alcance</th></tr></thead><tbody>
+${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(r.resultados||r.formularios||r.leads)||0,cpl=leads>0&&inv>0?(inv/leads).toFixed(2):"—";return `<tr><td>${r.date}</td><td>$${r.inversion||"—"}</td><td>${leads||"—"}</td><td>${cpl!=="—"?"$"+cpl:"—"}</td><td>${r.alcance||"—"}</td></tr>`;}).join("")}
+</tbody></table></div>` : ""}
+<div class="footer">Reporte generado por <strong>Trafficker Pro</strong> · ${hoy}</div>
+</body></html>`;
+      const blob = new Blob([html], { type:"text/html;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `reporte-${client.name.replace(/\s+/g,"-")}-${hoy.replace(/\//g,"-")}.html`;
+      a.click();
+    } catch(e) { console.error(e); }
+    setGenerandoPdf(false);
+  }
+
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
+        <div className="nav">
+          <div className="nav-label">Vistas</div>
+          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos","antecedentes"]).map(v=>(
+            <div key={v} className={`nav-item ${tab===v?"active":""}`} onClick={()=>setTab(v)}>
+              <div className="nav-dot" style={{background:tab===v?"var(--accent)":"var(--border)"}}/>
+              {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":"📚 Historial"}
+            </div>
+          ))}
+        </div>
+        <div className="sidebar-footer">
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+            <div className="avatar" style={{background:client.color+"22",color:client.color}}>{client.logo||client.name.slice(0,2).toUpperCase()}</div>
+            <div><div style={{fontSize:13,fontWeight:500}}>{client.name}</div><div style={{fontSize:11,color:"var(--muted)"}}>Vista de cliente</div></div>
+          </div>
+          <button className="btn btn-ghost btn-sm btn-full" onClick={onLogout}>Cerrar sesión</button>
+        </div>
+      </div>
+      <div className="main">
+        <div className="topbar">
+          <div className="topbar-title">
+            {tab==="inicio"?"🏠 Inicio":tab==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):tab==="captura"?"📊 Captura WP":tab==="antecedentes"?"📚 Historial":tab==="estudio"?"🎬 Estudio":tab==="embudos"?"🎯 Embudos":"Histórico de pauta"}
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {tab!=="inicio" && <PeriodFilter period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo}/>}
+            <button className="btn btn-ghost btn-sm" disabled={generandoPdf} onClick={generarPDF} style={{fontSize:11,whiteSpace:"nowrap"}}>
+              {generandoPdf?"⏳":"📄 Reporte"}
+            </button>
+            <ClientNotificationBell client={client}/>
+          </div>
+        </div>
+        <div className="content">
+          {tab==="inicio" && <ClientWelcomeScreen client={client} banners={banners} onGoToTab={setTab}/>}
+          {tab!=="inicio" && banners?.length>0 && <BannerViewer banners={banners}/>}
+          {tab!=="hermes" && tab!=="inicio" && <HermesProgressBar client={client} onUpdate={()=>{}} readOnly={true}/>}
+          {tab==="hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate||(()=>{})}/>}
+          {tab==="estudio" && <EstudioPanel client={client} onUpdate={onUpdate||(()=>{})} role="client"/>}
+          {tab==="captura" && client.capturaConfig?.lastData && <CapturaWPPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>}
+          {tab==="captura" && !client.capturaConfig?.lastData && <div className="empty"><div style={{fontSize:28,opacity:.3}}>📊</div><div style={{marginTop:8}}>El análisis de captura estará disponible pronto.</div></div>}
+          {tab==="calidad" && <CalidadLeadPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>}
+          {tab==="embudos" && <EmbudoPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>}
+          {tab==="resumen" && <>
+            {banners?.length>0 && <div style={{marginBottom:"1.25rem",borderRadius:"var(--r2)",overflow:"hidden"}}><BannerViewer banners={banners}/></div>}
+            <div style={{marginBottom:"1.25rem"}}><div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>Inversión del período</div><div style={{fontSize:32,fontWeight:700,fontFamily:"var(--mono)"}}>${t.inversion||"0.00"}</div><div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{rows.length} días con datos</div></div>
+            <div className="grid4" style={{marginBottom:"1.25rem"}}><MetricCard label="Alcance" value={t.alcance||"—"}/><MetricCard label="CPM" value={"$"+(t.cpm||"—")}/><MetricCard label="CPC" value={"$"+(t.cpc||"—")}/><MetricCard label="CTR" value={(t.ctr||"—")+"%"}/></div>
+            {rows.length>1 && <div className="card" style={{marginTop:"1.25rem"}}><div className="card-title">Inversión diaria</div><MiniChart rows={rows} field="inversion" color={client.color}/><div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--muted)",marginTop:6}}><span>{rows[0].date}</span><span>{rows[rows.length-1].date}</span></div></div>}
+          </>}
+          {tab==="antecedentes" && (
+            <div>
+              <MisionesPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>
+              <div style={{borderTop:"1px solid var(--border)",marginTop:"1.5rem",paddingTop:"1.5rem"}}>
+                <AntecedentesPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── GESTIÓN DE FILMMAKERS (Admin) ────────────────────────────────────────────
 function FilmakersAdminPanel({ filmmakers, clients, onSave }) {
   const [showForm, setShowForm] = useState(false);
