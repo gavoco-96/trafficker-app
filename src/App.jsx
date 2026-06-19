@@ -9948,7 +9948,7 @@ function ConexionWAPanel() {
                 </div>
                 <iframe
                   src={`${BOT_URL}/qr`}
-                  style={{width:"100%",maxWidth:380,height:420,border:"none",borderRadius:12,background:"var(--bg)",display:"block",margin:"0 auto"}}
+                  style={{width:"100%",maxWidth:460,height:560,border:"none",borderRadius:12,background:"#0a0f1e",display:"block",margin:"0 auto"}}
                   title="QR WhatsApp"
                   key={checkingAt?.getTime()}
                 />
