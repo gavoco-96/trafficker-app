@@ -9851,6 +9851,149 @@ function GruposSelector({ grupos, seleccionados, onChange, label }) {
 // ─── PANEL DE ALERTAS ─────────────────────────────────────────
 const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
 
+function ConexionWAPanel() {
+  const [status, setStatus]     = useState(null); // null | loading | {connected, qr_pendiente, reconectando, ultima_conexion}
+  const [checkingAt, setCheckingAt] = useState(null);
+  const { show, el: toastEl }   = useToast();
+  const intervalRef             = useRef(null);
+
+  async function checkStatus() {
+    if (!BOT_URL) return;
+    setCheckingAt(new Date());
+    try {
+      const res  = await fetch(`${BOT_URL}/health`, { cache: "no-store" });
+      const data = await res.json();
+      setStatus(data);
+    } catch {
+      setStatus({ connected: false, qr_pendiente: false, reconectando: false, error: true });
+    }
+  }
+
+  useEffect(() => {
+    checkStatus();
+    // Polling cada 15s para detectar cambios de estado
+    intervalRef.current = setInterval(checkStatus, 15000);
+    return () => clearInterval(intervalRef.current);
+  }, []);
+
+  async function forzarSync() {
+    if (!BOT_URL) return show("BOT_URL no configurado", "err");
+    try {
+      const r = await fetch(`${BOT_URL}/sync/grupos`, { method: "POST" });
+      const d = await r.json();
+      if (d.ok) show(`✓ ${d.grupos} grupos sincronizados`, "ok");
+      else show("Error: " + d.error, "err");
+    } catch(e) { show("Error de conexión", "err"); }
+  }
+
+  const isConnected  = status?.connected;
+  const isQR        = status?.qr_pendiente;
+  const isReconn    = status?.reconectando;
+  const hasError    = status?.error;
+
+  return (
+    <>
+      {toastEl}
+      <div className="card" style={{padding:"20px"}}>
+        {/* Header con estado */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontWeight:700,fontSize:15}}>📡 Conexión WhatsApp</div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {checkingAt && <span style={{fontSize:10,color:"var(--muted)"}}>Verificado: {checkingAt.toLocaleTimeString("es-EC")}</span>}
+            <button className="btn btn-ghost btn-sm" onClick={checkStatus} style={{fontSize:11}}>🔄 Verificar</button>
+          </div>
+        </div>
+
+        {/* Estado actual */}
+        {!BOT_URL && (
+          <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",fontSize:12,color:"var(--red)"}}>
+            ⚠️ Variable <code>VITE_BOT_URL</code> no configurada en Vercel. Agrega la URL del bot de Railway.
+          </div>
+        )}
+
+        {BOT_URL && !status && (
+          <div style={{textAlign:"center",padding:"1rem",color:"var(--muted)",fontSize:13}}>⟳ Verificando estado del bot...</div>
+        )}
+
+        {status && (
+          <>
+            {/* Semáforo de estado */}
+            {(() => {
+              const estado = status.estado || (status.connected ? "conectado" : status.qr_pendiente ? "esperando_qr" : "desconectado");
+              const colorMap = { conectado:"rgba(16,185,129,.08)", esperando_qr:"rgba(255,222,89,.06)", desconectado:"rgba(239,68,68,.08)", iniciando:"rgba(77,159,255,.06)" };
+              const borderMap = { conectado:"rgba(16,185,129,.25)", esperando_qr:"rgba(255,222,89,.2)", desconectado:"rgba(239,68,68,.2)", iniciando:"rgba(77,159,255,.2)" };
+              const dotMap = { conectado:"var(--green)", esperando_qr:"var(--amber)", desconectado:"var(--red)", iniciando:"var(--accent)" };
+              const labelMap = { conectado:"✅ Conectado a WhatsApp", esperando_qr:"📷 Esperando escaneo de QR", desconectado:"🔴 Desconectado — reconectando...", iniciando:"⏳ Bot iniciando..." };
+              const col = colorMap[estado] || colorMap.desconectado;
+              const brd = borderMap[estado] || borderMap.desconectado;
+              const dot = dotMap[estado] || dotMap.desconectado;
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,marginBottom:16,background:col,border:`1px solid ${brd}`}}>
+                  <div style={{width:12,height:12,borderRadius:"50%",flexShrink:0,background:dot,boxShadow:`0 0 8px ${dot}`,animation:estado==="conectado"?"none":"blink 1.5s infinite"}}/>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:13,color:dot}}>{labelMap[estado] || estado}</div>
+                    {status.ultima_conexion && <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Última conexión: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
+                    {status.intentos_reconexion > 0 && estado !== "conectado" && <div style={{fontSize:11,color:"var(--amber)",marginTop:2}}>Intentos de reconexión: {status.intentos_reconexion}</div>}
+                    {status.motivo_desconexion && <div style={{fontSize:11,color:"var(--red)",marginTop:2}}>Motivo: {status.motivo_desconexion}</div>}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* QR — solo cuando es necesario */}
+            {(status.qr_pendiente || status.estado === "esperando_qr") && !status.connected && (
+              <div style={{textAlign:"center",marginBottom:16}}>
+                <div style={{fontSize:13,color:"var(--muted)",marginBottom:12}}>
+                  Escanea desde WhatsApp → <strong>⋮ → Dispositivos vinculados → Vincular dispositivo</strong>
+                </div>
+                <iframe
+                  src={`${BOT_URL}/qr`}
+                  style={{width:"100%",maxWidth:380,height:400,border:"none",borderRadius:12,background:"var(--bg)",display:"block",margin:"0 auto"}}
+                  title="QR WhatsApp"
+                  key={checkingAt?.getTime()}
+                />
+                <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>El QR expira en ~60 segundos. Se genera uno nuevo automáticamente.</div>
+              </div>
+            )}
+
+            {/* Desconectado sin QR — reconectando */}
+            {!status.connected && !status.qr_pendiente && !status.error && status.estado !== "esperando_qr" && (
+              <div style={{textAlign:"center",padding:"1.5rem",color:"var(--muted)",fontSize:13}}>
+                <div style={{fontSize:24,marginBottom:8}}>⟳</div>
+                El bot está reconectando automáticamente...<br/>
+                <span style={{fontSize:11}}>El QR aparecerá aquí cuando esté listo.</span>
+              </div>
+            )}
+
+            {/* Error de conexión con el bot */}
+            {hasError && (
+              <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.06)",fontSize:12,color:"var(--muted)"}}>
+                No se pudo contactar al bot. Verifica que Railway esté activo y que <code>VITE_BOT_URL</code> sea correcto.<br/>
+                <a href={BOT_URL+"/health"} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontSize:11}}>Abrir {BOT_URL}/health ↗</a>
+              </div>
+            )}
+
+            {/* Acciones */}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+              {isConnected && (
+                <button className="btn btn-ghost btn-sm" onClick={forzarSync} style={{fontSize:11}}>
+                  🔄 Sincronizar grupos ahora
+                </button>
+              )}
+              <a href={`${BOT_URL}/qr`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>
+                🔗 Abrir QR en nueva pestaña
+              </a>
+              <a href={`${BOT_URL}/health`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>
+                🔍 Estado del bot
+              </a>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 function AlertasPanel() {
   const [alertas, setAlertas] = useState([]);
 
@@ -10334,22 +10477,7 @@ function GruposPanel() {
       {/* ── TAB CONEXIÓN WA ── */}
       {tab === "conexion" && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
-          <div className="card" style={{padding:"24px",textAlign:"center"}}>
-            <div style={{fontSize:32,marginBottom:12}}>📡</div>
-            <div style={{fontWeight:700,fontSize:16,marginBottom:8}}>Vincular WhatsApp</div>
-            <div style={{fontSize:13,color:"var(--muted)",marginBottom:24}}>Escanea el QR desde WhatsApp → Dispositivos vinculados → Vincular dispositivo</div>
-            <iframe
-              src={`${BOT_URL}/qr`}
-              style={{width:"100%",height:420,border:"none",borderRadius:12,background:"var(--bg)"}}
-              title="QR WhatsApp"
-            />
-            <div style={{marginTop:16,display:"flex",gap:8,justifyContent:"center"}}>
-              <button className="btn btn-ghost btn-sm" onClick={()=>{ const el = document.querySelector("iframe"); if(el) el.src=el.src; }}>🔄 Refrescar QR</button>
-              <a href={`${BOT_URL}/health`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">🔍 Estado del bot</a>
-            </div>
-          </div>
-
-          {/* Alertas activas */}
+          <ConexionWAPanel />
           <AlertasPanel />
         </div>
       )}
@@ -10384,13 +10512,19 @@ function LinksPanel() {
   useEffect(() => { cargar(); }, []);
 
   async function handleSave(linkData) {
+    // Limpiar campos UTM vacíos para no enviarlos a Supabase si no existen las columnas
+    const utmFields = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"];
+    const payload = { ...linkData };
+    // Si algún UTM tiene valor, los incluimos; si están todos vacíos, los quitamos del payload
+    const tieneUtms = utmFields.some(k => payload[k] && payload[k].trim());
+    if (!tieneUtms) { utmFields.forEach(k => delete payload[k]); }
     if (editLink) {
-      const res = await LinksDB.update(editLink.id, linkData);
+      const res = await LinksDB.update(editLink.id, payload);
       if (!res.ok) return show("❌ Error al actualizar: " + (res.error || "desconocido"), "err");
       show("✓ Link actualizado", "ok");
     } else {
-      const payload = { ...linkData, id: "lnk_" + Date.now(), created_at: new Date().toISOString(), total_clicks: 0, clicks: [], active: true };
-      const res = await LinksDB.create(payload);
+      const newPayload = { ...payload, id: "lnk_" + Date.now(), created_at: new Date().toISOString(), total_clicks: 0, clicks: [], active: true };
+      const res = await LinksDB.create(newPayload);
       if (!res.ok) return show("❌ Error al crear link: " + (res.error || "desconocido"), "err");
       show("✓ Link creado", "ok");
     }
