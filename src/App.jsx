@@ -10755,6 +10755,7 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
             {link.grupo && <span style={{fontSize:10, background:"rgba(77,159,255,.15)", color:"#4d9fff", padding:"2px 8px", borderRadius:10}}>{link.grupo}</span>}
             {!activo && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>Inactivo</span>}
             {link.usar_landing && <span style={{fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"2px 8px", borderRadius:10}}>🛡️ Landing</span>}
+            {link.tipo_link === "descargable" && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>📥 Descargable</span>}
             {link.rotacion_automatica && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>🔄 Rotación</span>}
             {/* Badge de inactividad */}
             {inactivoCritico && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>⚠️ {diasSinClick}d sin clicks</span>}
@@ -10817,12 +10818,57 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
 
 
 // ─── FORMULARIO DE LINK ────────────────────────────────────────
+// ── Convertir URLs de almacenamiento a descarga directa ──────────────────────
+function convertirUrlDescarga(url) {
+  if (!url) return url;
+  try {
+    // Google Drive — varios formatos
+    // /file/d/ID/view  →  uc?export=download&id=ID&confirm=t
+    const gdrive1 = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (gdrive1) return `https://drive.google.com/uc?export=download&id=${gdrive1[1]}&confirm=t`;
+    // /open?id=ID
+    const gdrive2 = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+    if (gdrive2) return `https://drive.google.com/uc?export=download&id=${gdrive2[1]}&confirm=t`;
+    // docs.google.com/document|spreadsheets|presentation → exportar
+    const gdocs = url.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/);
+    if (gdocs) {
+      const tipo = gdocs[1];
+      const id   = gdocs[2];
+      if (tipo === "document")      return `https://docs.google.com/document/d/${id}/export?format=pdf`;
+      if (tipo === "spreadsheets")  return `https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx`;
+      if (tipo === "presentation")  return `https://docs.google.com/presentation/d/${id}/export/pptx`;
+    }
+    // Dropbox — ?dl=0  →  ?dl=1
+    if (url.includes("dropbox.com")) {
+      return url.replace(/[?&]dl=0/, "").replace(/[?&]dl=1/, "") + (url.includes("?") ? "&dl=1" : "?dl=1");
+    }
+    // OneDrive — añadir download=1
+    if (url.includes("1drv.ms") || url.includes("onedrive.live.com")) {
+      if (url.includes("onedrive.live.com/redir")) {
+        return url.replace("redir?", "download?");
+      }
+      // link corto de 1drv.ms — no se puede transformar directamente, dejar como está
+      return url;
+    }
+  } catch {}
+  return url;
+}
+
+function detectarTipoAlmacenamiento(url) {
+  if (!url) return null;
+  if (url.includes("drive.google.com") || url.includes("docs.google.com")) return "gdrive";
+  if (url.includes("dropbox.com")) return "dropbox";
+  if (url.includes("1drv.ms") || url.includes("onedrive.live.com")) return "onedrive";
+  return null;
+}
+
 function LinkForm({ link, onSave, onCancel, baseUrl }) {
   const isEdit = !!link;
   const [form, setForm] = useState({
     nombre: link?.nombre || "",
     slug: link?.slug || genSlug(),
     grupo: link?.grupo || "",
+    tipo_link: link?.tipo_link || "redirect", // "redirect" | "descargable"
     usar_landing: link?.usar_landing ?? false,
     landing_titulo: link?.landing_titulo || "¡Únete al grupo!",
     landing_descripcion: link?.landing_descripcion || "Haz clic para unirte al grupo de WhatsApp",
@@ -10840,6 +10886,36 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
     utm_term: link?.utm_term || "",
   });
   const f = (k, v) => setForm(p => ({...p, [k]: v}));
+
+  // Cuando el tipo cambia a descargable, convertir URLs automáticamente
+  function setTipoLink(tipo) {
+    if (tipo === "descargable") {
+      const nuevosDestinos = form.destinos.map(d => ({
+        ...d,
+        url: d.url ? convertirUrlDescarga(d.url) : d.url
+      }));
+      setForm(p => ({...p, tipo_link: tipo, destinos: nuevosDestinos, usar_landing: false}));
+    } else {
+      f("tipo_link", tipo);
+    }
+  }
+
+  // Cuando se pega un URL en un destino, detectar si es descargable y sugerir conversión
+  function handleDestinoUrl(id, rawUrl) {
+    const storage = detectarTipoAlmacenamiento(rawUrl);
+    const urlFinal = form.tipo_link === "descargable" && storage
+      ? convertirUrlDescarga(rawUrl)
+      : rawUrl;
+    setForm(p => ({...p, destinos: p.destinos.map(d => d.id===id ? {...d, url: urlFinal} : d)}));
+    // Si detecta un servicio de almacenamiento, sugerir cambiar a descargable
+    if (storage && form.tipo_link === "redirect") {
+      f("tipo_link", "descargable");
+      // También convertir el URL
+      setTimeout(() => {
+        setForm(p => ({...p, destinos: p.destinos.map(d => d.id===id ? {...d, url: convertirUrlDescarga(rawUrl)} : d), tipo_link:"descargable", usar_landing:false}));
+      }, 50);
+    }
+  }
 
   // Preview URL con UTMs aplicados al primer destino activo
   const buildUrlConUtm = (destUrl) => {
@@ -10878,6 +10954,26 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
   return (
     <div className="card" style={{borderColor:"rgba(0,74,173,.3)", marginBottom:"1rem"}}>
       <div className="card-title">{isEdit?"Editar link":"Nuevo link enmascarado"}</div>
+
+      {/* Tipo de link */}
+      <div style={{display:"flex",gap:8,marginBottom:"1rem"}}>
+        {[
+          {id:"redirect",   icon:"🔗", label:"Redirección",  desc:"WA, landing, formulario"},
+          {id:"descargable",icon:"📥", label:"Descargable",   desc:"Drive, Dropbox, OneDrive"},
+        ].map(t => (
+          <div key={t.id} onClick={()=>setTipoLink(t.id)}
+            style={{flex:1,padding:"10px 14px",borderRadius:10,cursor:"pointer",border:`2px solid ${form.tipo_link===t.id?"var(--accent)":"var(--border)"}`,background:form.tipo_link===t.id?"rgba(0,74,173,.08)":"var(--surface2)",transition:"border .15s"}}>
+            <div style={{fontWeight:700,fontSize:13}}>{t.icon} {t.label}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{t.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {form.tipo_link === "descargable" && (
+        <div style={{padding:"10px 14px",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",marginBottom:"1rem",fontSize:12}}>
+          📥 <b>Modo descargable activo</b> — Los URLs de Google Drive, Dropbox y OneDrive se convierten automáticamente a enlaces de descarga directa. La landing intermedia se desactiva.
+        </div>
+      )}
 
       <div className="form-row">
         <div className="field"><label>Nombre del link *</label><input type="text" value={form.nombre} onChange={e=>f("nombre",e.target.value)} placeholder="Ej: WA Lanzamiento EC" /></div>
@@ -10965,7 +11061,25 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
           </div>
           <div className="form-row">
             <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Nombre</label><input type="text" value={d.nombre} onChange={e=>updDestino(d.id,"nombre",e.target.value)} placeholder="Ej: Grupo WhatsApp EC" style={{fontSize:12}}/></div>
-            <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>URL destino *</label><input type="text" value={d.url} onChange={e=>updDestino(d.id,"url",e.target.value)} placeholder="https://chat.whatsapp.com/..." style={{fontSize:12,fontFamily:"var(--mono)"}}/></div>
+            <div className="field" style={{marginBottom:0}}>
+                <label style={{fontSize:11}}>URL destino *
+                  {(() => {
+                    const storage = detectarTipoAlmacenamiento(d.url);
+                    if (!storage) return null;
+                    const icons = {gdrive:"🟢 Google Drive", dropbox:"🔵 Dropbox", onedrive:"🔷 OneDrive"};
+                    return <span style={{marginLeft:8,fontSize:10,color:"var(--green)",fontWeight:600}}>{icons[storage]} detectado</span>;
+                  })()}
+                </label>
+                <input type="text" value={d.url}
+                  onChange={e=>handleDestinoUrl(d.id, e.target.value)}
+                  placeholder={form.tipo_link==="descargable"?"Pega el link de Drive, Dropbox u OneDrive...":"https://chat.whatsapp.com/..."}
+                  style={{fontSize:12,fontFamily:"var(--mono)"}}/>
+                {form.tipo_link==="descargable" && d.url && detectarTipoAlmacenamiento(d.url) && (
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:3}}>
+                    ✅ URL convertida a descarga directa
+                  </div>
+                )}
+              </div>
           </div>
           <div className="form-row" style={{marginTop:8}}>
             <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Países (códigos separados por coma)</label><input type="text" value={(d.paises||[]).join(",")} onChange={e=>updDestino(d.id,"paises",e.target.value.split(",").map(p=>p.trim().toUpperCase()).filter(Boolean))} placeholder="EC,CO,PE — vacío = todos" style={{fontSize:12}}/></div>
