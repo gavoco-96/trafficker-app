@@ -462,6 +462,19 @@ const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
 const fmtDate = (d) => { if (!d) return "—"; const [y, m, day] = d.split("-"); return `${day}/${m}/${y.slice(2)}`; };
 const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g, "")) || 0;
 
+// ── Fecha local del dispositivo (no UTC) ──────────────────────────────────────
+// Usa siempre la fecha/hora local del usuario, sin importar su zona horaria
+// Soluciona el bug donde a las 7pm en Ecuador (UTC-5) se mostraba el día siguiente
+function localDateStr(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function localDateTimeStr(date = new Date()) {
+  return `${localDateStr(date)}T${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}:${String(date.getSeconds()).padStart(2,"0")}`;
+}
+
 // Input numérico - solución definitiva con input type=number
 // Maneja su propio string interno para no perder el cursor ni el punto decimal
 function NumInput({ value, onChange, placeholder, prefix, readOnly, highlight }) {
@@ -1540,7 +1553,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
 // ─── VISTA POR CAMPAÑA ────────────────────────────────────────────────────────
 function VistaPorCampana({ rows, busqueda }) {
   const campanaMap = {};
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy = localDateStr();
 
   // Solo registros hasta hoy (no futuros)
   const rowsActivos = rows.filter(r => r.date <= hoy);
@@ -2983,7 +2996,7 @@ function HermesFunnel({ client, period, from, to }) {
 
 // ─── UTILIDAD UNIVERSAL DE EXPORTACIÓN ────────────────────────────────────────
 function exportarTabla(headers, rows, nombreArchivo, tipo) {
-  const fecha = new Date().toISOString().slice(0,10);
+  const fecha = localDateStr();
   const nombre = nombreArchivo + "_" + fecha;
   if (tipo === "csv") {
     const csvRows = [headers.join(",")];
@@ -3980,6 +3993,11 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   // ── Metas diarias por tarjeta ─────────────────────────────────────────────
   const [metasConfig, setMetasConfig] = useState(() => client.metricasConfig?.[METAS_KEY] || {});
 
+  // Sincronizar metas cuando el client se actualiza externamente
+  useEffect(() => {
+    setMetasConfig(client.metricasConfig?.[METAS_KEY] || {});
+  }, [client.metricasConfig, METAS_KEY]);
+
   async function guardarMeta(id, valor) {
     const nuevasMetas = { ...metasConfig, [id]: valor };
     setMetasConfig(nuevasMetas);
@@ -4039,7 +4057,7 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
     .filter(Boolean);
 
   // ── Corte del día ─────────────────────────────────────────────────────────
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy = localDateStr();
   const diasTranscurridos = allRows.length;
   const invPromDia  = diasTranscurridos > 0 ? inv/diasTranscurridos : 0;
   const leadsPromDia = diasTranscurridos > 0 ? forms/diasTranscurridos : 0;
@@ -4557,7 +4575,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const [syncDesde, setSyncDesde] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10);
   });
-  const [syncHasta, setSyncHasta] = useState(new Date().toISOString().slice(0,10));
+  const [syncHasta, setSyncHasta] = useState(localDateStr());
   const [form, setForm] = useState({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" });
   const { show, el: toastEl } = useToast();
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -4622,7 +4640,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
           gasto_pza:      String(adSum.gasto.toFixed(2)),
           cpl_pza:        cpl || pieza.cpl_pza,
           fb_anuncios_n:  String(adSum._count),
-          fbSyncDate:     new Date().toISOString().slice(0,10),
+          fbSyncDate:     localDateStr(),
           fbSyncDesde:    syncDesde,
           fbSyncHasta:    syncHasta,
         };
@@ -5871,7 +5889,7 @@ function FacebookPanel({ client, onUpdate }) {
     if (!token || !cuentas.some(c=>c.adAccountId)) return;
     // Auto-sync de métricas si está activado
     if (autoSync) {
-      const today = new Date().toISOString().slice(0,10);
+      const today = localDateStr();
       setSyncDate(today);
       setTimeout(() => ejecutarSync([today]), 300);
     }
@@ -6227,8 +6245,8 @@ function FacebookPanel({ client, onUpdate }) {
         {syncMode === "single" ? (
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             <input type="date" value={syncDate} onChange={e=>setSyncDate(e.target.value)}
-              max={new Date().toISOString().slice(0,10)} style={{width:"auto"}} />
-            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(new Date().toISOString().slice(0,10))}>Hoy</button>
+              max={localDateStr()} style={{width:"auto"}} />
+            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(localDateStr())}>Hoy</button>
             <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(new Date(Date.now()-86400000).toISOString().slice(0,10))}>Ayer</button>
           </div>
         ) : (
@@ -6237,7 +6255,7 @@ function FacebookPanel({ client, onUpdate }) {
               max={rangeTo} style={{width:"auto"}} />
             <span style={{color:"var(--muted)",fontSize:12}}>hasta</span>
             <input type="date" value={rangeTo} onChange={e=>setRangeTo(e.target.value)}
-              max={new Date().toISOString().slice(0,10)} style={{width:"auto"}} />
+              max={localDateStr()} style={{width:"auto"}} />
             <span style={{fontSize:11,color:"var(--muted)"}}>
               {(() => { const d=Math.round((new Date(rangeTo)-new Date(rangeFrom))/86400000)+1; return d>0?d+" días":""; })()}
             </span>
@@ -7447,7 +7465,7 @@ function RemarketingTable({ data, readOnly }) {
 
   function descargar(tipo) {
     const items = (data.niveles?.[nivelRem] || []).filter(i => i.pendientes > 0);
-    const fecha = new Date().toISOString().slice(0,10);
+    const fecha = localDateStr();
     // Contactos pendientes con nombre (calculados por app) o solo teléfonos (script)
     const contactos = data.contactosPendientes || (data.telefonosPendientes||[]).map(t=>({tel:t,nombre:""}));
     const tieneNombre = contactos.some(c => c.nombre);
@@ -8616,7 +8634,7 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
 // ─── GRÁFICAS DE MÉTRICAS PRINCIPALES ─────────────────────────────────────────
 function GraficasMetricas({ client, period, from, to }) {
   const allRows = (client.records || []).filter(r => {
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     return r.date <= hoy;
   });
   const rows = filterByPeriod(allRows, period, from, to).sort((a,b) => a.date.localeCompare(b.date));
@@ -8872,7 +8890,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const [showAnotForm, setShowAnotForm] = useState(false);
   const [anotTexto, setAnotTexto]   = useState("");
   const [puntosRT, setPuntosRT]     = useState(() => {
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     return client.cplRtData?.[hoy] || [];
   });
   const fetchCount = useRef(0);
@@ -8894,7 +8912,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
       return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"mision", mision:m.nombre} : null;
     }).filter(Boolean)),
-    ...(client.records||[]).filter(r => r.date<=new Date().toISOString().slice(0,10))
+    ...(client.records||[]).filter(r => r.date<=localDateStr())
       .map(r => {
         const inv=parseFloat(r.inversion)||0, res=parseFloat(r.resultados||r.formularios)||0;
         return res>0 ? {fecha:r.date, cpl:inv/res, tipo:"dia"} : null;
@@ -8910,7 +8928,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       id: "anot_" + Date.now(),
       ts: Date.now(),
       hora: new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
-      fecha: new Date().toISOString().slice(0,10),
+      fecha: localDateStr(),
       texto: anotTexto.trim(),
       cpl: puntosRT.length ? puntosRT[puntosRT.length-1].cpl : null,
     };
@@ -8926,7 +8944,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   // ── Guardar puntos ────────────────────────────────────────────────────────
   async function guardarPuntos(nuevosPuntos) {
     if (!onUpdate || !nuevosPuntos.length) return;
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     const cplRtData = {...(client.cplRtData||{})};
     const existing = cplRtData[hoy] || [];
     const mapa = {};
@@ -8947,7 +8965,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   async function fetchHistoricoHoy() {
     if (!token || !adAccountId) return;
     setLoadingHist(true);
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     try {
       const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
       const res  = await fetch(url);
@@ -8977,7 +8995,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   async function fetchCplActual() {
     if (!token || !adAccountId) return;
     setLoading(true);
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     try {
       const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
       const res  = await fetch(url);
@@ -9006,7 +9024,9 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
   useEffect(() => {
     if (!token || !adAccountId) return;
+    // Si el componente padre ya maneja el interval (externalPuntos), solo cargar histórico
     fetchHistoricoHoy();
+    if (externalPuntos !== undefined) return; // padre maneja el fetch en tiempo real
     fetchCplActual();
     // Intervalo persistente — no se detiene al cambiar de tab
     // Se limpia solo cuando el componente padre (AdminClientDetail) desmonta
@@ -9020,7 +9040,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   }, [token, adAccountId]);
 
   // ── Construir datos según rango ────────────────────────────────────────────
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy = localDateStr();
   let datosVista = [], datosAyer = [], modoRT = false;
 
   if (rango === "24h") {
@@ -10475,7 +10495,7 @@ function LinksPanel() {
                 l.utm_source||"", l.utm_medium||"", l.utm_campaign||"",
                 (l.destinos||[]).map(d=>d.nombre+": "+d.url).join(" | ")
               ])}
-              nombreArchivo={"links-"+new Date().toISOString().slice(0,10)}
+              nombreArchivo={"links-"+localDateStr()}
             />
           </div>
         )}
@@ -11107,7 +11127,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
   // ── CPL en tiempo real persistente — sobrevive al cambio de tabs ─────────
   const cplIntervalRef = useRef(null);
   const [cplRtPuntos, setCplRtPuntos] = useState(() => {
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr();
     return client.cplRtData?.[hoy] || [];
   });
 
@@ -11118,7 +11138,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
     async function fetchCpl() {
       try {
-        const hoy = new Date().toISOString().slice(0,10);
+        const hoy = localDateStr();
         const url = `https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${fbToken}`;
         const res = await fetch(url);
         const json = await res.json();
@@ -11600,7 +11620,7 @@ function CampanasPanel({ clients }) {
   const [showForm, setShowForm] = useState(false);
   const [sending, setSending]   = useState(null);
   const { show, el: toastEl }   = useToast();
-  const blank = { id:"", nombre:"", mensaje:"", destinatarios:"todos", clientesSeleccionados:[], programado:false, fechaEnvio:new Date().toISOString().slice(0,10), horaEnvio:"08:00", estado:"borrador" };
+  const blank = { id:"", nombre:"", mensaje:"", destinatarios:"todos", clientesSeleccionados:[], programado:false, fechaEnvio:localDateStr(), horaEnvio:"08:00", estado:"borrador" };
   const [form, setForm] = useState({...blank});
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
 
