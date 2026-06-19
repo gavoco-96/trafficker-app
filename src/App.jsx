@@ -10512,12 +10512,14 @@ function LinksPanel() {
   useEffect(() => { cargar(); }, []);
 
   async function handleSave(linkData) {
-    // Limpiar campos UTM vacíos para no enviarlos a Supabase si no existen las columnas
+    // Limpiar campos que pueden no existir en Supabase todavía
     const utmFields = ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"];
     const payload = { ...linkData };
-    // Si algún UTM tiene valor, los incluimos; si están todos vacíos, los quitamos del payload
+    // UTMs: solo incluir si tienen valor
     const tieneUtms = utmFields.some(k => payload[k] && payload[k].trim());
     if (!tieneUtms) { utmFields.forEach(k => delete payload[k]); }
+    // tipo_link: solo incluir si no es el valor por defecto
+    if (!payload.tipo_link || payload.tipo_link === "redirect") { delete payload.tipo_link; }
     if (editLink) {
       const res = await LinksDB.update(editLink.id, payload);
       if (!res.ok) return show("❌ Error al actualizar: " + (res.error || "desconocido"), "err");
