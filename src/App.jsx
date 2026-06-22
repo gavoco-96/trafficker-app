@@ -8557,6 +8557,10 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
       wa_grupos_snapshot: waGrupos,
       // ── Bitácora de tráfico (anotaciones en gráfica CPL)
       bitacora_trafico: client.cplAnotaciones || [],
+      // ── Calidad de leads (encuesta)
+      calidad_leads: client.calidadData || null,
+      // ── Análisis de captura FB→WP
+      captura_data: client.capturaConfig?.lastData || null,
       // Resumen legacy (compatibilidad)
       resumen: calcularResumenMision(client, isApollo),
     };
