@@ -7284,8 +7284,20 @@ function extractSheetId(url) {
 // ─── MÓDULO CALIDAD DE LEAD ────────────────────────────────────────────────────
 function CalidadLeadPanel({ client, onUpdate, readOnly }) {
   const sheetConfig  = client.capturaConfig || {};
+
+  // Normalizar scores al inicializar desde cache (por si se guardaron como fracción)
+  function normalizarCalidad(d) {
+    if (!d) return d;
+    function ns(v) { const n=parseFloat(v)||0; return n>0&&n<=1?parseFloat((n*100).toFixed(1)):n; }
+    return {
+      ...d,
+      score_promedio: ns(d.score_promedio),
+      por_anuncio: (d.por_anuncio||[]).map(a=>({...a, score_prom:ns(a.score_prom), pct_alta:ns(a.pct_alta)}))
+    };
+  }
+
   const [loading, setLoading]   = useState(false);
-  const [data, setData]         = useState(client.calidadData || null);
+  const [data, setData]         = useState(() => normalizarCalidad(client.calidadData) || null);
   const [nivelVista, setNivel]  = useState("anuncio");
   const [sortKey, setSortKey]   = useState("score_prom");
   const [sortDir, setSortDir]   = useState("desc");
@@ -7306,9 +7318,27 @@ function CalidadLeadPanel({ client, onUpdate, readOnly }) {
       const raw = json.values?.[0]?.[0];
       if (!raw) { show("Sin datos. Ejecuta 'Análisis completo + Exportar' en el sheet.", "err"); setLoading(false); return; }
       const parsed = JSON.parse(raw);
+
+      // Normalizar scores: si vienen como fracción (0-1) convertir a porcentaje (0-100)
+      // El script puede exportar 0.4 cuando debería ser 40%
+      function normScore(v) {
+        const n = parseFloat(v) || 0;
+        return n > 0 && n <= 1 ? parseFloat((n * 100).toFixed(1)) : n;
+      }
+      if (parsed.score_promedio !== undefined) {
+        parsed.score_promedio = normScore(parsed.score_promedio);
+      }
+      if (parsed.por_anuncio) {
+        parsed.por_anuncio = parsed.por_anuncio.map(a => ({
+          ...a,
+          score_prom: normScore(a.score_prom),
+          pct_alta:   normScore(a.pct_alta),
+        }));
+      }
+
       setData(parsed);
       await onUpdate({ ...client, calidadData: parsed });
-      show("✓ " + parsed.total_respuestas + " respuestas cargadas · Score " + parsed.score_promedio + "%", "ok");
+      show("✓ " + parsed.total_respuestas + " respuestas · Score " + parsed.score_promedio + "%", "ok");
     } catch(e) { show("Error: " + e.message, "err"); }
     setLoading(false);
   }
