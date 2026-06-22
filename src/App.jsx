@@ -8565,13 +8565,25 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
       resumen: calcularResumenMision(client, isApollo),
     };
 
-    // Guardar en misiones y limpiar datos actuales
+    // Guardar en misiones y mover datos a papelera (recuperable 7 días)
     const nuevasMisiones = [...misiones, snapshot];
+    const expiraEn = new Date(Date.now() + 7 * 86400000).toISOString();
 
     const clientLimpio = {
       ...client,
       misiones: nuevasMisiones,
-      records: [], // limpiar registros
+      // Papelera temporal — recuperable hasta expiraEn
+      _mision_papelera: {
+        records:     client.records || [],
+        kpis:        client.kpis || [],
+        checklist:   client.checklist || {},
+        hermesData:  client.hermesData,
+        apolloData:  client.apolloData,
+        mision_id:   snapshot.id,
+        expira_en:   expiraEn,
+      },
+      // Limpiar datos actuales
+      records: [],
       kpis: [],
       checklist: {},
       hermesData: !isApollo ? { momentos: {}, kpisHermes: [], biblioteca: client.hermesData?.biblioteca || [] } : client.hermesData,
@@ -8587,7 +8599,27 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
     await onUpdate(clientLimpio);
     setConfirm(false);
     setMisionNombre("");
-    show(`✓ ${nombre} archivada. Datos listos para nueva misión.`, "ok");
+    show(`✓ ${nombre} archivada. Tienes 7 días para deshacer si es necesario.`, "ok");
+  }
+
+  async function deshacerArchivo() {
+    const papelera = client._mision_papelera;
+    if (!papelera) return;
+    if (!window.confirm("¿Restaurar la misión archivada? Esto recuperará todos los datos anteriores.")) return;
+    // Quitar la última misión archivada y restaurar datos
+    const misionesRestauradas = misiones.filter(m => m.id !== papelera.mision_id);
+    const clientRestaurado = {
+      ...client,
+      misiones:   misionesRestauradas,
+      records:    papelera.records,
+      kpis:       papelera.kpis,
+      checklist:  papelera.checklist,
+      hermesData: papelera.hermesData,
+      apolloData: papelera.apolloData,
+      _mision_papelera: null,
+    };
+    await onUpdate(clientRestaurado);
+    show("✓ Misión restaurada correctamente.", "ok");
   }
 
   function calcularResumenMision(c, apollo) {
@@ -8645,9 +8677,20 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
           </div>
           {confirm && (
             <div style={{ marginTop: 8, background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "var(--red)" }}>
-              ⚠️ Se archivarán {(client.records || []).length} registros diarios y los KPIs actuales. Esta acción no se puede deshacer.
+              ⚠️ Se archivarán {(client.records || []).length} registros diarios y los KPIs actuales. Tendrás <b>7 días</b> para deshacer.
             </div>
           )}
+
+          {/* Banner de papelera activa */}
+          {client._mision_papelera && (() => {
+            const dias = Math.ceil((new Date(client._mision_papelera.expira_en) - new Date()) / 86400000);
+            return dias > 0 ? (
+              <div style={{ marginTop:8, background:"rgba(255,222,89,.08)", border:"1px solid rgba(255,222,89,.3)", borderRadius:8, padding:"8px 12px", fontSize:12, color:"var(--amber)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span>↩️ Misión anterior recuperable — expira en {dias} día{dias!==1?"s":""}</span>
+                <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:"var(--amber)"}} onClick={deshacerArchivo}>Deshacer archivo</button>
+              </div>
+            ) : null;
+          })()}
         </div>
         )} {/* fin !readOnly */}
 
@@ -8781,6 +8824,70 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
                   <div style={{ marginTop:8, fontSize:11, color:"var(--muted)" }}>
                     Archivado el {new Date(m.fechaArchivado).toLocaleDateString("es-EC")} · {(m.records||[]).length} registros guardados · {m.creativos?.length || 0} creativos
                     {m.bitacora_trafico?.length > 0 && ` · ${m.bitacora_trafico.length} anotaciones en bitácora`}
+                  </div>
+
+                  {/* Calidad de leads archivada */}
+                  {m.calidad_leads?.total_respuestas > 0 && (
+                    <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid var(--border)" }}>
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--accent2)", marginBottom:8 }}>⭐ Calidad de leads</div>
+                      <div style={{ display:"flex", gap:10, flexWrap:"wrap", fontSize:12 }}>
+                        <div style={{ background:"var(--surface2)", borderRadius:8, padding:"6px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"var(--muted)" }}>Respuestas</div>
+                          <div style={{ fontFamily:"var(--mono)", fontWeight:700 }}>{m.calidad_leads.total_respuestas}</div>
+                        </div>
+                        <div style={{ background:"var(--surface2)", borderRadius:8, padding:"6px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"var(--muted)" }}>Score promedio</div>
+                          <div style={{ fontFamily:"var(--mono)", fontWeight:700, color:m.calidad_leads.score_promedio>=60?"var(--green)":m.calidad_leads.score_promedio>=30?"var(--amber)":"var(--red)" }}>{m.calidad_leads.score_promedio}%</div>
+                        </div>
+                        <div style={{ background:"var(--surface2)", borderRadius:8, padding:"6px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"var(--muted)" }}>🟢 Alta</div>
+                          <div style={{ fontFamily:"var(--mono)", fontWeight:700, color:"var(--green)" }}>{m.calidad_leads.distribucion?.alta||0}</div>
+                        </div>
+                        <div style={{ background:"var(--surface2)", borderRadius:8, padding:"6px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"var(--muted)" }}>🟡 Media</div>
+                          <div style={{ fontFamily:"var(--mono)", fontWeight:700, color:"var(--amber)" }}>{m.calidad_leads.distribucion?.media||0}</div>
+                        </div>
+                        <div style={{ background:"var(--surface2)", borderRadius:8, padding:"6px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"var(--muted)" }}>🔴 Baja</div>
+                          <div style={{ fontFamily:"var(--mono)", fontWeight:700, color:"var(--red)" }}>{m.calidad_leads.distribucion?.baja||0}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Descarga de datos completos */}
+                  <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid var(--border)", display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                    <span style={{ fontSize:11, color:"var(--muted)" }}>⬇️ Descargar datos:</span>
+
+                    {/* Registros diarios */}
+                    {(m.records||[]).length > 0 && (
+                      <BotonesExportar
+                        size="sm"
+                        headers={["Fecha","Inversión","Alcance","Impresiones","CPM","CPC","CTR","Leads","Personas WP","Ventas","Ingreso","ROAS"]}
+                        rows={(m.records||[]).map(r=>[r.date,r.inversion||"",r.alcance||"",r.impresiones||"",r.cpm||"",r.cpc||"",r.ctr||"",r.formularios||r.leads||"",r.personas_wp||"",r.ventas||"",r.ingreso||"",r.roas||""])}
+                        nombreArchivo={`metricas_${m.nombre?.replace(/\s+/g,"-")}`}
+                      />
+                    )}
+
+                    {/* Creativos */}
+                    {(m.creativos||[]).length > 0 && (
+                      <BotonesExportar
+                        size="sm"
+                        headers={["Video","Categoría","Gasto","Leads","CPL","CTR%","Alcance","IV","Clasificación"]}
+                        rows={(m.creativos||[]).map(c=>[c.nombre,c.categoria,c.gasto,c.leads,c.cpl,c.ctr,c.alcance,c.iv,c.clasificacion])}
+                        nombreArchivo={`creativos_${m.nombre?.replace(/\s+/g,"-")}`}
+                      />
+                    )}
+
+                    {/* Calidad */}
+                    {m.calidad_leads?.por_anuncio?.length > 0 && (
+                      <BotonesExportar
+                        size="sm"
+                        headers={["Anuncio","Respuestas","Score Prom.","Alta","Media","Baja","% Alta"]}
+                        rows={m.calidad_leads.por_anuncio.map(a=>[a.anuncio,a.total,a.score_prom+"%",a.alta,a.media,a.baja,a.pct_alta+"%"])}
+                        nombreArchivo={`calidad_${m.nombre?.replace(/\s+/g,"-")}`}
+                      />
+                    )}
                   </div>
 
                   {/* Bitácora de tráfico */}
