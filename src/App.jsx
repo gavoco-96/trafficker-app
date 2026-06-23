@@ -10403,281 +10403,7 @@ function MediaUpload({ value, tipo, onChangeUrl, onChangeTipo, label = "Media" }
   );
 }
 
-// ─── GRUPOS WA GLOBAL (vista admin) ──────────────────────────────────────────
-function GruposPanelGlobal() {
-  const [grupos,  setGrupos]  = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [clients, setClients] = useState([]);
-  const { show, el: toastEl } = useToast();
-
-  async function cargar() {
-    setLoading(true);
-    try {
-      const [g, c] = await Promise.all([
-        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
-        fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: HL }).then(r=>r.json()),
-      ]);
-      setGrupos(Array.isArray(g) ? g : []);
-      setClients((Array.isArray(c) ? c : []).map(r=>r.data).filter(Boolean));
-    } catch { show("Error cargando", "err"); }
-    setLoading(false);
-  }
-
-  useEffect(() => { cargar(); }, []);
-
-  const totalPersonas = grupos.reduce((a,g) => a+(g.miembros_count||0), 0);
-  const sinCliente    = grupos.filter(g => !g.client_id);
-  const conCliente    = grupos.filter(g => g.client_id);
-
-  const getClientName = (id) => clients.find(c=>c.id===id)?.name || id;
-
-  if (loading) return <div className="empty">⏳ Cargando grupos...</div>;
-
-  return (
-    <>
-      {toastEl}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
-        <div>
-          <div style={{fontWeight:700,fontSize:20}}>💬 Grupos WhatsApp</div>
-          <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>
-            {grupos.length} grupos · {totalPersonas.toLocaleString()} personas · {sinCliente.length} sin cliente asignado
-          </div>
-        </div>
-        <button className="btn btn-ghost btn-sm" onClick={cargar}>🔄 Actualizar</button>
-      </div>
-
-      {sinCliente.length > 0 && (
-        <div style={{background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.2)",borderRadius:10,padding:"12px 16px",marginBottom:"1.5rem"}}>
-          <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>⚠️ {sinCliente.length} grupos sin cliente asignado</div>
-          <div style={{fontSize:11,color:"var(--muted)"}}>Ve al perfil de cada cliente → tab "💬 Grupos WA" para asignarlos.</div>
-        </div>
-      )}
-
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {grupos.map(g => {
-          const pct = g.limite_miembros ? Math.round((g.miembros_count||0)/g.limite_miembros*100) : null;
-          return (
-            <div key={g.id} className="card" style={{borderLeft:`3px solid ${g.client_id?"var(--accent)":"var(--border)"}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{g.nombre}</div>
-                  <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
-                    {(g.miembros_count||0).toLocaleString()} personas
-                    {g.limite_miembros ? ` / ${g.limite_miembros} (${pct}%)` : ""}
-                    {g.client_id
-                      ? <span style={{marginLeft:8,color:"var(--accent)"}}>· {getClientName(g.client_id)}</span>
-                      : <span style={{marginLeft:8,color:"var(--muted)"}}>· Sin cliente</span>}
-                    {g.estado==="lleno" && <span style={{marginLeft:8,color:"var(--red)"}}>· Lleno</span>}
-                  </div>
-                </div>
-                {pct !== null && (
-                  <div style={{width:80,textAlign:"right",fontFamily:"var(--mono)",fontSize:12,color:pct>=90?"var(--red)":pct>=70?"var(--amber)":"var(--green)"}}>
-                    {pct}%
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-// ─── GRUPOS WA POR CLIENTE ────────────────────────────────────────────────────
-function ClienteGruposPanel({ client, onUpdate }) {
-  const [grupos,    setGrupos]    = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [editGrupo, setEditGrupo] = useState(null);
-  const [showAsignar, setShowAsignar] = useState(false);
-  const [allGrupos, setAllGrupos] = useState([]); // todos para asignar
-  const { show, el: toastEl }     = useToast();
-
-  const clientId = client.id;
-
-  async function cargar() {
-    setLoading(true);
-    try {
-      // Grupos asignados a este cliente
-      const r = await fetch(
-        `${SUPA_GRUPOS_URL}?client_id=eq.${clientId}&select=*&order=creado_en.desc`,
-        { headers: HL }
-      );
-      const data = await r.json();
-      setGrupos(Array.isArray(data) ? data : []);
-    } catch { show("Error cargando grupos", "err"); }
-    setLoading(false);
-  }
-
-  async function cargarTodos() {
-    try {
-      const r = await fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL });
-      const data = await r.json();
-      setAllGrupos(Array.isArray(data) ? data : []);
-    } catch {}
-  }
-
-  useEffect(() => { cargar(); }, [clientId]);
-
-  async function asignarGrupo(grupoId) {
-    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${grupoId}`, {
-      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
-      body: JSON.stringify({ client_id: clientId })
-    });
-    show("✓ Grupo asignado a " + client.name, "ok");
-    cargar();
-  }
-
-  async function desasignarGrupo(grupoId) {
-    if (!window.confirm("¿Quitar este grupo del cliente?")) return;
-    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${grupoId}`, {
-      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
-      body: JSON.stringify({ client_id: null })
-    });
-    show("Grupo desasignado", "ok");
-    cargar();
-  }
-
-  async function actualizarGrupo(id, datos) {
-    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${id}`, {
-      method: "PATCH", headers: { ...HL, Prefer: "return=minimal" },
-      body: JSON.stringify(datos)
-    });
-    show("✓ Grupo actualizado", "ok");
-    setEditGrupo(null);
-    cargar();
-  }
-
-  const totalPersonas  = grupos.reduce((a, g) => a + (g.miembros_count || 0), 0);
-  const gruposActivos  = grupos.filter(g => g.estado !== "lleno" && g.activo !== false);
-  const gruposLlenos   = grupos.filter(g => g.estado === "lleno");
-  const cupoTotal      = grupos.reduce((a, g) => a + (g.limite_miembros || 0), 0);
-  const pctOcupacion   = cupoTotal > 0 ? Math.round(totalPersonas / cupoTotal * 100) : null;
-
-  if (loading) return <div className="empty">⏳ Cargando grupos...</div>;
-
-  return (
-    <>
-      {toastEl}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div>
-          <div style={{ fontWeight:700, fontSize:15 }}>💬 Grupos de WhatsApp</div>
-          <div style={{ fontSize:12, color:"var(--muted)", marginTop:2 }}>
-            {grupos.length} grupos · {totalPersonas.toLocaleString()} personas total
-            {pctOcupacion !== null && ` · ${pctOcupacion}% ocupación`}
-          </div>
-        </div>
-        <button className="btn btn-ghost btn-sm" onClick={()=>{ setShowAsignar(true); cargarTodos(); }}>
-          + Asignar grupo
-        </button>
-      </div>
-
-      {/* Cards resumen */}
-      <div className="grid3" style={{ marginBottom:12, gap:8 }}>
-        {[
-          ["💬 Total personas", totalPersonas.toLocaleString(), "var(--green)"],
-          ["✅ Grupos activos", gruposActivos.length, "var(--accent)"],
-          ["🔴 Grupos llenos", gruposLlenos.length, gruposLlenos.length>0?"var(--red)":"var(--muted)"],
-        ].map(([l,v,c])=>(
-          <div key={l} className="card" style={{padding:"10px 14px",textAlign:"center"}}>
-            <div style={{fontSize:10,color:"var(--muted)",marginBottom:3}}>{l}</div>
-            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color:c}}>{v}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Modal asignar grupo existente */}
-      {showAsignar && (
-        <div className="card" style={{ marginBottom:12, borderColor:"rgba(0,74,173,.3)" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-            <div style={{ fontWeight:600, fontSize:13 }}>Asignar grupo a {client.name}</div>
-            <button className="btn btn-ghost btn-sm" onClick={()=>setShowAsignar(false)}>×</button>
-          </div>
-          <div style={{ fontSize:11, color:"var(--muted)", marginBottom:10 }}>
-            Solo aparecen grupos sin cliente asignado o de otros clientes que quieras mover.
-          </div>
-          <div style={{ maxHeight:250, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
-            {allGrupos.filter(g => g.client_id !== clientId).map(g => (
-              <div key={g.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 12px", background:"var(--surface2)", borderRadius:8 }}>
-                <div>
-                  <div style={{ fontWeight:600, fontSize:13 }}>{g.nombre}</div>
-                  <div style={{ fontSize:11, color:"var(--muted)" }}>
-                    {g.miembros_count||0} personas
-                    {g.client_id ? <span style={{ color:"var(--amber)", marginLeft:6 }}>· Asignado a otro cliente</span> : <span style={{ color:"var(--green)", marginLeft:6 }}>· Sin cliente</span>}
-                  </div>
-                </div>
-                <button className="btn btn-primary btn-sm" style={{ fontSize:11 }} onClick={()=>asignarGrupo(g.id)}>
-                  Asignar
-                </button>
-              </div>
-            ))}
-            {allGrupos.filter(g=>g.client_id!==clientId).length===0 && (
-              <div style={{ textAlign:"center", color:"var(--muted)", fontSize:12, padding:"1rem" }}>
-                No hay grupos disponibles para asignar.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Lista de grupos del cliente */}
-      {grupos.length === 0 ? (
-        <div className="empty">
-          <div style={{ fontSize:28, opacity:.3 }}>💬</div>
-          <div style={{ marginTop:8 }}>Sin grupos asignados. Usa "Asignar grupo" para vincular grupos a este cliente.</div>
-        </div>
-      ) : grupos.map(g => {
-        const pctCupo = g.limite_miembros ? Math.round((g.miembros_count||0)/g.limite_miembros*100) : null;
-        const isLleno = g.estado === "lleno";
-        const isEditing = editGrupo?.id === g.id;
-
-        return (
-          <div key={g.id} className="card" style={{ marginBottom:8, borderLeft:`3px solid ${isLleno?"var(--red)":pctCupo>=80?"var(--amber)":"var(--accent)"}` }}>
-            {isEditing ? (
-              <div>
-                <div className="form-row">
-                  <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Nombre</label>
-                    <input type="text" value={editGrupo.nombre} onChange={e=>setEditGrupo(p=>({...p,nombre:e.target.value}))} /></div>
-                  <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Límite de miembros</label>
-                    <input type="number" value={editGrupo.limite_miembros||""} onChange={e=>setEditGrupo(p=>({...p,limite_miembros:e.target.value?parseInt(e.target.value):null}))} placeholder="Sin límite"/></div>
-                </div>
-                <div style={{display:"flex",gap:8,marginTop:8}}>
-                  <button className="btn btn-primary btn-sm" onClick={()=>actualizarGrupo(g.id,{nombre:editGrupo.nombre,limite_miembros:editGrupo.limite_miembros})}>💾 Guardar</button>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo(null)}>Cancelar</button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
-                <div style={{ flex:1 }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                    <span style={{ fontWeight:700, fontSize:14 }}>{g.nombre}</span>
-                    {isLleno && <span style={{ fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"1px 8px", borderRadius:10 }}>🔴 Lleno</span>}
-                    {!isLleno && pctCupo>=80 && <span style={{ fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"1px 8px", borderRadius:10 }}>⚠️ Casi lleno</span>}
-                  </div>
-                  <div style={{ fontSize:12, color:"var(--muted)" }}>
-                    {(g.miembros_count||0).toLocaleString()} personas
-                    {g.limite_miembros ? ` / ${g.limite_miembros} · ${pctCupo}%` : " · Sin límite"}
-                    {g.ultima_sync && ` · Sync: ${new Date(g.ultima_sync).toLocaleDateString("es-EC")}`}
-                  </div>
-                  {g.limite_miembros && (
-                    <div style={{ marginTop:6, height:4, background:"rgba(255,255,255,.08)", borderRadius:2, overflow:"hidden" }}>
-                      <div style={{ height:"100%", width:Math.min(pctCupo,100)+"%", background:pctCupo>=90?"var(--red)":pctCupo>=70?"var(--amber)":"var(--accent)", borderRadius:2 }}/>
-                    </div>
-                  )}
-                </div>
-                <div style={{ display:"flex", gap:6 }}>
-                  <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo({...g})}>✏️</button>
-                  <button className="btn btn-ghost btn-sm" style={{ color:"var(--muted)", fontSize:10 }} onClick={()=>desasignarGrupo(g.id)}>Quitar</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
+function GruposPanel() {
   const [grupos, setGrupos]       = useState([]);
   const [config, setConfig]       = useState(null);
   const [tab, setTab]             = useState("grupos"); // grupos | mensajes
@@ -10725,6 +10451,557 @@ function ClienteGruposPanel({ client, onUpdate }) {
     });
     cargar();
   }
+
+  const estadoColor = { activo:"var(--green)", lleno:"var(--amber)", pausado:"var(--muted)", archivado:"var(--border)" };
+
+  return (
+    <div style={{padding:"1.5rem", maxWidth:900, margin:"0 auto"}}>
+      {toast && <div style={{position:"fixed",top:20,right:20,zIndex:9999,background:toast.tipo==="err"?"var(--red)":"var(--green)",color:"#fff",padding:"10px 20px",borderRadius:10,fontWeight:600,fontSize:13}}>{toast.msg}</div>}
+
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1.5rem"}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:700}}>💬 Grupos WhatsApp</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Gestiona tus grupos y mensajes automáticos</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn btn-ghost btn-sm" onClick={async()=>{
+            try {
+              const r = await fetch(`${BOT_URL}/sync/grupos`,{method:"POST"});
+              const d = await r.json();
+              if(d.ok) { show(`✓ ${d.grupos} grupos sincronizados`); cargar(); }
+              else show("❌ " + (d.error||"Error"), "err");
+            } catch(e){ show("❌ Bot no disponible","err"); }
+          }}>🔄 Forzar sync</button>
+          <button className="btn btn-ghost btn-sm" onClick={cargar}>↻ Actualizar</button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:8,marginBottom:"1.5rem",borderBottom:"1px solid var(--border)",paddingBottom:12}}>
+        {[["grupos","📊 Grupos"],["mensajes","✉️ Mensajes"],["remarketing","🎯 Remarketing"],["conexion","📡 Conexión WA"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,background:tab===k?"var(--accent)":"var(--surface2)",color:tab===k?"#fff":"var(--muted)"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TAB GRUPOS ── */}
+      {tab === "grupos" && (
+        <div>
+          {loading ? <div style={{color:"var(--muted)",textAlign:"center",padding:"3rem"}}>Cargando grupos...</div> : (
+            grupos.length === 0 ? (
+              <div style={{textAlign:"center",padding:"3rem",color:"var(--muted)"}}>
+                <div style={{fontSize:40,marginBottom:12}}>💬</div>
+                <div style={{fontWeight:600,marginBottom:8}}>No hay grupos sincronizados</div>
+                <div style={{fontSize:13}}>Conecta el bot de WhatsApp y los grupos aparecerán aquí automáticamente.</div>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {grupos.map(g => (
+                  <div key={g.id} className="card" style={{padding:"16px 20px"}}>
+                    {editGrupo?.id === g.id ? (
+                      // Modo edición
+                      <div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Nombre</label>
+                            <input type="text" value={editGrupo.nombre||""} onChange={e=>setEditGrupo({...editGrupo,nombre:e.target.value})} />
+                          </div>
+                          <div className="field">
+                            <label>Límite de miembros</label>
+                            <input type="number" value={editGrupo.limite_miembros||""} onChange={e=>setEditGrupo({...editGrupo,limite_miembros:e.target.value?parseInt(e.target.value):null})} placeholder="Sin límite" />
+                          </div>
+                        </div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Estado</label>
+                            <select value={editGrupo.estado||"activo"} onChange={e=>setEditGrupo({...editGrupo,estado:e.target.value})}>
+                              <option value="activo">Activo</option>
+                              <option value="pausado">Pausado</option>
+                              <option value="archivado">Archivado</option>
+                            </select>
+                          </div>
+                          <div className="field">
+                            <label>Link enmascarado ID (opcional)</label>
+                            <input type="text" value={editGrupo.link_id||""} onChange={e=>setEditGrupo({...editGrupo,link_id:e.target.value})} placeholder="lnk_..." />
+                          </div>
+                        </div>
+                        <div className="form-row" style={{marginBottom:12}}>
+                          <div className="field">
+                            <label>Etiquetas <span style={{fontWeight:400,color:"var(--muted)"}}>— separadas por coma (ej: nuevos, VIP)</span></label>
+                            <input type="text" value={(editGrupo.etiquetas||[]).join(", ")} onChange={e=>setEditGrupo({...editGrupo,etiquetas:e.target.value.split(",").map(t=>t.trim()).filter(Boolean)})} placeholder="nuevos, activos, VIP..." />
+                          </div>
+                          <div className="field">
+                            <label>Grupo de respaldo <span style={{fontWeight:400,color:"var(--muted)"}}>— se activa si este cae</span></label>
+                            <select value={editGrupo.grupo_respaldo_id||""} onChange={e=>setEditGrupo({...editGrupo,grupo_respaldo_id:e.target.value||null})}>
+                              <option value="">Sin respaldo</option>
+                              {grupos.filter(og=>og.id!==editGrupo.id).map(og=>(
+                                <option key={og.id} value={og.id}>{og.nombre||og.jid}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button className="btn btn-sm" onClick={async()=>{ await actualizarGrupo(g.id,editGrupo); setEditGrupo(null); show("✓ Grupo actualizado"); }}>Guardar</button>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo(null)}>Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      // Vista normal
+                      <div style={{display:"flex",alignItems:"center",gap:16}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                            <span style={{fontWeight:700,fontSize:15}}>{g.nombre || g.jid}</span>
+                            <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,background:`${estadoColor[g.estado] || "var(--border)"}22`,color:estadoColor[g.estado] || "var(--muted)"}}>{g.estado || "activo"}</span>
+                            {g.alerta_activa && <span style={{fontSize:11,background:"rgba(239,68,68,.15)",color:"var(--red)",padding:"2px 8px",borderRadius:10}}>🔴 Caído</span>}
+                            {g.link_id && <span style={{fontSize:11,background:"rgba(77,159,255,.15)",color:"var(--accent)",padding:"2px 8px",borderRadius:10}}>🔗 Link</span>}
+                            {g.grupo_respaldo_id && <span style={{fontSize:11,background:"rgba(16,185,129,.1)",color:"var(--green)",padding:"2px 8px",borderRadius:10}}>🛡️ Respaldo</span>}
+                            {(g.etiquetas||[]).map(et=>(
+                              <span key={et} style={{fontSize:11,background:"rgba(255,222,89,.1)",color:"var(--amber)",padding:"2px 8px",borderRadius:10}}>{et}</span>
+                            ))}
+                          </div>
+                          <div style={{fontSize:12,color:"var(--muted)"}}>
+                            <span style={{marginRight:16}}>👥 <strong style={{color:"var(--text)"}}>{g.miembros_count || 0}</strong>{g.limite_miembros ? ` / ${g.limite_miembros}` : " miembros"}</span>
+                            <span style={{marginRight:16}}>Check: {g.ultimo_check ? new Date(g.ultimo_check).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit"}) : "—"}</span>
+                          </div>
+                          {g.alerta_activa && <div style={{fontSize:12,color:"var(--red)",marginTop:4}}>{g.alerta_mensaje}</div>}
+                          {g.limite_miembros && (
+                            <div style={{marginTop:8,height:4,borderRadius:4,background:"var(--border)",overflow:"hidden"}}>
+                              <div style={{height:"100%",borderRadius:4,background:g.miembros_count>=g.limite_miembros?"var(--red)":g.miembros_count/g.limite_miembros>0.8?"var(--amber)":"var(--green)",width:`${Math.min(100,Math.round((g.miembros_count||0)/g.limite_miembros*100))}%`,transition:"width .3s"}} />
+                            </div>
+                          )}
+                        </div>
+                        <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo({...g})}>✏️ Editar</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* ── TAB MENSAJES AUTOMÁTICOS ── */}
+      {tab === "mensajes" && config && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+
+          {/* Bienvenida */}
+          <div className="card" style={{padding:"20px 24px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>👋 Mensaje de bienvenida</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Se envía al privado cuando alguien entra a un grupo</div>
+              </div>
+              <div onClick={()=>setConfig({...config,bienvenida_activo:!config.bienvenida_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.bienvenida_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.bienvenida_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.bienvenida_activo && (
+              <div>
+                <GruposSelector grupos={grupos} seleccionados={config.grupos_bienvenida||[]} onChange={v=>setConfig({...config,grupos_bienvenida:v})} label="Aplicar a estos grupos" />
+                <div className="field" style={{marginBottom:12}}>
+                  <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} para el nombre, {"{grupo}"} para el nombre del grupo</span></label>
+                  <textarea value={config.bienvenida_texto||""} onChange={e=>setConfig({...config,bienvenida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, bienvenido/a al grupo 👋&#10;&#10;Aquí encontrarás..."/>
+                </div>
+                <MediaUpload label="Imagen o video" value={config.bienvenida_media_url||""} tipo={config.bienvenida_media_tipo||""} onChangeUrl={v=>setConfig({...config,bienvenida_media_url:v})} onChangeTipo={v=>setConfig({...config,bienvenida_media_tipo:v})} />
+              </div>
+            )}
+          </div>
+
+          {/* Despedida */}
+          <div className="card" style={{padding:"20px 24px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>👋 Mensaje de despedida</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Se envía al privado cuando alguien sale de un grupo</div>
+              </div>
+              <div onClick={()=>setConfig({...config,despedida_activo:!config.despedida_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.despedida_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.despedida_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.despedida_activo && (
+              <div>
+                <GruposSelector grupos={grupos} seleccionados={config.grupos_despedida||[]} onChange={v=>setConfig({...config,grupos_despedida:v})} label="Aplicar a estos grupos" />
+                <div className="field" style={{marginBottom:12}}>
+                  <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{grupo}"}</span></label>
+                  <textarea value={config.despedida_texto||""} onChange={e=>setConfig({...config,despedida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hasta luego {nombre} 👋&#10;&#10;Fue un placer tenerte con nosotros..."/>
+                </div>
+                <MediaUpload label="Imagen o video" value={config.despedida_media_url||""} tipo={config.despedida_media_tipo||""} onChangeUrl={v=>setConfig({...config,despedida_media_url:v})} onChangeTipo={v=>setConfig({...config,despedida_media_tipo:v})} />
+              </div>
+            )}
+          </div>
+
+          <button className="btn" style={{alignSelf:"flex-start"}} onClick={guardarConfig} disabled={saving}>
+            {saving ? "Guardando..." : "💾 Guardar configuración"}
+          </button>
+        </div>
+      )}
+
+      {/* ── TAB REMARKETING ── */}
+      {tab === "remarketing" && config && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+
+          {/* Toggle principal */}
+          <div style={{background:"var(--surface2)",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:15}}>🎯 Remarketing activo</div>
+              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Envía mensajes automáticos a leads que llenaron el formulario pero no entraron al grupo</div>
+            </div>
+            <div onClick={()=>setConfig({...config,remarketing_activo:!config.remarketing_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.remarketing_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+              <div style={{position:"absolute",top:3,left:config.remarketing_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+            </div>
+          </div>
+
+          {config.remarketing_activo && (<>
+
+            {/* Mensaje 1 */}
+            <div className="card" style={{padding:"20px 24px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#fff",flexShrink:0}}>1</div>
+                <div>
+                  <div style={{fontWeight:700,fontSize:14}}>Primer mensaje</div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>Se envía si el lead no entra al grupo en el tiempo definido</div>
+                </div>
+              </div>
+              <div className="form-row" style={{marginBottom:12}}>
+                <div className="field" style={{maxWidth:180}}>
+                  <label>Enviar después de (minutos)</label>
+                  <input type="number" min="1" value={config.remarketing_msg1_min||10} onChange={e=>setConfig({...config,remarketing_msg1_min:parseInt(e.target.value)||10})} />
+                </div>
+              <GruposSelector grupos={grupos} seleccionados={config.grupos_remarketing1||[]} onChange={v=>setConfig({...config,grupos_remarketing1:v})} label="Aplicar a leads de estos grupos" />
+              </div>
+              <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg1_media_url||""} tipo={config.remarketing_msg1_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg1_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg1_media_tipo:v})} />
+              <div className="field">
+                <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{link}"}</span></label>
+                <textarea value={config.remarketing_msg1_texto||""} onChange={e=>setConfig({...config,remarketing_msg1_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre} 👋, vimos que te registraste pero aún no te has unido al grupo. Aquí tienes el link: {link}"/>
+              </div>
+              <div style={{marginTop:10,padding:"8px 12px",background:"rgba(77,159,255,.06)",borderRadius:8,fontSize:12,color:"var(--muted)"}}>
+                💡 Este mensaje se envía al WhatsApp privado del lead, no al grupo.
+              </div>
+            </div>
+
+            {/* Mensaje 2 */}
+            <div className="card" style={{padding:"20px 24px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:28,height:28,borderRadius:"50%",background:"var(--surface2)",border:"2px solid var(--border)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"var(--muted)",flexShrink:0}}>2</div>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14}}>Segundo mensaje</div>
+                    <div style={{fontSize:12,color:"var(--muted)"}}>Recordatorio final — solo si aún no entró</div>
+                  </div>
+                </div>
+                <div onClick={()=>setConfig({...config,remarketing_msg2_activo:!config.remarketing_msg2_activo})} style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.remarketing_msg2_activo?"var(--green)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                  <div style={{position:"absolute",top:3,left:config.remarketing_msg2_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+                </div>
+              </div>
+              {config.remarketing_msg2_activo && (
+                <>
+                  <div className="form-row" style={{marginBottom:12}}>
+                    <div className="field" style={{maxWidth:180}}>
+                      <label>Enviar después de (horas)</label>
+                      <input type="number" min="1" value={config.remarketing_msg2_horas||24} onChange={e=>setConfig({...config,remarketing_msg2_horas:parseInt(e.target.value)||24})} />
+                    </div>
+                  <GruposSelector grupos={grupos} seleccionados={config.grupos_remarketing2||[]} onChange={v=>setConfig({...config,grupos_remarketing2:v})} label="Aplicar a leads de estos grupos" />
+                  </div>
+                  <MediaUpload label="Imagen o video (opcional)" value={config.remarketing_msg2_media_url||""} tipo={config.remarketing_msg2_media_tipo||""} onChangeUrl={v=>setConfig({...config,remarketing_msg2_media_url:v})} onChangeTipo={v=>setConfig({...config,remarketing_msg2_media_tipo:v})} />
+                  <div className="field">
+                    <label>Mensaje</label>
+                    <textarea value={config.remarketing_msg2_texto||""} onChange={e=>setConfig({...config,remarketing_msg2_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, es tu última oportunidad de unirte 🚀 {link}"/>
+                  </div>
+                  <div style={{marginTop:10,padding:"8px 12px",background:"rgba(255,222,89,.06)",borderRadius:8,fontSize:12,color:"var(--amber)"}}>
+                    ⚠️ Recomendamos no enviar más de 2 mensajes para evitar que el número sea reportado como spam.
+                  </div>
+                </>
+              )}
+              {!config.remarketing_msg2_activo && (
+                <div style={{fontSize:12,color:"var(--muted)",padding:"8px 0"}}>Activa el segundo mensaje si quieres enviar un recordatorio final a las {config.remarketing_msg2_horas||24} horas.</div>
+              )}
+            </div>
+
+            {/* Resumen visual del flujo */}
+            <div style={{background:"var(--surface2)",borderRadius:10,padding:"14px 18px"}}>
+              <div style={{fontSize:12,fontWeight:600,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:12}}>Flujo de remarketing</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,flexWrap:"wrap"}}>
+                <span style={{padding:"4px 10px",background:"rgba(77,159,255,.15)",color:"var(--accent)",borderRadius:20}}>Lead llena formulario</span>
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:20}}>{config.remarketing_msg1_min||10} min</span>
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"rgba(16,185,129,.15)",color:"var(--green)",borderRadius:20}}>Mensaje 1</span>
+                {config.remarketing_msg2_activo && (<>
+                  <span style={{color:"var(--muted)"}}>→</span>
+                  <span style={{padding:"4px 10px",background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:20}}>{config.remarketing_msg2_horas||24}h</span>
+                  <span style={{color:"var(--muted)"}}>→</span>
+                  <span style={{padding:"4px 10px",background:"rgba(16,185,129,.15)",color:"var(--green)",borderRadius:20}}>Mensaje 2</span>
+                </>)}
+                <span style={{color:"var(--muted)"}}>→</span>
+                <span style={{padding:"4px 10px",background:"rgba(239,68,68,.1)",color:"var(--red)",borderRadius:20}}>Si entra al grupo → se cancela ✓</span>
+              </div>
+            </div>
+
+          </>)}
+
+          <button className="btn" style={{alignSelf:"flex-start"}} onClick={guardarConfig} disabled={saving}>
+            {saving ? "Guardando..." : "💾 Guardar configuración"}
+          </button>
+        </div>
+      )}
+
+      {/* ── TAB CONEXIÓN WA ── */}
+      {tab === "conexion" && (
+        <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
+          <ConexionWAPanel />
+          <AlertasPanel />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── GRUPOS WA GLOBAL (resumen admin) ────────────────────────────────────────
+function GruposPanelGlobal() {
+  const [grupos,  setGrupos]  = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [clients, setClients] = useState([]);
+  const { show, el: toastEl } = useToast();
+
+  async function cargar() {
+    setLoading(true);
+    try {
+      const [g, c] = await Promise.all([
+        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
+        fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: HL }).then(r=>r.json()),
+      ]);
+      setGrupos(Array.isArray(g) ? g : []);
+      setClients((Array.isArray(c) ? c : []).map(r=>r.data).filter(Boolean));
+    } catch { show("Error cargando", "err"); }
+    setLoading(false);
+  }
+  useEffect(() => { cargar(); }, []);
+
+  const totalPersonas = grupos.reduce((a,g) => a+(g.miembros_count||0), 0);
+  const sinCliente    = grupos.filter(g => !g.client_id);
+  const getClientName = (id) => clients.find(c=>c.id===id)?.name || id;
+
+  if (loading) return <div className="empty">⏳ Cargando grupos...</div>;
+
+  return (
+    <div style={{padding:"1.5rem",maxWidth:900,margin:"0 auto"}}>
+      {toastEl}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:20}}>💬 Grupos WhatsApp — Global</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>
+            {grupos.length} grupos · {totalPersonas.toLocaleString()} personas total
+            {sinCliente.length > 0 && ` · ⚠️ ${sinCliente.length} sin cliente`}
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={cargar}>🔄 Actualizar</button>
+      </div>
+
+      {sinCliente.length > 0 && (
+        <div style={{background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.2)",borderRadius:10,padding:"12px 16px",marginBottom:"1.5rem",fontSize:12,color:"var(--amber)"}}>
+          ⚠️ {sinCliente.length} grupos sin cliente asignado — ve al perfil de cada cliente → tab "💬 Grupos WA" para asignarlos.
+        </div>
+      )}
+
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {grupos.map(g => {
+          const pct = g.limite_miembros ? Math.round((g.miembros_count||0)/g.limite_miembros*100) : null;
+          return (
+            <div key={g.id} className="card" style={{borderLeft:`3px solid ${g.client_id?"var(--accent)":"var(--border)"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>{g.nombre}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                    {(g.miembros_count||0).toLocaleString()} personas
+                    {g.limite_miembros ? ` / ${g.limite_miembros} (${pct}%)` : ""}
+                    {g.client_id
+                      ? <span style={{marginLeft:8,color:"var(--accent)"}}>· {getClientName(g.client_id)}</span>
+                      : <span style={{marginLeft:8,color:"var(--muted)"}}>· Sin cliente</span>}
+                    {g.estado==="lleno" && <span style={{marginLeft:8,color:"var(--red)"}}>· Lleno</span>}
+                  </div>
+                </div>
+                {pct !== null && (
+                  <div style={{fontFamily:"var(--mono)",fontSize:12,color:pct>=90?"var(--red)":pct>=70?"var(--amber)":"var(--green)"}}>
+                    {pct}%
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── GRUPOS WA POR CLIENTE ────────────────────────────────────────────────────
+function ClienteGruposPanel({ client, onUpdate }) {
+  const [grupos,      setGrupos]      = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [editGrupo,   setEditGrupo]   = useState(null);
+  const [showAsignar, setShowAsignar] = useState(false);
+  const [allGrupos,   setAllGrupos]   = useState([]);
+  const { show, el: toastEl }         = useToast();
+  const clientId = client.id;
+
+  async function cargar() {
+    setLoading(true);
+    try {
+      const r = await fetch(`${SUPA_GRUPOS_URL}?client_id=eq.${clientId}&select=*&order=creado_en.desc`, { headers: HL });
+      const data = await r.json();
+      setGrupos(Array.isArray(data) ? data : []);
+    } catch { show("Error cargando grupos", "err"); }
+    setLoading(false);
+  }
+  async function cargarTodos() {
+    try {
+      const r = await fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL });
+      const data = await r.json();
+      setAllGrupos(Array.isArray(data) ? data : []);
+    } catch {}
+  }
+  useEffect(() => { cargar(); }, [clientId]);
+
+  async function asignarGrupo(grupoId) {
+    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${grupoId}`, {
+      method:"PATCH", headers:{...HL,Prefer:"return=minimal"},
+      body: JSON.stringify({ client_id: clientId })
+    });
+    show("✓ Grupo asignado a " + client.name, "ok");
+    setShowAsignar(false); cargar();
+  }
+  async function desasignarGrupo(grupoId) {
+    if (!window.confirm("¿Quitar este grupo del cliente?")) return;
+    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${grupoId}`, {
+      method:"PATCH", headers:{...HL,Prefer:"return=minimal"},
+      body: JSON.stringify({ client_id: null })
+    });
+    show("Grupo desasignado", "ok"); cargar();
+  }
+  async function actualizarGrupo(id, datos) {
+    await fetch(`${SUPA_GRUPOS_URL}?id=eq.${id}`, {
+      method:"PATCH", headers:{...HL,Prefer:"return=minimal"},
+      body: JSON.stringify(datos)
+    });
+    show("✓ Grupo actualizado", "ok"); setEditGrupo(null); cargar();
+  }
+
+  const totalPersonas = grupos.reduce((a,g) => a+(g.miembros_count||0), 0);
+  const gruposActivos = grupos.filter(g => g.estado !== "lleno" && g.activo !== false);
+  const gruposLlenos  = grupos.filter(g => g.estado === "lleno");
+
+  if (loading) return <div className="empty">⏳ Cargando grupos...</div>;
+
+  return (
+    <>
+      {toastEl}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:15}}>💬 Grupos de WhatsApp</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
+            {grupos.length} grupos · {totalPersonas.toLocaleString()} personas
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={()=>{ setShowAsignar(true); cargarTodos(); }}>+ Asignar grupo</button>
+      </div>
+
+      <div className="grid3" style={{marginBottom:12,gap:8}}>
+        {[
+          ["💬 Personas total", totalPersonas.toLocaleString(), "var(--green)"],
+          ["✅ Activos", gruposActivos.length, "var(--accent)"],
+          ["🔴 Llenos", gruposLlenos.length, gruposLlenos.length>0?"var(--red)":"var(--muted)"],
+        ].map(([l,v,c])=>(
+          <div key={l} className="card" style={{padding:"10px 14px",textAlign:"center"}}>
+            <div style={{fontSize:10,color:"var(--muted)",marginBottom:3}}>{l}</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color:c}}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {showAsignar && (
+        <div className="card" style={{marginBottom:12,borderColor:"rgba(0,74,173,.3)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:13}}>Asignar grupo a {client.name}</div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setShowAsignar(false)}>×</button>
+          </div>
+          <div style={{maxHeight:240,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
+            {allGrupos.filter(g=>g.client_id!==clientId).map(g=>(
+              <div key={g.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"var(--surface2)",borderRadius:8}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>{g.nombre}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>
+                    {g.miembros_count||0} personas
+                    {g.client_id ? <span style={{color:"var(--amber)",marginLeft:6}}>· Otro cliente</span> : <span style={{color:"var(--green)",marginLeft:6}}>· Disponible</span>}
+                  </div>
+                </div>
+                <button className="btn btn-primary btn-sm" style={{fontSize:11}} onClick={()=>asignarGrupo(g.id)}>Asignar</button>
+              </div>
+            ))}
+            {allGrupos.filter(g=>g.client_id!==clientId).length===0 && (
+              <div style={{textAlign:"center",color:"var(--muted)",fontSize:12,padding:"1rem"}}>No hay grupos disponibles.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {grupos.length === 0 ? (
+        <div className="empty">
+          <div style={{fontSize:28,opacity:.3}}>💬</div>
+          <div style={{marginTop:8}}>Sin grupos asignados. Usa "Asignar grupo" para vincular.</div>
+        </div>
+      ) : grupos.map(g => {
+        const pct = g.limite_miembros ? Math.round((g.miembros_count||0)/g.limite_miembros*100) : null;
+        const isEditing = editGrupo?.id === g.id;
+        return (
+          <div key={g.id} className="card" style={{marginBottom:8,borderLeft:`3px solid ${g.estado==="lleno"?"var(--red)":pct>=80?"var(--amber)":"var(--accent)"}`}}>
+            {isEditing ? (
+              <div>
+                <div className="form-row">
+                  <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Nombre</label>
+                    <input type="text" value={editGrupo.nombre} onChange={e=>setEditGrupo(p=>({...p,nombre:e.target.value}))}/></div>
+                  <div className="field" style={{marginBottom:0}}><label style={{fontSize:11}}>Límite de miembros</label>
+                    <input type="number" value={editGrupo.limite_miembros||""} onChange={e=>setEditGrupo(p=>({...p,limite_miembros:e.target.value?parseInt(e.target.value):null}))} placeholder="Sin límite"/></div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <button className="btn btn-primary btn-sm" onClick={()=>actualizarGrupo(g.id,{nombre:editGrupo.nombre,limite_miembros:editGrupo.limite_miembros})}>💾 Guardar</button>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo(null)}>Cancelar</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                    <span style={{fontWeight:700,fontSize:14}}>{g.nombre}</span>
+                    {g.estado==="lleno" && <span style={{fontSize:10,background:"rgba(239,68,68,.15)",color:"var(--red)",padding:"1px 8px",borderRadius:10}}>🔴 Lleno</span>}
+                    {g.estado!=="lleno"&&pct>=80 && <span style={{fontSize:10,background:"rgba(255,222,89,.1)",color:"var(--amber)",padding:"1px 8px",borderRadius:10}}>⚠️ Casi lleno</span>}
+                  </div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>
+                    {(g.miembros_count||0).toLocaleString()} personas
+                    {g.limite_miembros ? ` / ${g.limite_miembros} · ${pct}%` : " · Sin límite"}
+                    {g.ultima_sync && ` · Sync: ${new Date(g.ultima_sync).toLocaleDateString("es-EC")}`}
+                  </div>
+                  {g.limite_miembros && (
+                    <div style={{marginTop:6,height:4,background:"rgba(255,255,255,.08)",borderRadius:2,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:Math.min(pct,100)+"%",background:pct>=90?"var(--red)":pct>=70?"var(--amber)":"var(--accent)",borderRadius:2}}/>
+                    </div>
+                  )}
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button className="btn btn-ghost btn-sm" onClick={()=>setEditGrupo({...g})}>✏️</button>
+                  <button className="btn btn-ghost btn-sm" style={{color:"var(--muted)",fontSize:10}} onClick={()=>desasignarGrupo(g.id)}>Quitar</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+// ─── PANEL PRINCIPAL DE LINKS ──────────────────────────────────
 function LinksPanel() {
   const [links, setLinks]         = useState([]);
   const [grupos, setGrupos]       = useState([]);
@@ -11682,9 +11959,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", "captura", "grupos", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", "grupos", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "captura" ? "📊 Captura WP" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
+              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
             </button>
           ))}
         </div>
