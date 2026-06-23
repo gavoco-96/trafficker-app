@@ -10758,6 +10758,7 @@ function GruposPanel() {
   );
 }
 
+
 // ─── GRUPOS WA GLOBAL (resumen admin) ────────────────────────────────────────
 function GruposPanelGlobal() {
   const [grupos,  setGrupos]  = useState([]);
@@ -13425,7 +13426,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
               <LinksPanel />
             )}
             {view === "grupos" && (
-              <GruposPanelGlobal />
+              <GruposPanel />
             )}
             {view === "comandos" && (
               <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
