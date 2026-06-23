@@ -10403,6 +10403,87 @@ function MediaUpload({ value, tipo, onChangeUrl, onChangeTipo, label = "Media" }
   );
 }
 
+// ─── GRUPOS WA GLOBAL (vista admin) ──────────────────────────────────────────
+function GruposPanelGlobal() {
+  const [grupos,  setGrupos]  = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [clients, setClients] = useState([]);
+  const { show, el: toastEl } = useToast();
+
+  async function cargar() {
+    setLoading(true);
+    try {
+      const [g, c] = await Promise.all([
+        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
+        fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: HL }).then(r=>r.json()),
+      ]);
+      setGrupos(Array.isArray(g) ? g : []);
+      setClients((Array.isArray(c) ? c : []).map(r=>r.data).filter(Boolean));
+    } catch { show("Error cargando", "err"); }
+    setLoading(false);
+  }
+
+  useEffect(() => { cargar(); }, []);
+
+  const totalPersonas = grupos.reduce((a,g) => a+(g.miembros_count||0), 0);
+  const sinCliente    = grupos.filter(g => !g.client_id);
+  const conCliente    = grupos.filter(g => g.client_id);
+
+  const getClientName = (id) => clients.find(c=>c.id===id)?.name || id;
+
+  if (loading) return <div className="empty">⏳ Cargando grupos...</div>;
+
+  return (
+    <>
+      {toastEl}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
+        <div>
+          <div style={{fontWeight:700,fontSize:20}}>💬 Grupos WhatsApp</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>
+            {grupos.length} grupos · {totalPersonas.toLocaleString()} personas · {sinCliente.length} sin cliente asignado
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={cargar}>🔄 Actualizar</button>
+      </div>
+
+      {sinCliente.length > 0 && (
+        <div style={{background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.2)",borderRadius:10,padding:"12px 16px",marginBottom:"1.5rem"}}>
+          <div style={{fontSize:12,fontWeight:600,color:"var(--amber)",marginBottom:8}}>⚠️ {sinCliente.length} grupos sin cliente asignado</div>
+          <div style={{fontSize:11,color:"var(--muted)"}}>Ve al perfil de cada cliente → tab "💬 Grupos WA" para asignarlos.</div>
+        </div>
+      )}
+
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {grupos.map(g => {
+          const pct = g.limite_miembros ? Math.round((g.miembros_count||0)/g.limite_miembros*100) : null;
+          return (
+            <div key={g.id} className="card" style={{borderLeft:`3px solid ${g.client_id?"var(--accent)":"var(--border)"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{g.nombre}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                    {(g.miembros_count||0).toLocaleString()} personas
+                    {g.limite_miembros ? ` / ${g.limite_miembros} (${pct}%)` : ""}
+                    {g.client_id
+                      ? <span style={{marginLeft:8,color:"var(--accent)"}}>· {getClientName(g.client_id)}</span>
+                      : <span style={{marginLeft:8,color:"var(--muted)"}}>· Sin cliente</span>}
+                    {g.estado==="lleno" && <span style={{marginLeft:8,color:"var(--red)"}}>· Lleno</span>}
+                  </div>
+                </div>
+                {pct !== null && (
+                  <div style={{width:80,textAlign:"right",fontFamily:"var(--mono)",fontSize:12,color:pct>=90?"var(--red)":pct>=70?"var(--amber)":"var(--green)"}}>
+                    {pct}%
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 // ─── GRUPOS WA POR CLIENTE ────────────────────────────────────────────────────
 function ClienteGruposPanel({ client, onUpdate }) {
   const [grupos,    setGrupos]    = useState([]);
@@ -13067,7 +13148,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
               <LinksPanel />
             )}
             {view === "grupos" && (
-              <GruposPanel />
+              <GruposPanelGlobal />
             )}
             {view === "comandos" && (
               <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
