@@ -10133,17 +10133,28 @@ function GruposSelector({ grupos, seleccionados, onChange, label }) {
 // ─── PANEL DE ALERTAS ─────────────────────────────────────────
 const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
 
-function ConexionWAPanel() {
-  const [status, setStatus]     = useState(null); // null | loading | {connected, qr_pendiente, reconectando, ultima_conexion}
-  const [checkingAt, setCheckingAt] = useState(null);
-  const { show, el: toastEl }   = useToast();
-  const intervalRef             = useRef(null);
+function ConexionWAPanel({ client, onUpdate }) {
+  // Soporta modo global (admin sin cliente) o por cliente
+  const isClientMode = !!client;
+  const clientId     = client?.id;
+  const waConfig     = client?.waConfig || {};
+
+  const [botUrlLocal, setBotUrlLocal] = useState(waConfig.botUrl || BOT_URL || "");
+  const [status, setStatus]           = useState(null);
+  const [checkingAt, setCheckingAt]   = useState(null);
+  const [saving, setSaving]           = useState(false);
+  const { show, el: toastEl }         = useToast();
+  const intervalRef                   = useRef(null);
+
+  const urlEfectivo = botUrlLocal || BOT_URL;
+  const healthUrl   = isClientMode && urlEfectivo ? `${urlEfectivo}/health/${clientId}` : urlEfectivo ? `${urlEfectivo}/health` : null;
+  const qrUrl       = isClientMode && urlEfectivo ? `${urlEfectivo}/qr/${clientId}`     : urlEfectivo ? `${urlEfectivo}/qr`     : null;
 
   async function checkStatus() {
-    if (!BOT_URL) return;
+    if (!healthUrl) return;
     setCheckingAt(new Date());
     try {
-      const res  = await fetch(`${BOT_URL}/health`, { cache: "no-store" });
+      const res  = await fetch(healthUrl, { cache: "no-store" });
       const data = await res.json();
       setStatus(data);
     } catch {
@@ -10151,12 +10162,28 @@ function ConexionWAPanel() {
     }
   }
 
+  async function conectarCliente() {
+    if (!urlEfectivo || !clientId) return;
+    try {
+      await fetch(`${urlEfectivo}/connect/${clientId}`, { method: "POST" });
+      show("✓ Iniciando conexión...", "ok");
+      setTimeout(checkStatus, 3000);
+    } catch { show("Error conectando", "err"); }
+  }
+
+  async function saveBotUrl() {
+    if (!onUpdate || !client) return;
+    setSaving(true);
+    await onUpdate({ ...client, waConfig: { ...waConfig, botUrl: botUrlLocal, enabled: true } });
+    show("✓ URL del bot guardada", "ok");
+    setSaving(false);
+  }
+
   useEffect(() => {
     checkStatus();
-    // Polling cada 15s para detectar cambios de estado
     intervalRef.current = setInterval(checkStatus, 15000);
     return () => clearInterval(intervalRef.current);
-  }, []);
+  }, [healthUrl]);
 
   async function forzarSync() {
     if (!BOT_URL) return show("BOT_URL no configurado", "err");
@@ -10168,8 +10195,8 @@ function ConexionWAPanel() {
     } catch(e) { show("Error de conexión", "err"); }
   }
 
-  const isConnected  = status?.connected;
-  const isQR        = status?.qr_pendiente;
+  const isConnected = status?.connected;
+  const isQR        = status?.qr_pendiente || status?.estado === "esperando_qr";
   const isReconn    = status?.reconectando;
   const hasError    = status?.error;
 
@@ -10177,7 +10204,7 @@ function ConexionWAPanel() {
     <>
       {toastEl}
       <div className="card" style={{padding:"20px"}}>
-        {/* Header con estado */}
+        {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={{fontWeight:700,fontSize:15}}>📡 Conexión WhatsApp</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -10186,14 +10213,32 @@ function ConexionWAPanel() {
           </div>
         </div>
 
-        {/* Estado actual */}
-        {!BOT_URL && (
-          <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",fontSize:12,color:"var(--red)"}}>
-            ⚠️ Variable <code>VITE_BOT_URL</code> no configurada en Vercel. Agrega la URL del bot de Railway.
+        {/* Config Bot URL — solo en modo cliente */}
+        {isClientMode && onUpdate && (
+          <div style={{marginBottom:16,padding:"10px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>URL del bot de Railway</div>
+            <div style={{display:"flex",gap:8}}>
+              <input type="text" value={botUrlLocal} onChange={e=>setBotUrlLocal(e.target.value)}
+                placeholder="https://tu-bot.railway.app" style={{flex:1,fontSize:12,fontFamily:"var(--mono)"}}/>
+              <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveBotUrl}>
+                {saving?"...":"💾"}
+              </button>
+            </div>
+            {botUrlLocal && (
+              <button className="btn btn-ghost btn-sm" style={{marginTop:8,fontSize:11}} onClick={conectarCliente}>
+                ▶ Iniciar conexión del cliente
+              </button>
+            )}
           </div>
         )}
 
-        {BOT_URL && !status && (
+        {!urlEfectivo && (
+          <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",fontSize:12,color:"var(--red)"}}>
+            ⚠️ Configura la URL del bot de Railway arriba para conectar WhatsApp.
+          </div>
+        )}
+
+        {urlEfectivo && !status && (
           <div style={{textAlign:"center",padding:"1rem",color:"var(--muted)",fontSize:13}}>⟳ Verificando estado del bot...</div>
         )}
 
@@ -10222,27 +10267,28 @@ function ConexionWAPanel() {
               );
             })()}
 
-            {/* QR — mostrar cuando no está conectado, independientemente del estado exacto */}
+            {/* QR — mostrar cuando no está conectado */}
             {!status.connected && (
               <div style={{textAlign:"center",marginBottom:16}}>
                 <div style={{fontSize:13,color:"var(--muted)",marginBottom:12}}>
                   Escanea desde WhatsApp → <strong>⋮ → Dispositivos vinculados → Vincular dispositivo</strong>
                 </div>
-                <iframe
-                  src={`${BOT_URL}/qr`}
-                  style={{width:"100%",maxWidth:460,height:560,border:"none",borderRadius:12,background:"#0a0f1e",display:"block",margin:"0 auto"}}
-                  title="QR WhatsApp"
-                  key={checkingAt?.getTime()}
-                />
+                {qrUrl ? (
+                  <iframe src={qrUrl}
+                    style={{width:"100%",maxWidth:460,height:560,border:"none",borderRadius:12,background:"#0a0f1e",display:"block",margin:"0 auto"}}
+                    title="QR WhatsApp" key={checkingAt?.getTime()}/>
+                ) : (
+                  <div style={{color:"var(--muted)",fontSize:12,padding:"2rem"}}>Configura la URL del bot para ver el QR.</div>
+                )}
                 <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>El QR expira en ~60 segundos. Se genera uno nuevo automáticamente.</div>
               </div>
             )}
 
-            {/* Error de conexión con el bot */}
+            {/* Error de conexión */}
             {hasError && (
               <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.06)",fontSize:12,color:"var(--muted)"}}>
-                No se pudo contactar al bot. Verifica que Railway esté activo y que <code>VITE_BOT_URL</code> sea correcto.<br/>
-                <a href={BOT_URL+"/health"} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontSize:11}}>Abrir {BOT_URL}/health ↗</a>
+                No se pudo contactar al bot. Verifica que Railway esté activo.
+                {urlEfectivo && <><br/><a href={urlEfectivo+"/health"} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontSize:11}}>Abrir {urlEfectivo}/health ↗</a></>}
               </div>
             )}
 
@@ -10253,12 +10299,8 @@ function ConexionWAPanel() {
                   🔄 Sincronizar grupos ahora
                 </button>
               )}
-              <a href={`${BOT_URL}/qr`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>
-                🔗 Abrir QR en nueva pestaña
-              </a>
-              <a href={`${BOT_URL}/health`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>
-                🔍 Estado del bot
-              </a>
+              {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>🔗 Abrir QR en nueva pestaña</a>}
+              {urlEfectivo && <a href={urlEfectivo+"/health"} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>🔍 Estado del bot</a>}
             </div>
           </>
         )}
@@ -10403,7 +10445,7 @@ function MediaUpload({ value, tipo, onChangeUrl, onChangeTipo, label = "Media" }
   );
 }
 
-function GruposPanel() {
+function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
   const [grupos, setGrupos]       = useState([]);
   const [config, setConfig]       = useState(null);
   const [tab, setTab]             = useState("grupos"); // grupos | mensajes
@@ -10750,7 +10792,7 @@ function GruposPanel() {
       {/* ── TAB CONEXIÓN WA ── */}
       {tab === "conexion" && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
-          <ConexionWAPanel />
+          <ConexionWAPanel client={clientProp} onUpdate={onUpdateProp} />
           <AlertasPanel />
         </div>
       )}
@@ -12027,7 +12069,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "embudos" && <EmbudoPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
-        {tab === "grupos" && <ClienteGruposPanel client={client} onUpdate={handleUpdate} />}
+        {tab === "grupos" && <GruposPanel client={client} onUpdate={handleUpdate} />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
         {tab === "facebook" && (
