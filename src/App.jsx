@@ -12370,10 +12370,10 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos","antecedentes"]).map(v=>(
+          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos","grupos","antecedentes"]).map(v=>(
             <div key={v} className={`nav-item ${tab===v?"active":""}`} onClick={()=>setTab(v)}>
               <div className="nav-dot" style={{background:tab===v?"var(--accent)":"var(--border)"}}/>
-              {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":"📚 Historial"}
+              {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":v==="grupos"?"💬 Grupos WA":"📚 Historial"}
             </div>
           ))}
         </div>
@@ -12388,7 +12388,7 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
       <div className="main">
         <div className="topbar">
           <div className="topbar-title">
-            {tab==="inicio"?"🏠 Inicio":tab==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):tab==="captura"?"📊 Captura WP":tab==="antecedentes"?"📚 Historial":tab==="estudio"?"🎬 Estudio":tab==="embudos"?"🎯 Embudos":"Histórico de pauta"}
+            {tab==="inicio"?"🏠 Inicio":tab==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):tab==="captura"?"📊 Captura WP":tab==="antecedentes"?"📚 Historial":tab==="estudio"?"🎬 Estudio":tab==="embudos"?"🎯 Embudos":tab==="grupos"?"💬 Grupos WA":"Histórico de pauta"}
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <button className="btn btn-ghost btn-sm" disabled={generandoPdf} onClick={generarPDF} style={{fontSize:11,whiteSpace:"nowrap"}}>
@@ -12407,6 +12407,7 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
           {tab==="captura" && !client.capturaConfig?.lastData && <div className="empty"><div style={{fontSize:28,opacity:.3}}>📊</div><div style={{marginTop:8}}>El análisis de captura estará disponible pronto.</div></div>}
           {tab==="calidad" && <CalidadLeadPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>}
           {tab==="embudos" && <EmbudoPanel client={client} onUpdate={onUpdate||(()=>{})} readOnly={true}/>}
+          {tab==="grupos" && <GruposPanel client={client} onUpdate={onUpdate||(()=>{})} />}
           {tab==="resumen" && <>
             {banners?.length>0 && <div style={{marginBottom:"1.25rem",borderRadius:"var(--r2)",overflow:"hidden"}}><BannerViewer banners={banners}/></div>}
             <div style={{marginBottom:"1.25rem"}}><div style={{fontSize:12,color:"var(--muted)",marginBottom:6}}>Inversión del período</div><div style={{fontSize:32,fontWeight:700,fontFamily:"var(--mono)"}}>${t.inversion||"0.00"}</div><div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{rows.length} días con datos</div></div>
