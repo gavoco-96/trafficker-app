@@ -1,6 +1,9 @@
 // api/cron-send-reports.js
 // Vercel Cron Job — 8am Ecuador (13:00 UTC)
-// Sincroniza FB del día anterior + envía reporte a Telegram
+// 1. Cuenta joins de WA del día anterior desde wa_eventos
+// 2. Sincroniza métricas de Facebook
+// 3. Guarda personas_wp en records
+// 4. Envía reporte completo a Telegram
 
 const SUPA_URL = process.env.VITE_SUPABASE_URL;
 const SUPA_KEY = process.env.VITE_SUPABASE_KEY;
@@ -29,10 +32,36 @@ async function upsertClient(client) {
   });
 }
 
+// ── Contar joins de WA del día para un cliente ────────────────
+async function contarJoinsWA(clientId, fecha) {
+  try {
+    // wa_eventos tiene ts en formato ISO — filtramos el día completo en Ecuador
+    const desde = `${fecha}T00:00:00-05:00`;
+    const hasta = `${fecha}T23:59:59-05:00`;
+    const r = await fetch(
+      `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${clientId}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=id`,
+      { headers: { ...H, "Prefer": "count=exact" } }
+    );
+    // Supabase devuelve el conteo en el header Content-Range
+    const contentRange = r.headers.get("content-range");
+    if (contentRange) {
+      const total = contentRange.split("/")[1];
+      if (total && total !== "*") return parseInt(total) || 0;
+    }
+    // Fallback: contar el array
+    const data = await r.json();
+    return Array.isArray(data) ? data.length : 0;
+  } catch (e) {
+    console.error(`[WA COUNT] ${clientId}:`, e.message);
+    return 0;
+  }
+}
+
+// ── Fetch Facebook día ────────────────────────────────────────
 async function fetchFbDay(token, adAccountId, date) {
   const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,impressions,reach,cpm,cpc,ctr,clicks,actions,purchase_roas&time_range={"since":"${date}","until":"${date}"}&level=account&access_token=${token}`;
-  const r = await fetch(url);
-  const d = await r.json();
+  const r   = await fetch(url);
+  const d   = await r.json();
   if (d.error || !d.data?.[0]) return null;
   const row = d.data[0];
   return {
@@ -57,7 +86,7 @@ async function fetchFbDayMulti(token, cuentas, date) {
   const resultados = await Promise.all(activas.map(c => fetchFbDay(token, c.adAccountId, date).catch(() => null)));
   const validos = resultados.filter(Boolean);
   if (!validos.length) return null;
-  const sum = (f) => validos.reduce((a, r) => a + (r[f] || 0), 0);
+  const sum = f => validos.reduce((a, r) => a + (r[f] || 0), 0);
   const inv = sum("inversion");
   return {
     date,
@@ -74,24 +103,26 @@ async function fetchFbDayMulti(token, cuentas, date) {
   };
 }
 
-function buildMessage(client, record, capturaData, fechaAyer) {
+// ── Construir mensaje Telegram ────────────────────────────────
+function buildMessage(client, record, fechaAyer) {
   const inv        = record.inversion || 0;
-  const leads      = record.leads || record.formularios || record.resultados || 0;
-  const wpPersonas = capturaData?.total_wp || 0;
-  const cplFb      = leads > 0 && inv > 0 ? inv / leads : 0;
-  const cplWp      = wpPersonas > 0 && inv > 0 ? inv / wpPersonas : 0;
-  const pctCap     = leads > 0 && wpPersonas > 0 ? wpPersonas / leads * 100 : 0;
+  const leadsFB    = record.leads || record.formularios || record.resultados || 0;
+  const personasWP = record.personas_wp || 0;
+  const cplFb      = leadsFB > 0 && inv > 0 ? inv / leadsFB : 0;
+  const cplWp      = personasWP > 0 && inv > 0 ? inv / personasWP : 0;
+  const pctCap     = leadsFB > 0 && personasWP > 0 ? personasWP / leadsFB * 100 : 0;
 
+  // Formato exacto del reporte
   let msg = `📊 *Reporte diario — ${client.name}*\n`;
   msg += `━━━━━━━━━━━━━━━━━━\n`;
   msg += `📅 Fecha: ${fechaAyer}\n\n`;
   msg += `💵 *GASTO DIARIO*\n`;
   msg += `Gasto: $${fmtNum(inv, 2)}\n`;
-  msg += `Personas en FB: ${fmtNum(leads)}\n`;
-  if (wpPersonas > 0) msg += `Personas en WP: ${fmtNum(wpPersonas)}\n`;
-  if (cplFb > 0)      msg += `Costo en FB: $${fmtNum(cplFb, 2)}\n`;
-  if (cplWp > 0)      msg += `Costo en WP: $${fmtNum(cplWp, 2)}\n`;
-  if (pctCap > 0)     msg += `% de Captura: ${fmtNum(pctCap, 2)}%\n`;
+  msg += `Personas en FB: ${fmtNum(leadsFB)}\n`;
+  msg += `Personas en WP: ${fmtNum(personasWP)}\n`;
+  if (cplFb > 0)  msg += `Costo en FB: $${fmtNum(cplFb, 2)}\n`;
+  if (cplWp > 0)  msg += `Costo en WP: $${fmtNum(cplWp, 2)}\n`;
+  if (pctCap > 0) msg += `% de Captura: ${fmtNum(pctCap, 2)}%\n`;
   if (record.alcance > 0) msg += `\n📡 Alcance: ${fmtNum(record.alcance)}\n`;
   if (record.cpm > 0)     msg += `CPM: $${fmtNum(record.cpm, 2)}\n`;
   if (record.ctr > 0)     msg += `CTR: ${fmtNum(record.ctr, 2)}%\n`;
@@ -131,7 +162,7 @@ export default async function handler(req, res) {
     const chatIds = tg.chatIds?.map(d => d.chatId).filter(Boolean) || (tg.chatId ? [tg.chatId] : []);
     if (!chatIds.length) continue;
 
-    // Verificar schedule si está configurado
+    // Verificar schedule
     const sched = client.schedConfig;
     if (sched?.enabled) {
       if (!sched.dias?.includes(diaSemana)) continue;
@@ -148,6 +179,11 @@ export default async function handler(req, res) {
     }
 
     try {
+      // ── 1. Contar joins de WA del día anterior ────────────
+      const joinsWA = await contarJoinsWA(client.id, fechaAyer);
+      console.log(`[${client.name}] Joins WA ${fechaAyer}: ${joinsWA}`);
+
+      // ── 2. Fetch métricas de Facebook ─────────────────────
       let record = null;
       const fbToken = client.fbConfig?.token;
       const cuentas = client.fbConfig?.cuentas?.filter(c => c.adAccountId) || [];
@@ -155,37 +191,79 @@ export default async function handler(req, res) {
 
       if (fbToken && (cuentas.length > 0 || legacy)) {
         const efectivas = cuentas.length > 0 ? cuentas : [{ adAccountId: legacy }];
-        record = await fetchFbDayMulti(fbToken, efectivas, fechaAyer);
+        const fbData    = await fetchFbDayMulti(fbToken, efectivas, fechaAyer);
 
-        if (record && record.inversion > 0) {
+        if (fbData && fbData.inversion > 0) {
+          // ── 3. Combinar FB + WA en el registro ────────────
           const records = [...(client.records || [])];
-          const idx = records.findIndex(r => r.date === fechaAyer);
-          if (idx >= 0) records[idx] = { ...records[idx], ...record };
-          else records.push(record);
+          const idx     = records.findIndex(r => r.date === fechaAyer);
+          const base    = idx >= 0 ? records[idx] : {};
+          const nuevoRecord = {
+            ...base,
+            ...fbData,
+            // personas_wp: usar el conteo de WA si > 0, si no mantener el manual
+            personas_wp: joinsWA > 0 ? joinsWA : (base.personas_wp || 0),
+          };
+
+          if (idx >= 0) records[idx] = nuevoRecord;
+          else records.push(nuevoRecord);
           records.sort((a, b) => a.date.localeCompare(b.date));
-          client.records = records;
-          client.fbConfig = { ...client.fbConfig, lastSync: ecuador.toLocaleString("es-EC"), lastAutoSync: now.toISOString() };
+
+          client.records  = records;
+          client.fbConfig = { ...client.fbConfig,
+            lastSync: ecuador.toLocaleString("es-EC"),
+            lastAutoSync: now.toISOString()
+          };
           await upsertClient(client);
+          record = nuevoRecord;
         }
       }
 
-      if (!record || record.inversion === 0) {
-        record = (client.records||[]).find(r => r.date === fechaAyer) || (client.records||[]).slice(-1)[0];
+      // Fallback: si no hay datos de FB, igual guardar WA
+      if (!record) {
+        const records = [...(client.records || [])];
+        const idx     = records.findIndex(r => r.date === fechaAyer);
+        if (idx >= 0 && joinsWA > 0) {
+          records[idx] = { ...records[idx], personas_wp: joinsWA };
+          client.records = records;
+          await upsertClient(client);
+          record = records[idx];
+        } else {
+          record = records.find(r => r.date === fechaAyer) || records.slice(-1)[0];
+        }
       }
-      if (!record) { resultados.push({ client: client.name, status: "sin_datos" }); continue; }
 
-      const msg = buildMessage(client, record, client.capturaConfig?.lastData, fechaAyer);
+      if (!record) {
+        resultados.push({ client: client.name, status: "sin_datos" });
+        continue;
+      }
+
+      // ── 4. Enviar reporte a Telegram ──────────────────────
+      const msg = buildMessage(client, record, fechaAyer);
       for (const chatId of chatIds) {
         await sendTelegram(tg.token, chatId, msg);
         await new Promise(r => setTimeout(r, 300));
       }
 
-      resultados.push({ client: client.name, status: "ok", fecha: fechaAyer, destinatarios: chatIds.length });
+      resultados.push({
+        client:      client.name,
+        status:      "ok",
+        fecha:       fechaAyer,
+        joins_wa:    joinsWA,
+        leads_fb:    record.leads || 0,
+        destinatarios: chatIds.length
+      });
+
     } catch (e) {
+      console.error(`[${client.name}]`, e.message);
       resultados.push({ client: client.name, status: "error", error: e.message });
     }
+
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  return res.status(200).json({ ok: true, fecha: fechaAyer, procesados: resultados.length, resultados });
+  return res.status(200).json({
+    ok: true, fecha: fechaAyer,
+    procesados: resultados.length, resultados
+  });
 }
