@@ -4434,6 +4434,51 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
   const vis = ALL_COLUMNS.filter(c => cols.includes(c.key));
   const [hovRow, setHovRow] = useState(null);
+  const [syncingWA, setSyncingWA] = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  // ── Sincronizar personas_wp desde wa_eventos ──────────────────────────────
+  async function syncPersonasWP() {
+    if (!onUpdate) return;
+    setSyncingWA(true);
+    try {
+      const records = [...(client.records || [])];
+      let actualizados = 0;
+
+      for (const record of records) {
+        const fecha  = record.date;
+        const desde  = `${fecha}T00:00:00-05:00`;
+        const hasta  = `${fecha}T23:59:59-05:00`;
+        const r = await fetch(
+          `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${client.id}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=id`,
+          { headers: { ...HL, "Prefer": "count=exact" } }
+        );
+        const contentRange = r.headers.get("content-range");
+        let joins = 0;
+        if (contentRange) {
+          const total = contentRange.split("/")[1];
+          joins = total && total !== "*" ? parseInt(total) || 0 : 0;
+        } else {
+          const data = await r.json();
+          joins = Array.isArray(data) ? data.length : 0;
+        }
+        if (joins > 0 && joins !== (record.personas_wp || 0)) {
+          record.personas_wp = joins;
+          actualizados++;
+        }
+      }
+
+      if (actualizados > 0) {
+        await onUpdate({ ...client, records });
+        show(`✓ ${actualizados} día${actualizados>1?"s":""} actualizados con datos de WhatsApp`, "ok");
+      } else {
+        show("Sin cambios — los datos de WA ya están al día", "ok");
+      }
+    } catch(e) {
+      show("Error sincronizando WA: " + e.message, "err");
+    }
+    setSyncingWA(false);
+  }
 
   // ── Calcular valor de celda (reutilizable para tabla y tooltip) ───────────
   function getCellVal(r, c) {
@@ -4493,6 +4538,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
 
   return (
     <div style={{ marginTop:"1rem" }}>
+      {toastEl}
       <CplTradingChart client={client} onUpdate={onUpdate} />
       {/* ── Resumen semanal automático ─────────────────────────────────────── */}
       {rows.length >= 3 && (() => {
@@ -4536,7 +4582,15 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
       {rows.length > 0 && (
         <div className="card scroll-x" style={{ marginTop:"1rem" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
-            <div className="card-title" style={{ margin:0 }}>Métricas diarias</div>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div className="card-title" style={{ margin:0 }}>Métricas diarias</div>
+              {onUpdate && (
+                <button className="btn btn-ghost btn-sm" style={{ fontSize:10, color:"var(--green)" }}
+                  onClick={syncPersonasWP} disabled={syncingWA}>
+                  {syncingWA ? "⟳ Sincronizando..." : "💬 Sync WP"}
+                </button>
+              )}
+            </div>
             <div style={{ display:"flex", gap:8, alignItems:"center" }}>
               <ColumnSelector cols={cols} onToggle={toggle} />
               <BotonesExportar
@@ -12164,7 +12218,7 @@ function ClientNotificationBell({ client }) {
 }
 
 // ─── PANTALLA DE INICIO DEL CLIENTE ───────────────────────────────────────────
-function ClientWelcomeScreen({ client, banners, onGoToTab }) {
+function ClientWelcomeScreen({ client, banners, onGoToTab, onUpdate }) {
   const hoy      = new Date();
   const hora     = hoy.getHours();
   const saludo   = hora < 12 ? "Buenos días" : hora < 19 ? "Buenas tardes" : "Buenas noches";
@@ -12174,6 +12228,50 @@ function ClientWelcomeScreen({ client, banners, onGoToTab }) {
   const ult      = records[records.length-1];
   const ant      = records.length>=2 ? records[records.length-2] : null;
   const isApollo = client.producto?.startsWith("APOLLO");
+
+  // ── Conteo WA en tiempo real ─────────────────────────────────
+  const fechaHoy = hoy.toLocaleDateString("es-EC", {timeZone:"America/Guayaquil"})
+    .split("/").reverse().map((v,i)=>i===0?v:v.padStart(2,"0")).join("-");
+  // Formato YYYY-MM-DD en hora Ecuador
+  const fechaHoyISO = (() => {
+    const ec = new Date(hoy.getTime() - 5*60*60*1000);
+    return ec.toISOString().slice(0,10);
+  })();
+
+  const [joinsHoy,    setJoinsHoy]    = useState(null);
+  const [loadingWA,   setLoadingWA]   = useState(false);
+  const [ultimaActWA, setUltimaActWA] = useState(null);
+
+  async function fetchJoinsHoy() {
+    setLoadingWA(true);
+    try {
+      const desde = `${fechaHoyISO}T00:00:00-05:00`;
+      const hasta = `${fechaHoyISO}T23:59:59-05:00`;
+      const r = await fetch(
+        `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${client.id}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=id`,
+        { headers: { ...HL, "Prefer": "count=exact" } }
+      );
+      const contentRange = r.headers.get("content-range");
+      let joins = 0;
+      if (contentRange) {
+        const total = contentRange.split("/")[1];
+        joins = total && total !== "*" ? parseInt(total) || 0 : 0;
+      } else {
+        const data = await r.json();
+        joins = Array.isArray(data) ? data.length : 0;
+      }
+      setJoinsHoy(joins);
+      setUltimaActWA(new Date());
+    } catch {}
+    setLoadingWA(false);
+  }
+
+  // Cargar al abrir y refrescar cada 5 minutos
+  useEffect(() => {
+    fetchJoinsHoy();
+    const interval = setInterval(fetchJoinsHoy, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [client.id, fechaHoyISO]);
 
   // CPL hoy vs ayer
   const cplHoy = ult && parseFloat(ult.inversion)>0 && parseFloat(ult.resultados||ult.formularios||ult.leads)>0
@@ -12189,9 +12287,13 @@ function ClientWelcomeScreen({ client, banners, onGoToTab }) {
   const pctMision  = diasMision!==null ? Math.min(100,diasMision/duracion*100) : null;
   const restMision = diasMision!==null ? Math.max(0,duracion-diasMision) : null;
 
-  // Captura
+  // Captura (histórica)
   const cap = client.capturaConfig?.lastData;
   const pctCap = cap?.total_form>0 ? cap.total_wp/cap.total_form*100 : null;
+
+  // CPL WA en tiempo real (solo si hay joins hoy y gasto del día anterior)
+  const gastoPrevio = ult ? parseFloat(ult.inversion) || 0 : 0;
+  const cplWAhoy    = joinsHoy > 0 && gastoPrevio > 0 ? gastoPrevio / joinsHoy : null;
 
   const notifs = getClientNotificaciones(client);
 
@@ -12219,7 +12321,55 @@ function ClientWelcomeScreen({ client, banners, onGoToTab }) {
         </div>
       )}
 
-      {/* Métricas clave — 3 cards grandes */}
+      {/* Card WhatsApp en tiempo real */}
+      {client.waConfig?.enabled && (
+        <div className="card" style={{marginBottom:"1.5rem",padding:"1rem 1.25rem",borderColor:"rgba(37,211,102,.25)",background:"rgba(37,211,102,.04)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:"#25D366",marginBottom:2}}>💬 WhatsApp — Hoy</div>
+              <div style={{fontSize:10,color:"var(--muted)"}}>
+                {fechaHoyISO} · Se actualiza cada 5 min
+                {ultimaActWA && <span style={{marginLeft:6}}>· Última actualización: {ultimaActWA.toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}</span>}
+              </div>
+            </div>
+            <button className="btn btn-ghost btn-sm" style={{fontSize:10,color:"#25D366"}}
+              onClick={fetchJoinsHoy} disabled={loadingWA}>
+              {loadingWA ? "⟳" : "↻ Actualizar"}
+            </button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+            <div style={{textAlign:"center",padding:"10px 8px",background:"rgba(0,0,0,.2)",borderRadius:8}}>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:4}}>Ingresos al grupo</div>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:22,color:"#25D366"}}>
+                {loadingWA ? "..." : joinsHoy !== null ? joinsHoy : "—"}
+              </div>
+              <div style={{fontSize:10,color:"var(--muted)"}}>personas hoy</div>
+            </div>
+            <div style={{textAlign:"center",padding:"10px 8px",background:"rgba(0,0,0,.2)",borderRadius:8}}>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:4}}>CPL WhatsApp</div>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:22,color:"var(--accent2)"}}>
+                {cplWAhoy ? `$${fmtNum(cplWAhoy,2)}` : "—"}
+              </div>
+              <div style={{fontSize:10,color:"var(--muted)"}}>costo por persona</div>
+            </div>
+            <div style={{textAlign:"center",padding:"10px 8px",background:"rgba(0,0,0,.2)",borderRadius:8}}>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:4}}>% Captura hoy</div>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:22,color:"var(--amber)"}}>
+                {(() => {
+                  const leadsAyer = ult ? parseFloat(ult.resultados||ult.formularios||ult.leads)||0 : 0;
+                  return joinsHoy > 0 && leadsAyer > 0
+                    ? fmtNum(joinsHoy/leadsAyer*100,1)+"%"
+                    : "—";
+                })()}
+              </div>
+              <div style={{fontSize:10,color:"var(--muted)"}}>vs leads de ayer</div>
+            </div>
+          </div>
+          <div style={{marginTop:8,fontSize:10,color:"var(--muted)"}}>
+            * Los ingresos a WP se cuentan en tiempo real. El gasto y leads FB son del último registro guardado.
+          </div>
+        </div>
+      )}
       <div className="grid3" style={{marginBottom:"1.5rem",gap:"1rem"}}>
         {/* Misión */}
         {pctMision!==null && (
@@ -12398,7 +12548,7 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
           </div>
         </div>
         <div className="content">
-          {tab==="inicio" && <ClientWelcomeScreen client={client} banners={banners} onGoToTab={setTab}/>}
+          {tab==="inicio" && <ClientWelcomeScreen client={client} banners={banners} onGoToTab={setTab} onUpdate={onUpdate}/>}
           {tab!=="inicio" && banners?.length>0 && <BannerViewer banners={banners}/>}
           {tab!=="hermes" && tab!=="inicio" && <HermesProgressBar client={client} onUpdate={()=>{}} readOnly={true}/>}
           {tab==="hermes" && <HermesClientView client={client} allClients={[]} onUpdate={onUpdate||(()=>{})}/>}
