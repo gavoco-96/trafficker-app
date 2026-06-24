@@ -10344,182 +10344,52 @@ function GruposSelector({ grupos, seleccionados, onChange, label }) {
 // ─── PANEL DE ALERTAS ─────────────────────────────────────────
 const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
 
-function ConexionWAPanel({ client, onUpdate }) {
-  // Soporta modo global (admin sin cliente) o por cliente
-  const isClientMode = !!client;
-  const clientId     = client?.id;
-  const waConfig     = client?.waConfig || {};
-
-  const [botUrlLocal, setBotUrlLocal] = useState(waConfig.botUrl || BOT_URL || "");
-  const [status, setStatus]           = useState(null);
-  const [checkingAt, setCheckingAt]   = useState(null);
-  const [saving, setSaving]           = useState(false);
-  const { show, el: toastEl }         = useToast();
-  const intervalRef                   = useRef(null);
-
-  const urlEfectivo = botUrlLocal || BOT_URL;
-  const healthUrl   = isClientMode && urlEfectivo ? `${urlEfectivo}/health/${clientId}` : urlEfectivo ? `${urlEfectivo}/health` : null;
-  const qrUrl       = isClientMode && urlEfectivo ? `${urlEfectivo}/qr/${clientId}`     : urlEfectivo ? `${urlEfectivo}/qr`     : null;
+function ConexionWAPanel({ client }) {
+  const [status, setStatus] = useState(null);
+  const intervalRef = useRef(null);
+  const BOT = import.meta.env.VITE_BOT_URL || "";
 
   async function checkStatus() {
-    if (!healthUrl) return;
-    setCheckingAt(new Date());
+    if (!BOT) return;
     try {
-      const res  = await fetch(healthUrl, { cache: "no-store" });
-      const data = await res.json();
-      setStatus(data);
-    } catch {
-      setStatus({ connected: false, qr_pendiente: false, reconectando: false, error: true });
-    }
-  }
-
-  async function conectarCliente() {
-    if (!urlEfectivo || !clientId) return;
-    try {
-      await fetch(`${urlEfectivo}/connect/${clientId}`, { method: "POST" });
-      show("✓ Iniciando conexión...", "ok");
-      setTimeout(checkStatus, 3000);
-    } catch { show("Error conectando", "err"); }
-  }
-
-  async function saveBotUrl() {
-    if (!onUpdate || !client) return;
-    setSaving(true);
-    await onUpdate({ ...client, waConfig: { ...waConfig, botUrl: botUrlLocal, enabled: true } });
-    show("✓ URL del bot guardada", "ok");
-    setSaving(false);
+      const r = await fetch(`${BOT}/health`, { cache: "no-store" });
+      setStatus(await r.json());
+    } catch { setStatus({ connected: false, error: true }); }
   }
 
   useEffect(() => {
     checkStatus();
-    intervalRef.current = setInterval(checkStatus, 15000);
+    intervalRef.current = setInterval(checkStatus, 20000);
     return () => clearInterval(intervalRef.current);
-  }, [healthUrl]);
+  }, []);
 
-  async function forzarSync() {
-    if (!BOT_URL) return show("BOT_URL no configurado", "err");
-    try {
-      const r = await fetch(`${BOT_URL}/sync/grupos`, { method: "POST" });
-      const d = await r.json();
-      if (d.ok) show(`✓ ${d.grupos} grupos sincronizados`, "ok");
-      else show("Error: " + d.error, "err");
-    } catch(e) { show("Error de conexión", "err"); }
-  }
-
-  const isConnected = status?.connected;
-  const isQR        = status?.qr_pendiente || status?.estado === "esperando_qr";
-  const isReconn    = status?.reconectando;
-  const hasError    = status?.error;
+  const estado    = status?.estado || (status?.connected ? "conectado" : "desconectado");
+  const colorMap  = { conectado:"rgba(16,185,129,.08)", esperando_qr:"rgba(255,222,89,.06)", desconectado:"rgba(239,68,68,.08)", iniciando:"rgba(77,159,255,.06)" };
+  const borderMap = { conectado:"rgba(16,185,129,.25)", esperando_qr:"rgba(255,222,89,.2)",  desconectado:"rgba(239,68,68,.2)",  iniciando:"rgba(77,159,255,.2)"  };
+  const dotMap    = { conectado:"var(--green)", esperando_qr:"var(--amber)", desconectado:"var(--red)", iniciando:"var(--accent)" };
+  const labelMap  = { conectado:"✅ Bot conectado — puedes escribir al número de Trafficker Pro", esperando_qr:"📷 Bot iniciando...", desconectado:"🔴 Bot temporalmente desconectado — reconectando...", iniciando:"⏳ Bot iniciando..." };
 
   return (
-    <>
-      {toastEl}
-      <div className="card" style={{padding:"20px"}}>
-        {/* Header */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div style={{fontWeight:700,fontSize:15}}>📡 Conexión WhatsApp</div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {checkingAt && <span style={{fontSize:10,color:"var(--muted)"}}>Verificado: {checkingAt.toLocaleTimeString("es-EC")}</span>}
-            <button className="btn btn-ghost btn-sm" onClick={checkStatus} style={{fontSize:11}}>🔄 Verificar</button>
+    <div className="card" style={{padding:"20px"}}>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>📡 Estado del Bot WhatsApp</div>
+      {!BOT && <div style={{fontSize:13,color:"var(--muted)"}}>Bot no configurado.</div>}
+      {BOT && !status && <div style={{fontSize:13,color:"var(--muted)"}}>⟳ Verificando...</div>}
+      {status && (
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:colorMap[estado]||colorMap.desconectado,border:`1px solid ${borderMap[estado]||borderMap.desconectado}`}}>
+          <div style={{width:12,height:12,borderRadius:"50%",flexShrink:0,background:dotMap[estado]||dotMap.desconectado,boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}`}}/>
+          <div>
+            <div style={{fontWeight:700,fontSize:13,color:dotMap[estado]||dotMap.desconectado}}>{labelMap[estado]||estado}</div>
+            {status.ultima_conexion && estado==="conectado" && (
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                Activo desde: {new Date(status.ultima_conexion).toLocaleString("es-EC")}
+              </div>
+            )}
           </div>
         </div>
-
-        {/* Config Bot URL — solo en modo cliente */}
-        {isClientMode && onUpdate && (
-          <div style={{marginBottom:16,padding:"10px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
-            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>URL del bot de Railway</div>
-            <div style={{display:"flex",gap:8}}>
-              <input type="text" value={botUrlLocal} onChange={e=>setBotUrlLocal(e.target.value)}
-                placeholder="https://tu-bot.railway.app" style={{flex:1,fontSize:12,fontFamily:"var(--mono)"}}/>
-              <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveBotUrl}>
-                {saving?"...":"💾"}
-              </button>
-            </div>
-            {botUrlLocal && (
-              <button className="btn btn-ghost btn-sm" style={{marginTop:8,fontSize:11}} onClick={conectarCliente}>
-                ▶ Iniciar conexión del cliente
-              </button>
-            )}
-          </div>
-        )}
-
-        {!urlEfectivo && (
-          <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",fontSize:12,color:"var(--red)"}}>
-            ⚠️ Configura la URL del bot de Railway arriba para conectar WhatsApp.
-          </div>
-        )}
-
-        {urlEfectivo && !status && (
-          <div style={{textAlign:"center",padding:"1rem",color:"var(--muted)",fontSize:13}}>⟳ Verificando estado del bot...</div>
-        )}
-
-        {status && (
-          <>
-            {/* Semáforo de estado */}
-            {(() => {
-              const estado = status.estado || (status.connected ? "conectado" : status.qr_pendiente ? "esperando_qr" : "desconectado");
-              const colorMap = { conectado:"rgba(16,185,129,.08)", esperando_qr:"rgba(255,222,89,.06)", desconectado:"rgba(239,68,68,.08)", iniciando:"rgba(77,159,255,.06)" };
-              const borderMap = { conectado:"rgba(16,185,129,.25)", esperando_qr:"rgba(255,222,89,.2)", desconectado:"rgba(239,68,68,.2)", iniciando:"rgba(77,159,255,.2)" };
-              const dotMap = { conectado:"var(--green)", esperando_qr:"var(--amber)", desconectado:"var(--red)", iniciando:"var(--accent)" };
-              const labelMap = { conectado:"✅ Conectado a WhatsApp", esperando_qr:"📷 Esperando escaneo de QR", desconectado:"🔴 Desconectado — reconectando...", iniciando:"⏳ Bot iniciando..." };
-              const col = colorMap[estado] || colorMap.desconectado;
-              const brd = borderMap[estado] || borderMap.desconectado;
-              const dot = dotMap[estado] || dotMap.desconectado;
-              return (
-                <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,marginBottom:16,background:col,border:`1px solid ${brd}`}}>
-                  <div style={{width:12,height:12,borderRadius:"50%",flexShrink:0,background:dot,boxShadow:`0 0 8px ${dot}`,animation:estado==="conectado"?"none":"blink 1.5s infinite"}}/>
-                  <div>
-                    <div style={{fontWeight:700,fontSize:13,color:dot}}>{labelMap[estado] || estado}</div>
-                    {status.ultima_conexion && <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Última conexión: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
-                    {status.intentos_reconexion > 0 && estado !== "conectado" && <div style={{fontSize:11,color:"var(--amber)",marginTop:2}}>Intentos de reconexión: {status.intentos_reconexion}</div>}
-                    {status.motivo_desconexion && <div style={{fontSize:11,color:"var(--red)",marginTop:2}}>Motivo: {status.motivo_desconexion}</div>}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* QR — mostrar cuando no está conectado */}
-            {!status.connected && (
-              <div style={{textAlign:"center",marginBottom:16}}>
-                <div style={{fontSize:13,color:"var(--muted)",marginBottom:12}}>
-                  Escanea desde WhatsApp → <strong>⋮ → Dispositivos vinculados → Vincular dispositivo</strong>
-                </div>
-                {qrUrl ? (
-                  <iframe src={qrUrl}
-                    style={{width:"100%",maxWidth:460,height:560,border:"none",borderRadius:12,background:"#0a0f1e",display:"block",margin:"0 auto"}}
-                    title="QR WhatsApp" key={checkingAt?.getTime()}/>
-                ) : (
-                  <div style={{color:"var(--muted)",fontSize:12,padding:"2rem"}}>Configura la URL del bot para ver el QR.</div>
-                )}
-                <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>El QR expira en ~60 segundos. Se genera uno nuevo automáticamente.</div>
-              </div>
-            )}
-
-            {/* Error de conexión */}
-            {hasError && (
-              <div style={{padding:"12px 14px",borderRadius:8,background:"rgba(239,68,68,.06)",fontSize:12,color:"var(--muted)"}}>
-                No se pudo contactar al bot. Verifica que Railway esté activo.
-                {urlEfectivo && <><br/><a href={urlEfectivo+"/health"} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontSize:11}}>Abrir {urlEfectivo}/health ↗</a></>}
-              </div>
-            )}
-
-            {/* Acciones */}
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
-              {isConnected && (
-                <button className="btn btn-ghost btn-sm" onClick={forzarSync} style={{fontSize:11}}>
-                  🔄 Sincronizar grupos ahora
-                </button>
-              )}
-              {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>🔗 Abrir QR en nueva pestaña</a>}
-              {urlEfectivo && <a href={urlEfectivo+"/health"} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>🔍 Estado del bot</a>}
-            </div>
-          </>
-        )}
-      </div>
-    </>
+      )}
+    </div>
   );
 }
-
 function AlertasPanel() {
   const [alertas, setAlertas] = useState([]);
 
@@ -10903,25 +10773,83 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
                 <div style={{position:"absolute",top:3,left:config.bot_consultas_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
               </div>
             </div>
-            {config.bot_consultas_activo && (
-              <div style={{background:"rgba(77,159,255,.06)",borderRadius:8,padding:"10px 14px",fontSize:12}}>
-                <div style={{fontWeight:600,marginBottom:8}}>Comandos disponibles:</div>
-                {[
-                  ["hola / menu", "Muestra el menú con botones"],
-                  ["1 / reporte", "Reporte del día anterior"],
-                  ["2 / resumen", "Resumen completo de la misión"],
-                  ["3 / proyección", "Proyección con presupuesto personalizado"],
-                ].map(([cmd,desc])=>(
-                  <div key={cmd} style={{display:"flex",gap:8,marginBottom:4}}>
-                    <code style={{background:"rgba(0,0,0,.2)",padding:"1px 6px",borderRadius:4,fontSize:10,whiteSpace:"nowrap"}}>{cmd}</code>
-                    <span style={{color:"var(--muted)",fontSize:11}}>{desc}</span>
+            {config.bot_consultas_activo && (() => {
+              const DEFAULT_TPL = {
+                corte:       "✂️ *Corte del día — {hora}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Corte parcial · {hora} Ecuador_",
+                ayer:        "📊 *Reporte diario — {cliente}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
+                semanal:     "📅 *Resumen semanal — {cliente}*\n━━━━━━━━━━━━━━━━━━\nDel {desde} al {hasta}\n\n💵 Total: ${inversion}\n💵 Prom/día: ${inv_dia}\n👥 FB: {leads}\n💬 WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Últimos {dias} días · Trafficker Pro_",
+                proyeccion:  "🎯 *Proyección — ${presupuesto}/día*\n━━━━━━━━━━━━━━━━━━\n👥 Registros FB est.: {leads_est}\n💬 Personas WP est.: {wp_est}\n📊 CPL FB: ${cpl_fb_est}\n📊 CPL WP: ${cpl_wp_est}\n━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
+                presupuesto: "💰 *Presupuesto activo — Facebook*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n{lineas_campanas}\n━━━━━━━━━━━━━━━━━━\n💵 *Total diario: ${total}*\n_Trafficker Pro_",
+              };
+              const VARS = {
+                corte:       ["{hora}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+                ayer:        ["{cliente}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+                semanal:     ["{cliente}","${inversion}","{inv_dia}","{leads}","{personas_wp}","{desde}","{hasta}","{dias}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+                proyeccion:  ["${presupuesto}","{leads_est}","{wp_est}","${cpl_fb_est}","${cpl_wp_est}"],
+                presupuesto: ["${total}","{fecha}","{lineas_campanas}"],
+              };
+              const LABELS = { corte:"✂️ Corte del día", ayer:"📊 Reporte de ayer", semanal:"📅 Resumen semanal", proyeccion:"🎯 Proyección", presupuesto:"💰 Presupuesto FB" };
+              const [openTpl, setOpenTpl] = useState(null);
+              const [tplState, setTplState] = useState(config.wa_templates || {});
+
+              function saveTpl(key, val) {
+                const next = { ...tplState, [key]: val };
+                setTplState(next);
+                setConfig({ ...config, wa_templates: next });
+              }
+
+              return (
+                <div style={{background:"rgba(77,159,255,.06)",borderRadius:8,padding:"12px 14px",fontSize:12}}>
+                  <div style={{fontWeight:600,marginBottom:10}}>Comandos disponibles:</div>
+                  {[
+                    ["hola / menu",    "Muestra el menú principal"],
+                    ["1 / corte",      "Corte del día (datos en tiempo real)"],
+                    ["2 / ayer",       "Reporte del día anterior"],
+                    ["3 / semanal",    "Resumen de los últimos 7 días"],
+                    ["4 / proyección", "Proyección con presupuesto personalizado"],
+                    ["5 / presupuesto","Campañas activas en Facebook"],
+                  ].map(([cmd,desc])=>(
+                    <div key={cmd} style={{display:"flex",gap:8,marginBottom:4}}>
+                      <code style={{background:"rgba(0,0,0,.2)",padding:"1px 6px",borderRadius:4,fontSize:10,whiteSpace:"nowrap"}}>{cmd}</code>
+                      <span style={{color:"var(--muted)",fontSize:11}}>{desc}</span>
+                    </div>
+                  ))}
+                  <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
+                    ✅ Funciona en grupos y mensajes privados al número del bot.
                   </div>
-                ))}
-                <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
-                  ✅ Funciona en grupos y mensajes privados al número del bot.
+
+                  <div style={{marginTop:16,borderTop:"1px solid var(--border)",paddingTop:14}}>
+                    <div style={{fontWeight:600,fontSize:12,marginBottom:10}}>✏️ Personalizar mensajes del bot</div>
+                    {Object.entries(LABELS).map(([key, label]) => (
+                      <div key={key} style={{marginBottom:8,borderRadius:8,border:"1px solid var(--border)",overflow:"hidden"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--surface2)",cursor:"pointer"}}
+                          onClick={()=>setOpenTpl(openTpl===key?null:key)}>
+                          <span style={{fontSize:12,fontWeight:500}}>{label}</span>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            {tplState[key] && <span style={{fontSize:10,color:"var(--green)"}}>● Personalizado</span>}
+                            <span style={{color:"var(--muted)",fontSize:11}}>{openTpl===key?"▲":"▼"}</span>
+                          </div>
+                        </div>
+                        {openTpl===key && (
+                          <div style={{padding:"12px",background:"var(--surface)"}}>
+                            <div style={{fontSize:11,color:"var(--muted)",marginBottom:8,lineHeight:1.6}}>
+                              Variables: {VARS[key].map(v=><code key={v} style={{background:"rgba(0,0,0,.25)",padding:"1px 5px",borderRadius:3,marginRight:4,fontSize:10,color:"var(--accent2)"}}>{v}</code>)}
+                            </div>
+                            <textarea value={tplState[key]??DEFAULT_TPL[key]} onChange={e=>saveTpl(key,e.target.value)}
+                              rows={7} style={{width:"100%",resize:"vertical",fontFamily:"var(--mono)",fontSize:11}}/>
+                            <button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:6}}
+                              onClick={()=>saveTpl(key,DEFAULT_TPL[key])}>↺ Restaurar default</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{fontSize:11,color:"var(--muted)",marginTop:6,lineHeight:1.6}}>
+                      💡 Los cambios se guardan en el cliente. El bot los lee en cada mensaje.
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
           <div className="card" style={{padding:"20px 24px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -13876,6 +13804,108 @@ function ComandosPanel({ globalConfig, onSave }) {
   );
 }
 
+
+// ─── BOT ADMIN PANEL (solo admin) ────────────────────────────
+function BotAdminPanel() {
+  const BOT = import.meta.env.VITE_BOT_URL || "";
+  const [status, setStatus]         = useState(null);
+  const [disconnecting, setDisc]    = useState(false);
+  const { show, el: toastEl }       = useToast();
+  const intervalRef                  = useRef(null);
+
+  async function checkStatus() {
+    if (!BOT) return;
+    try {
+      const r = await fetch(`${BOT}/health`, { cache: "no-store" });
+      setStatus(await r.json());
+    } catch { setStatus({ connected: false, error: true }); }
+  }
+
+  async function disconnect() {
+    if (!BOT) return show("VITE_BOT_URL no configurado", "err");
+    setDisc(true);
+    try {
+      await fetch(`${BOT}/disconnect`, { method: "POST" });
+      show("✓ Sesión limpiada — el bot pedirá nuevo QR en segundos", "ok");
+      setTimeout(checkStatus, 3000);
+    } catch { show("Error al desconectar", "err"); }
+    setDisc(false);
+  }
+
+  useEffect(() => {
+    checkStatus();
+    intervalRef.current = setInterval(checkStatus, 10000);
+    return () => clearInterval(intervalRef.current);
+  }, []);
+
+  const estado    = status?.estado || (status?.connected ? "conectado" : "desconectado");
+  const colorMap  = { conectado:"rgba(16,185,129,.08)", esperando_qr:"rgba(255,222,89,.06)", desconectado:"rgba(239,68,68,.08)", iniciando:"rgba(77,159,255,.06)" };
+  const borderMap = { conectado:"rgba(16,185,129,.25)", esperando_qr:"rgba(255,222,89,.2)",  desconectado:"rgba(239,68,68,.2)",  iniciando:"rgba(77,159,255,.2)"  };
+  const dotMap    = { conectado:"var(--green)", esperando_qr:"var(--amber)", desconectado:"var(--red)", iniciando:"var(--accent)" };
+  const labelMap  = { conectado:"✅ Conectado a WhatsApp", esperando_qr:"📷 Esperando escaneo de QR", desconectado:"🔴 Desconectado — reconectando...", iniciando:"⏳ Iniciando..." };
+  const qrUrl     = BOT ? `${BOT}/qr` : null;
+
+  return (
+    <>
+      {toastEl}
+      <div className="sec-header">
+        <div>
+          <div className="sec-title">🤖 WhatsApp Bot — Panel Admin</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Tu número empresarial · Gestionado desde Railway</div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={checkStatus} style={{ fontSize: 11 }}>🔄 Actualizar</button>
+      </div>
+
+      {!BOT && (
+        <div style={{ padding:"14px 16px", borderRadius:10, background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.2)", fontSize:13, color:"var(--red)", marginBottom:"1rem" }}>
+          ⚠️ Configura <code>VITE_BOT_URL</code> en Vercel apuntando a Railway.
+        </div>
+      )}
+
+      <div className="card" style={{ padding:"20px 24px", marginBottom:"1.25rem" }}>
+        <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>📡 Estado de conexión</div>
+        {!status && BOT && <div style={{ color:"var(--muted)", fontSize:13 }}>⟳ Verificando...</div>}
+        {status && (
+          <>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px", borderRadius:10, marginBottom:16, background:colorMap[estado]||colorMap.desconectado, border:`1px solid ${borderMap[estado]||borderMap.desconectado}` }}>
+              <div style={{ width:12, height:12, borderRadius:"50%", flexShrink:0, background:dotMap[estado]||dotMap.desconectado, boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}` }}/>
+              <div>
+                <div style={{ fontWeight:700, fontSize:13, color:dotMap[estado]||dotMap.desconectado }}>{labelMap[estado]||estado}</div>
+                {status.ultima_conexion && <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>Última conexión: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
+                {status.motivo && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--red)", marginTop:2 }}>Motivo: {status.motivo}</div>}
+                {status.intentos > 0 && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--amber)", marginTop:2 }}>Intentos: {status.intentos}</div>}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize:11 }}>📷 Ver / Escanear QR</a>}
+              <button className="btn btn-danger btn-sm" onClick={disconnect} disabled={disconnecting} style={{ fontSize:11 }}>
+                {disconnecting ? "Desconectando..." : "🔌 Desconectar y forzar nuevo QR"}
+              </button>
+            </div>
+            {status.error && (
+              <div style={{ marginTop:12, padding:"10px 14px", borderRadius:8, background:"rgba(239,68,68,.06)", fontSize:12, color:"var(--muted)" }}>
+                No se pudo contactar al bot. Verifica que Railway esté activo.
+                {BOT && <> · <a href={`${BOT}/health`} target="_blank" rel="noreferrer" style={{ color:"var(--accent)", fontSize:11 }}>Abrir /health ↗</a></>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {qrUrl && status && !status.connected && (
+        <div className="card" style={{ padding:"20px 24px" }}>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>📷 Escanear QR</div>
+          <div style={{ fontSize:12, color:"var(--muted)", marginBottom:14 }}>
+            WhatsApp → ⋮ → <strong>Dispositivos vinculados → Vincular un dispositivo</strong>
+          </div>
+          <iframe src={qrUrl} style={{ width:"100%", maxWidth:460, height:520, border:"none", borderRadius:12, background:"#0a0f1e", display:"block" }} title="QR WhatsApp" />
+          <div style={{ fontSize:11, color:"var(--muted)", marginTop:8 }}>El QR se refresca automáticamente. Una vez conectado esta pantalla mostrará ✅.</div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
 function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners, globalConfig, onSaveGlobalConfig, filmmakers, saveFilmmakers }) {
   // Listener para actualización de cliente desde el panel de filmmakers
@@ -13897,7 +13927,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "comandos"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "comandos", "bot"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : v === "bot" ? "🤖 WhatsApp Bot" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -13995,6 +14025,9 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             )}
             {view === "comandos" && (
               <ComandosPanel globalConfig={globalConfig} onSave={onSaveGlobalConfig} />
+            )}
+            {view === "bot" && (
+              <BotAdminPanel />
             )}
           </div>
         </div>
