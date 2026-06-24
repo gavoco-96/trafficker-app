@@ -11088,6 +11088,80 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
         <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
           <ConexionWAPanel client={clientProp} onUpdate={onUpdateProp} />
           <AlertasPanel />
+
+          {/* ── ENLACE DE ACTIVACIÓN DEL BOT ── */}
+          {clientProp?.waConfig?.enabled && (() => {
+            const tel = (clientProp.telefono||"").replace(/[^\d]/g,"");
+            const telLimpio = tel.startsWith("593") ? tel : tel.startsWith("0") ? "593"+tel.slice(1) : "593"+tel;
+            const msgBienvenida = encodeURIComponent("hola");
+            const linkWA = `https://wa.me/${telLimpio}?text=${msgBienvenida}`;
+            const linkQR = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(linkWA)}`;
+
+            return (
+              <div className="card" style={{padding:"20px 24px",borderColor:"rgba(37,211,102,.25)"}}>
+                <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>🚀 Enlace de activación del bot</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginBottom:16}}>
+                  Comparte este link o QR para que tus clientes activen el bot con un solo click
+                </div>
+
+                {/* Link directo */}
+                <div style={{background:"var(--surface2)",borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>🔗 Link directo</div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <code style={{flex:1,fontSize:11,wordBreak:"break-all",color:"#25D366"}}>{linkWA}</code>
+                    <button className="btn btn-ghost btn-sm" style={{fontSize:10,flexShrink:0}}
+                      onClick={()=>navigator.clipboard.writeText(linkWA).then(()=>alert("¡Copiado!"))}>
+                      📋 Copiar
+                    </button>
+                  </div>
+                </div>
+
+                {/* Mensaje de bienvenida personalizable */}
+                <div style={{background:"var(--surface2)",borderRadius:10,padding:"12px 14px",marginBottom:12}}>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>✉️ Mensaje de bienvenida que envía el bot</div>
+                  <div style={{fontSize:12,padding:"8px",background:"rgba(37,211,102,.06)",borderRadius:8,border:"1px solid rgba(37,211,102,.15)"}}>
+                    <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>Cuando alguien escribe "hola", el bot responde:</div>
+                    <div style={{color:"var(--text)"}}>
+                      📊 <strong>Trafficker Pro — {clientProp.name}</strong><br/>
+                      ¿Qué necesitas?<br/><br/>
+                      <span style={{color:"var(--muted)"}}>
+                        [✂️ Corte del día] [📊 Reporte de ayer]<br/>
+                        [📅 Resumen semanal] [🎯 Proyección] [💰 Presupuesto FB]
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* QR */}
+                <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>📱 QR para escanear</div>
+                    <img src={linkQR} alt="QR Bot" style={{width:160,height:160,borderRadius:10,background:"#fff",padding:8}}/>
+                    <div style={{fontSize:10,color:"var(--muted)",marginTop:6}}>
+                      <a href={linkQR} download={`qr-bot-${clientProp.name}.png`}
+                        style={{color:"var(--accent)"}}>⬇️ Descargar QR</a>
+                    </div>
+                  </div>
+                  <div style={{flex:1,minWidth:200}}>
+                    <div style={{fontSize:11,color:"var(--muted)",marginBottom:8}}>💡 Cómo usarlo</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:8,fontSize:12}}>
+                      {[
+                        ["📲 En landing pages","Agrega el botón 'Consultar métricas' con el link directo"],
+                        ["📱 En grupos de WA","Fija el QR como imagen del grupo o en la descripción"],
+                        ["📧 En emails","Incluye el link en los reportes que envías al cliente"],
+                        ["🖼️ En materiales","Imprime el QR en presentaciones o documentos"],
+                      ].map(([t,d])=>(
+                        <div key={t} style={{padding:"6px 10px",background:"var(--surface2)",borderRadius:8}}>
+                          <div style={{fontWeight:600,fontSize:11}}>{t}</div>
+                          <div style={{color:"var(--muted)",fontSize:11}}>{d}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
