@@ -12223,6 +12223,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
+            {/* Card WA en tiempo real — visible en admin si tiene bot activo */}
+            {client.waConfig?.enabled && <ClienteWAResumenAdmin client={client} />}
             <div className="card">
               <div className="card-title">Información del cliente</div>
               <div className="grid2">
@@ -12270,6 +12272,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
           <div>
             {/* Gráfica CPL tiempo real — primera */}
             {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} onUpdate={handleUpdate} externalPuntos={cplRtPuntos} />}
+            {/* CPL WhatsApp — historial + tiempo real */}
+            {(client.waConfig?.enabled || (client.records||[]).some(r=>(r.personas_wp||0)>0)) && <CplWAChart client={client} />}
             <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
             {client.producto?.startsWith("APOLLO") && (
               <div style={{ marginTop:"1.5rem" }}>
@@ -12375,6 +12379,63 @@ function ClientNotificationBell({ client }) {
 }
 
 // ─── PANTALLA DE INICIO DEL CLIENTE ───────────────────────────────────────────
+// ─── RESUMEN WA EN TIEMPO REAL PARA ADMIN ────────────────────────────────────
+function ClienteWAResumenAdmin({ client }) {
+  const [joinsHoy,  setJoinsHoy]  = useState(null);
+  const [loading,   setLoading]   = useState(false);
+  const [ultimaAct, setUltimaAct] = useState(null);
+
+  const fechaHoyISO = new Date(Date.now()-5*60*60*1000).toISOString().slice(0,10);
+  const ultRec = (client.records||[]).slice(-1)[0];
+  const gastoPrev = parseFloat(ultRec?.inversion)||0;
+
+  async function fetch_() {
+    setLoading(true);
+    try {
+      const desde = `${fechaHoyISO}T00:00:00-05:00`;
+      const hasta = `${fechaHoyISO}T23:59:59-05:00`;
+      const r = await fetch(
+        `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${client.id}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=id`,
+        { headers: { ...HL, Prefer:"count=exact" } }
+      );
+      const cr = r.headers.get("content-range");
+      const joins = cr ? parseInt(cr.split("/")[1])||0 : (await r.json())?.length||0;
+      setJoinsHoy(joins); setUltimaAct(new Date());
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { fetch_(); const t=setInterval(fetch_,5*60*1000); return()=>clearInterval(t); }, [client.id]);
+
+  const cplWA = joinsHoy>0 && gastoPrev>0 ? gastoPrev/joinsHoy : null;
+  const leadsAyer = parseFloat(ultRec?.resultados||ultRec?.formularios||ultRec?.leads)||0;
+  const pctCap = joinsHoy>0 && leadsAyer>0 ? joinsHoy/leadsAyer*100 : null;
+
+  return (
+    <div className="card" style={{marginBottom:"1rem",padding:"10px 16px",borderColor:"rgba(37,211,102,.2)",background:"rgba(37,211,102,.04)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:12,fontWeight:600,color:"#25D366"}}>💬 WhatsApp hoy — {fechaHoyISO}</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {ultimaAct && <span style={{fontSize:10,color:"var(--muted)"}}>Actualizado: {ultimaAct.toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}</span>}
+          <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={fetch_} disabled={loading}>{loading?"⟳":"↻"}</button>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+        {[
+          ["Ingresos al grupo", joinsHoy!==null?fmtNum(joinsHoy):"...", "#25D366"],
+          ["CPL WhatsApp", cplWA?`$${fmtNum(cplWA,2)}`:"—", "var(--accent2)"],
+          ["% Captura hoy", pctCap?`${fmtNum(pctCap,1)}%`:"—", "var(--amber)"],
+        ].map(([l,v,c])=>(
+          <div key={l} style={{textAlign:"center",padding:"6px",background:"rgba(0,0,0,.15)",borderRadius:8}}>
+            <div style={{fontSize:10,color:"var(--muted)",marginBottom:2}}>{l}</div>
+            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:16,color:c}}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ClientWelcomeScreen({ client, banners, onGoToTab, onUpdate }) {
   const hoy      = new Date();
   const hora     = hoy.getHours();
