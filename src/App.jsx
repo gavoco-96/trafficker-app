@@ -10839,7 +10839,90 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
       {tab === "mensajes" && config && (
         <div style={{display:"flex",flexDirection:"column",gap:"1.5rem"}}>
 
-          {/* Bienvenida */}
+          {/* Reporte automático */}
+          <div className="card" style={{padding:"20px 24px",borderColor:"rgba(37,211,102,.25)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>📊 Reporte automático diario</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>Se envía todos los días a la hora configurada con el reporte del día anterior</div>
+              </div>
+              <div onClick={()=>setConfig({...config,reporte_activo:!config.reporte_activo})}
+                style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.reporte_activo?"#25D366":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.reporte_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.reporte_activo && (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div className="form-row">
+                  <div className="field" style={{marginBottom:0}}>
+                    <label style={{fontSize:11}}>Hora de envío (hora Ecuador)</label>
+                    <input type="time" value={config.reporte_hora||"08:00"}
+                      onChange={e=>setConfig({...config,reporte_hora:e.target.value})}
+                      style={{width:120}}/>
+                  </div>
+                </div>
+                <div className="field" style={{marginBottom:0}}>
+                  <label style={{fontSize:11}}>Destinos — JID del grupo o número privado</label>
+                  <div style={{fontSize:10,color:"var(--muted)",marginBottom:6}}>
+                    Formato grupo: <code>1234567890-1234567890@g.us</code> · Privado: <code>593987654321@s.whatsapp.net</code>
+                  </div>
+                  {(config.reporte_destinos||[{jid:"",tipo:"grupo"}]).map((d,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
+                      <select value={d.tipo} onChange={e=>{const nd=[...(config.reporte_destinos||[])];nd[i]={...nd[i],tipo:e.target.value};setConfig({...config,reporte_destinos:nd});}}
+                        style={{width:100,fontSize:12}}>
+                        <option value="grupo">Grupo</option>
+                        <option value="privado">Privado</option>
+                      </select>
+                      <input type="text" value={d.jid} placeholder="JID del destino"
+                        onChange={e=>{const nd=[...(config.reporte_destinos||[])];nd[i]={...nd[i],jid:e.target.value};setConfig({...config,reporte_destinos:nd});}}
+                        style={{flex:1,fontSize:11,fontFamily:"var(--mono)"}}/>
+                      <button className="btn btn-ghost btn-sm" style={{color:"var(--red)",fontSize:11}}
+                        onClick={()=>{const nd=(config.reporte_destinos||[]).filter((_,j)=>j!==i);setConfig({...config,reporte_destinos:nd});}}>✕</button>
+                    </div>
+                  ))}
+                  <button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:4}}
+                    onClick={()=>setConfig({...config,reporte_destinos:[...(config.reporte_destinos||[]),{jid:"",tipo:"grupo"}]})}>
+                    + Agregar destino
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bot de consultas */}
+          <div className="card" style={{padding:"20px 24px",borderColor:"rgba(77,159,255,.25)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>🤖 Bot de consultas WhatsApp</div>
+                <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
+                  El bot responde en grupos y privados con reportes y proyecciones
+                </div>
+              </div>
+              <div onClick={()=>setConfig({...config,bot_consultas_activo:!config.bot_consultas_activo})}
+                style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.bot_consultas_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:3,left:config.bot_consultas_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+            </div>
+            {config.bot_consultas_activo && (
+              <div style={{background:"rgba(77,159,255,.06)",borderRadius:8,padding:"10px 14px",fontSize:12}}>
+                <div style={{fontWeight:600,marginBottom:8}}>Comandos disponibles:</div>
+                {[
+                  ["hola / menu", "Muestra el menú con botones"],
+                  ["1 / reporte", "Reporte del día anterior"],
+                  ["2 / resumen", "Resumen completo de la misión"],
+                  ["3 / proyección", "Proyección con presupuesto personalizado"],
+                ].map(([cmd,desc])=>(
+                  <div key={cmd} style={{display:"flex",gap:8,marginBottom:4}}>
+                    <code style={{background:"rgba(0,0,0,.2)",padding:"1px 6px",borderRadius:4,fontSize:10,whiteSpace:"nowrap"}}>{cmd}</code>
+                    <span style={{color:"var(--muted)",fontSize:11}}>{desc}</span>
+                  </div>
+                ))}
+                <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
+                  ✅ Funciona en grupos y mensajes privados al número del bot.
+                </div>
+              </div>
+            )}
+          </div>
           <div className="card" style={{padding:"20px 24px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
               <div>
