@@ -12223,8 +12223,6 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         {tab === "info" && (
           <div>
             <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
-            {/* Card WA en tiempo real — visible en admin si tiene bot activo */}
-            {client.waConfig?.enabled && <ClienteWAResumenAdmin client={client} />}
             <div className="card">
               <div className="card-title">Información del cliente</div>
               <div className="grid2">
@@ -12270,9 +12268,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
         {tab === "metricas" && (
           <div>
-            {/* Gráfica CPL tiempo real — primera */}
             {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} onUpdate={handleUpdate} externalPuntos={cplRtPuntos} />}
-            {/* CPL WhatsApp — historial + tiempo real */}
+            {client.waConfig?.enabled && <ClienteWAResumenAdmin client={client} />}
             {(client.waConfig?.enabled || (client.records||[]).some(r=>(r.personas_wp||0)>0)) && <CplWAChart client={client} />}
             <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
             {client.producto?.startsWith("APOLLO") && (
