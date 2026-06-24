@@ -4540,8 +4540,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     <div style={{ marginTop:"1rem" }}>
       {toastEl}
       <CplTradingChart client={client} onUpdate={onUpdate} />
-      {/* CPL WA — muestra si tiene datos de personas_wp en records O bot conectado */}
-      {(client.waConfig?.enabled || (client.records||[]).some(r => r.personas_wp > 0)) && <CplWAChart client={client} />}
+      {(client.waConfig?.enabled || (client.records||[]).some(r=>(r.personas_wp||0)>0)) && <CplWAChart client={client} />}
       {/* ── Resumen semanal automático ─────────────────────────────────────── */}
       {rows.length >= 3 && (() => {
         const allR = [...rows].sort((a,b)=>a.date.localeCompare(b.date));
@@ -9223,10 +9222,10 @@ function MiniLineChart({ titulo, rows, metricas }) {
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
 // ─── CPL WHATSAPP EN TIEMPO REAL ─────────────────────────────────────────────
 function CplWAChart({ client }) {
-  const [puntosRT,   setPuntosRT]   = useState([]);
-  const [loading,    setLoading]    = useState(false);
-  const [modoVista,  setModoVista]  = useState("hoy"); // "hoy" | "historial"
-  const [hovIdx,     setHovIdx]     = useState(null);
+  const [puntosRT,  setPuntosRT]  = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [modoVista, setModoVista] = useState("historial");
+  const [hovIdx,    setHovIdx]    = useState(null);
   const intervalRef = useRef(null);
 
   const fechaHoyISO = (() => {
@@ -9236,11 +9235,11 @@ function CplWAChart({ client }) {
 
   // ── Historial desde records.personas_wp ──────────────────────
   const historial = (client.records||[])
-    .filter(r => r.personas_wp > 0 && r.inversion > 0)
+    .filter(r => (r.personas_wp||0) > 0 && (r.inversion||0) > 0)
     .map(r => ({
-      fecha: r.date,
-      joins: r.personas_wp,
-      cplWA: r.inversion / r.personas_wp,
+      fecha:   r.date,
+      joins:   parseFloat(r.personas_wp)||0,
+      cplWA:   parseFloat(r.inversion) / parseFloat(r.personas_wp),
       leadsFB: parseFloat(r.resultados||r.formularios||r.leads)||0,
     }))
     .sort((a,b) => a.fecha.localeCompare(b.fecha));
@@ -9257,22 +9256,16 @@ function CplWAChart({ client }) {
         { headers: HL }
       );
       const eventos = await r.json();
-      if (!Array.isArray(eventos) || !eventos.length) { setLoading(false); return; }
-
+      if (!Array.isArray(eventos)||!eventos.length) { setLoading(false); return; }
       const porHora = {};
-      eventos.forEach(ev => {
-        const hora = ev.ts.slice(0,13);
-        porHora[hora] = (porHora[hora]||0) + 1;
-      });
-      const ultRec = (client.records||[]).slice(-1)[0];
-      const gasto  = parseFloat(ultRec?.inversion)||0;
+      eventos.forEach(ev => { const h=ev.ts.slice(0,13); porHora[h]=(porHora[h]||0)+1; });
+      const gasto = parseFloat((client.records||[]).slice(-1)[0]?.inversion)||0;
       let acum = 0;
-      const nuevos = Object.entries(porHora).sort().map(([hora, joins]) => {
+      setPuntosRT(Object.entries(porHora).sort().map(([hora,joins]) => {
         acum += joins;
         return { hora: hora.slice(11)+":00", joins: acum,
           cplWA: acum>0&&gasto>0 ? gasto/acum : null, ts: hora };
-      });
-      setPuntosRT(nuevos);
+      }));
     } catch(e) { console.error("[CPL WA]", e.message); }
     setLoading(false);
   }
@@ -9282,26 +9275,29 @@ function CplWAChart({ client }) {
     if (client.waConfig?.enabled) {
       intervalRef.current = setInterval(fetchPuntosRT, 5*60*1000);
     }
+    // Auto-seleccionar modo más útil
+    if (puntosRT.length > 0) setModoVista("hoy");
     return () => clearInterval(intervalRef.current);
   }, [client.id, fechaHoyISO]);
 
-  // Decidir qué datos mostrar
-  const usandoRT   = modoVista === "hoy" && puntosRT.length > 0;
-  const puntos     = usandoRT ? puntosRT : historial;
-  const esHistorial = !usandoRT;
+  // No mostrar si no hay ningún dato
+  const tieneHistorial = historial.length > 0;
+  const tieneRT        = puntosRT.length > 0;
+  if (!tieneHistorial && !tieneRT && !loading) return null;
 
-  if (puntos.length === 0 && !loading) return null;
+  const puntos    = modoVista==="hoy" && tieneRT ? puntosRT : historial;
+  const esHoy     = modoVista==="hoy" && tieneRT;
+  const maxVal    = Math.max(...puntos.map(p=>p.joins||0), 1);
+  const ultPunto  = puntos[puntos.length-1];
+  const hov       = hovIdx!==null ? puntos[hovIdx] : null;
+  const color     = "#25D366";
 
-  const maxVal   = Math.max(...puntos.map(p => p.joins||p.personas_wp||0), 1);
-  const ultPunto = puntos[puntos.length-1];
-  const hov      = hovIdx !== null ? puntos[hovIdx] : null;
-  const color    = "#25D366";
-
-  // Calcular promedio CPL WA histórico
-  const cplsValidos = historial.filter(p => p.cplWA > 0).map(p => p.cplWA);
+  // Stats historial
+  const cplsValidos  = historial.filter(p=>p.cplWA>0).map(p=>p.cplWA);
   const cplPromedio  = cplsValidos.length ? cplsValidos.reduce((a,b)=>a+b,0)/cplsValidos.length : null;
   const cplActual    = ultPunto?.cplWA || null;
-  const cplDelta     = cplActual && cplPromedio ? ((cplActual-cplPromedio)/cplPromedio*100) : null;
+  const cplDelta     = cplActual&&cplPromedio ? ((cplActual-cplPromedio)/cplPromedio*100) : null;
+  const totalPersonas= historial.reduce((a,r)=>a+(r.joins||0),0);
 
   return (
     <div className="card" style={{marginBottom:"1rem"}}>
@@ -9309,120 +9305,88 @@ function CplWAChart({ client }) {
         <div>
           <div className="card-title" style={{margin:0}}>💬 CPL WhatsApp</div>
           <div style={{fontSize:11,color:"var(--muted)"}}>
-            {esHistorial ? `Historial · ${historial.length} días con datos` : "Tiempo real · actualiza cada 5 min"}
+            {esHoy ? "Tiempo real · actualiza cada 5 min" : `Historial · ${historial.length} días con datos`}
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {/* Selector modo */}
           <div className="period-pills">
-            {puntosRT.length > 0 && (
-              <button className={"pill "+(modoVista==="hoy"?"active":"")}
-                onClick={()=>setModoVista("hoy")}>Hoy</button>
-            )}
-            {historial.length > 0 && (
-              <button className={"pill "+(modoVista==="historial"?"active":"")}
-                onClick={()=>setModoVista("historial")}>Historial</button>
-            )}
+            {tieneHistorial && <button className={"pill "+(modoVista==="historial"?"active":"")} onClick={()=>setModoVista("historial")}>Historial</button>}
+            {tieneRT && <button className={"pill "+(modoVista==="hoy"?"active":"")} onClick={()=>setModoVista("hoy")}>Hoy</button>}
           </div>
-          {/* CPL actual */}
           {cplActual && (
             <div style={{textAlign:"right"}}>
               <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color}}>
                 ${fmtNum(cplActual,2)}
               </div>
-              {cplDelta !== null && (
+              {cplDelta!==null && (
                 <div style={{fontSize:10,color:cplDelta>0?"var(--red)":"var(--green)"}}>
-                  {cplDelta>0?"▲":"▼"} {fmtNum(Math.abs(cplDelta),1)}% vs promedio
+                  {cplDelta>0?"▲":"▼"} {fmtNum(Math.abs(cplDelta),1)}% vs prom.
                 </div>
               )}
             </div>
           )}
-          {client.waConfig?.enabled && (
-            <button className="btn btn-ghost btn-sm" style={{fontSize:10}}
-              onClick={fetchPuntosRT} disabled={loading}>
-              {loading?"⟳":"↻"}
-            </button>
-          )}
+          {loading && <span style={{fontSize:10,color:"var(--muted)"}}>⟳</span>}
+          {client.waConfig?.enabled && <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={fetchPuntosRT}>↻</button>}
         </div>
       </div>
 
       {/* Gráfica */}
-      {puntos.length > 0 && (
-        <div style={{position:"relative"}}>
-          <svg width="100%" height="100" viewBox={`0 0 ${puntos.length*Math.max(800/puntos.length,30)} 100`}
-            preserveAspectRatio="none" style={{overflow:"visible",display:"block"}}>
-            <defs>
-              <linearGradient id="waGrad2" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
-                <stop offset="100%" stopColor={color} stopOpacity="0"/>
-              </linearGradient>
-            </defs>
-            {(() => {
-              const W = puntos.length * Math.max(800/puntos.length,30);
-              const step = W / Math.max(puntos.length-1,1);
-              const pts  = puntos.map((p,i)=>{
-                const v = p.joins || p.personas_wp || 0;
-                return `${i*step},${95-(v/maxVal*85)}`;
-              });
-              return (
-                <>
-                  <polygon points={`0,100 ${pts.join(" ")} ${(puntos.length-1)*step},100`}
-                    fill="url(#waGrad2)"/>
-                  <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="2"/>
-                  {puntos.map((p,i)=>(
-                    <circle key={i} cx={i*step} cy={95-((p.joins||p.personas_wp||0)/maxVal*85)}
-                      r={hovIdx===i?5:3} fill={color} style={{cursor:"pointer"}}
-                      onMouseEnter={()=>setHovIdx(i)} onMouseLeave={()=>setHovIdx(null)}/>
-                  ))}
-                </>
-              );
-            })()}
-          </svg>
-
-          {/* Tooltip */}
-          {hov && (
-            <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
-              background:"var(--surface2)",border:"1px solid var(--border)",
-              borderRadius:8,padding:"6px 12px",fontSize:11,pointerEvents:"none",zIndex:10,whiteSpace:"nowrap"}}>
-              <div style={{color:"var(--muted)",marginBottom:2}}>
-                {esHistorial ? hov.fecha : hov.hora}
-              </div>
-              <div style={{color,fontWeight:700}}>
-                {hov.joins||hov.personas_wp||0} personas en WP
-              </div>
-              {hov.cplWA && <div style={{color:"var(--accent2)"}}>CPL WA: ${fmtNum(hov.cplWA,2)}</div>}
-              {hov.leadsFB > 0 && (
-                <div style={{color:"var(--muted)"}}>
-                  Captura: {fmtNum((hov.joins||hov.personas_wp||0)/hov.leadsFB*100,1)}%
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Labels eje X */}
-          <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:"var(--muted)"}}>
-            {[puntos[0], puntos[Math.floor(puntos.length/2)], puntos[puntos.length-1]]
-              .filter(Boolean).map((p,i)=>(
-                <span key={i}>{esHistorial ? p.fecha?.slice(5) : p.hora}</span>
+      {puntos.length > 0 && (() => {
+        const W    = Math.max(puntos.length * 40, 400);
+        const step = W / Math.max(puntos.length-1,1);
+        const pts  = puntos.map((p,i) => `${i*step},${95-(((p.joins||0)/maxVal)*85)}`);
+        return (
+          <div style={{position:"relative",marginBottom:8}} onMouseLeave={()=>setHovIdx(null)}>
+            <svg width="100%" height="100" viewBox={`0 0 ${W} 100`}
+              preserveAspectRatio="none" style={{display:"block",overflow:"visible"}}>
+              <defs>
+                <linearGradient id="waHistGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
+                  <stop offset="100%" stopColor={color} stopOpacity="0"/>
+                </linearGradient>
+              </defs>
+              <polygon points={`0,100 ${pts.join(" ")} ${(puntos.length-1)*step},100`} fill="url(#waHistGrad)"/>
+              <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="2"/>
+              {puntos.map((p,i)=>(
+                <circle key={i} cx={i*step} cy={95-((p.joins||0)/maxVal*85)}
+                  r={hovIdx===i?5:3} fill={color} style={{cursor:"pointer"}}
+                  onMouseEnter={()=>setHovIdx(i)} onMouseLeave={()=>setHovIdx(null)}/>
               ))}
+            </svg>
+            {hov && (
+              <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
+                background:"var(--surface2)",border:"1px solid var(--border)",
+                borderRadius:8,padding:"6px 12px",fontSize:11,pointerEvents:"none",zIndex:10,whiteSpace:"nowrap"}}>
+                <div style={{color:"var(--muted)",marginBottom:2}}>{esHoy?hov.hora:hov.fecha}</div>
+                <div style={{color,fontWeight:700}}>{hov.joins} personas en WP</div>
+                {hov.cplWA&&<div style={{color:"var(--accent2)"}}>CPL WA: ${fmtNum(hov.cplWA,2)}</div>}
+                {!esHoy&&hov.leadsFB>0&&<div style={{color:"var(--muted)"}}>Captura: {fmtNum(hov.joins/hov.leadsFB*100,1)}%</div>}
+              </div>
+            )}
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"var(--muted)",marginTop:2}}>
+              {[puntos[0],puntos[Math.floor(puntos.length/2)],puntos[puntos.length-1]]
+                .filter(Boolean).map((p,i)=><span key={i}>{esHoy?p.hora:p.fecha?.slice(5)}</span>)}
+            </div>
           </div>
+        );
+      })()}
+
+      {/* Grid de métricas WA */}
+      {tieneHistorial && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginTop:8}}>
+          {[
+            ["Total en WP", fmtNum(totalPersonas), color],
+            ["CPL WA prom.", cplPromedio?`$${fmtNum(cplPromedio,2)}`:"—", "var(--accent2)"],
+            ["Mejor CPL WA", cplsValidos.length?`$${fmtNum(Math.min(...cplsValidos),2)}`:"—", "var(--green)"],
+            ["Días con data", historial.length, "var(--muted)"],
+          ].map(([l,v,c])=>(
+            <div key={l} style={{textAlign:"center",padding:"5px",background:"var(--surface2)",borderRadius:8}}>
+              <div style={{fontSize:9,color:"var(--muted)",marginBottom:1}}>{l}</div>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:12,color:c}}>{v}</div>
+            </div>
+          ))}
         </div>
       )}
-
-      {/* Grid métricas WA */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginTop:12}}>
-        {[
-          ["Total en WP", fmtNum(historial.reduce((a,r)=>a+(r.joins||0),0)), color],
-          ["CPL WA prom.", cplPromedio?`$${fmtNum(cplPromedio,2)}`:"—", "var(--accent2)"],
-          ["Mejor CPL WA", cplsValidos.length?`$${fmtNum(Math.min(...cplsValidos),2)}`:"—", "var(--green)"],
-          ["Días con data", historial.length, "var(--muted)"],
-        ].map(([l,v,c])=>(
-          <div key={l} style={{textAlign:"center",padding:"6px",background:"var(--surface2)",borderRadius:8}}>
-            <div style={{fontSize:9,color:"var(--muted)",marginBottom:2}}>{l}</div>
-            <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:13,color:c}}>{v}</div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
