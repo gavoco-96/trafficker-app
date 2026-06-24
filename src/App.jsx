@@ -4540,6 +4540,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     <div style={{ marginTop:"1rem" }}>
       {toastEl}
       <CplTradingChart client={client} onUpdate={onUpdate} />
+      {client.waConfig?.enabled && <CplWAChart client={client} />}
       {/* ── Resumen semanal automático ─────────────────────────────────────── */}
       {rows.length >= 3 && (() => {
         const allR = [...rows].sort((a,b)=>a.date.localeCompare(b.date));
@@ -9219,6 +9220,148 @@ function MiniLineChart({ titulo, rows, metricas }) {
 
 // ─── GRÁFICA CPL EN TIEMPO REAL (estilo trading) ──────────────────────────────
 // ─── GRÁFICA CPL ESTILO COINMARKETCAP ────────────────────────────────────────
+// ─── CPL WHATSAPP EN TIEMPO REAL ─────────────────────────────────────────────
+function CplWAChart({ client }) {
+  const [puntos,    setPuntos]    = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [rango,     setRango]     = useState("hoy");
+  const [hovIdx,    setHovIdx]    = useState(null);
+  const intervalRef = useRef(null);
+
+  const fechaHoyISO = (() => {
+    const ec = new Date(Date.now() - 5*60*60*1000);
+    return ec.toISOString().slice(0,10);
+  })();
+
+  async function fetchPuntos() {
+    setLoading(true);
+    try {
+      // Contar joins acumulados por hora del día de hoy
+      const desde = `${fechaHoyISO}T00:00:00-05:00`;
+      const hasta = new Date().toISOString();
+      const r = await fetch(
+        `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${client.id}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=ts&order=ts.asc`,
+        { headers: HL }
+      );
+      const eventos = await r.json();
+      if (!Array.isArray(eventos) || !eventos.length) { setLoading(false); return; }
+
+      // Agrupar por hora para construir serie de tiempo
+      const porHora = {};
+      eventos.forEach(ev => {
+        const hora = ev.ts.slice(0,13); // "2026-06-24T08"
+        porHora[hora] = (porHora[hora] || 0) + 1;
+      });
+
+      // Obtener gasto del último registro para calcular CPL acumulado
+      const ultRec = (client.records||[]).slice(-1)[0];
+      const gasto  = parseFloat(ultRec?.inversion) || 0;
+
+      // Construir puntos con joins acumulados y CPL
+      let acum = 0;
+      const nuevos = Object.entries(porHora).sort().map(([hora, joins]) => {
+        acum += joins;
+        const cplWA = acum > 0 && gasto > 0 ? gasto / acum : null;
+        const horaLabel = hora.slice(11) + ":00";
+        return { hora: horaLabel, joins: acum, cplWA, ts: hora };
+      });
+      setPuntos(nuevos);
+    } catch(e) { console.error("[CPL WA]", e.message); }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    fetchPuntos();
+    intervalRef.current = setInterval(fetchPuntos, 5 * 60 * 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [client.id, fechaHoyISO]);
+
+  if (!client.waConfig?.enabled) return null;
+
+  const maxJoins = Math.max(...puntos.map(p=>p.joins), 1);
+  const minCpl   = Math.min(...puntos.filter(p=>p.cplWA).map(p=>p.cplWA));
+  const maxCpl   = Math.max(...puntos.filter(p=>p.cplWA).map(p=>p.cplWA), 1);
+  const ultPunto = puntos[puntos.length-1];
+  const hov      = hovIdx !== null ? puntos[hovIdx] : null;
+
+  return (
+    <div className="card" style={{marginBottom:"1rem"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div>
+          <div className="card-title" style={{margin:0}}>💬 CPL WhatsApp — Tiempo real</div>
+          <div style={{fontSize:11,color:"var(--muted)"}}>
+            Costo por persona en grupos WA · actualiza cada 5 min
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {loading && <span style={{fontSize:10,color:"var(--muted)"}}>⟳ Actualizando...</span>}
+          {ultPunto && (
+            <div style={{textAlign:"right"}}>
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color:"#25D366"}}>
+                {ultPunto.cplWA ? `$${fmtNum(ultPunto.cplWA,2)}` : "—"}
+              </div>
+              <div style={{fontSize:10,color:"var(--muted)"}}>{ultPunto.joins} ingresos hoy</div>
+            </div>
+          )}
+          <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={fetchPuntos}>↻</button>
+        </div>
+      </div>
+
+      {puntos.length === 0 ? (
+        <div style={{textAlign:"center",padding:"2rem",color:"var(--muted)",fontSize:12}}>
+          {loading ? "Cargando datos..." : "Sin ingresos a grupos hoy"}
+        </div>
+      ) : (
+        <div style={{position:"relative",height:120,marginTop:8}}
+          onMouseLeave={()=>setHovIdx(null)}>
+          <svg width="100%" height="120" viewBox={`0 0 ${puntos.length*40} 120`}
+            preserveAspectRatio="none" style={{overflow:"visible"}}>
+            {/* Área bajo la curva */}
+            <defs>
+              <linearGradient id="waGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#25D366" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#25D366" stopOpacity="0"/>
+              </linearGradient>
+            </defs>
+            <polygon
+              points={[
+                `0,120`,
+                ...puntos.map((p,i) => `${i*40+20},${120-((p.joins/maxJoins)*90)}`),
+                `${(puntos.length-1)*40+20},120`
+              ].join(" ")}
+              fill="url(#waGrad)"/>
+            {/* Línea */}
+            <polyline
+              points={puntos.map((p,i)=>`${i*40+20},${120-((p.joins/maxJoins)*90)}`).join(" ")}
+              fill="none" stroke="#25D366" strokeWidth="2"/>
+            {/* Puntos */}
+            {puntos.map((p,i) => (
+              <circle key={i} cx={i*40+20} cy={120-((p.joins/maxJoins)*90)}
+                r={hovIdx===i?5:3} fill="#25D366"
+                style={{cursor:"pointer"}}
+                onMouseEnter={()=>setHovIdx(i)}/>
+            ))}
+          </svg>
+          {/* Tooltip */}
+          {hov && (
+            <div style={{position:"absolute",top:0,right:0,background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:8,padding:"6px 10px",fontSize:11,pointerEvents:"none",minWidth:140}}>
+              <div style={{color:"var(--muted)",marginBottom:2}}>{hov.hora}</div>
+              <div style={{color:"#25D366",fontWeight:700}}>{hov.joins} personas en WP</div>
+              {hov.cplWA && <div style={{color:"var(--accent2)"}}>CPL WA: ${fmtNum(hov.cplWA,2)}</div>}
+            </div>
+          )}
+          {/* Labels eje X */}
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:"var(--muted)"}}>
+            {puntos.filter((_,i)=>i===0||i===Math.floor(puntos.length/2)||i===puntos.length-1).map((p,i)=>(
+              <span key={i}>{p.hora}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const { token, cuentas: _cuentas } = client.fbConfig || {};
   const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
@@ -12056,7 +12199,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", "grupos", "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
               {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
             </button>
@@ -12520,7 +12663,7 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos","grupos","antecedentes"]).map(v=>(
+          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos",...(client.waConfig?.enabled?["grupos"]:[]),"antecedentes"]).map(v=>(
             <div key={v} className={`nav-item ${tab===v?"active":""}`} onClick={()=>setTab(v)}>
               <div className="nav-dot" style={{background:tab===v?"var(--accent)":"var(--border)"}}/>
               {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":v==="grupos"?"💬 Grupos WA":"📚 Historial"}
