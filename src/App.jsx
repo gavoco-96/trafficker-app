@@ -9233,7 +9233,7 @@ function CplWAChart({ client }) {
     return ec.toISOString().slice(0,10);
   })();
 
-  // ── Historial desde records.personas_wp ──────────────────────
+  // Historial desde records.personas_wp
   const historial = (client.records||[])
     .filter(r => (r.personas_wp||0) > 0 && (r.inversion||0) > 0)
     .map(r => ({
@@ -9244,7 +9244,7 @@ function CplWAChart({ client }) {
     }))
     .sort((a,b) => a.fecha.localeCompare(b.fecha));
 
-  // ── Tiempo real desde wa_eventos ─────────────────────────────
+  // Tiempo real desde wa_eventos
   async function fetchPuntosRT() {
     if (!client.waConfig?.enabled) return;
     setLoading(true);
@@ -9263,8 +9263,7 @@ function CplWAChart({ client }) {
       let acum = 0;
       setPuntosRT(Object.entries(porHora).sort().map(([hora,joins]) => {
         acum += joins;
-        return { hora: hora.slice(11)+":00", joins: acum,
-          cplWA: acum>0&&gasto>0 ? gasto/acum : null, ts: hora };
+        return { hora: hora.slice(11)+":00", joins: acum, cplWA: acum>0&&gasto>0?gasto/acum:null };
       }));
     } catch(e) { console.error("[CPL WA]", e.message); }
     setLoading(false);
@@ -9275,29 +9274,24 @@ function CplWAChart({ client }) {
     if (client.waConfig?.enabled) {
       intervalRef.current = setInterval(fetchPuntosRT, 5*60*1000);
     }
-    // Auto-seleccionar modo más útil
-    if (puntosRT.length > 0) setModoVista("hoy");
     return () => clearInterval(intervalRef.current);
   }, [client.id, fechaHoyISO]);
 
-  // No mostrar si no hay ningún dato
   const tieneHistorial = historial.length > 0;
   const tieneRT        = puntosRT.length > 0;
   if (!tieneHistorial && !tieneRT && !loading) return null;
 
-  const puntos    = modoVista==="hoy" && tieneRT ? puntosRT : historial;
-  const esHoy     = modoVista==="hoy" && tieneRT;
+  const usandoRT  = modoVista==="hoy" && tieneRT;
+  const puntos    = usandoRT ? puntosRT : historial;
   const maxVal    = Math.max(...puntos.map(p=>p.joins||0), 1);
   const ultPunto  = puntos[puntos.length-1];
   const hov       = hovIdx!==null ? puntos[hovIdx] : null;
   const color     = "#25D366";
-
-  // Stats historial
-  const cplsValidos  = historial.filter(p=>p.cplWA>0).map(p=>p.cplWA);
-  const cplPromedio  = cplsValidos.length ? cplsValidos.reduce((a,b)=>a+b,0)/cplsValidos.length : null;
-  const cplActual    = ultPunto?.cplWA || null;
-  const cplDelta     = cplActual&&cplPromedio ? ((cplActual-cplPromedio)/cplPromedio*100) : null;
-  const totalPersonas= historial.reduce((a,r)=>a+(r.joins||0),0);
+  const cplsV     = historial.filter(p=>p.cplWA>0).map(p=>p.cplWA);
+  const cplProm   = cplsV.length ? cplsV.reduce((a,b)=>a+b,0)/cplsV.length : null;
+  const cplAct    = ultPunto?.cplWA||null;
+  const cplDelta  = cplAct&&cplProm ? ((cplAct-cplProm)/cplProm*100) : null;
+  const totalWP   = historial.reduce((a,r)=>a+(r.joins||0),0);
 
   return (
     <div className="card" style={{marginBottom:"1rem"}}>
@@ -9305,7 +9299,7 @@ function CplWAChart({ client }) {
         <div>
           <div className="card-title" style={{margin:0}}>💬 CPL WhatsApp</div>
           <div style={{fontSize:11,color:"var(--muted)"}}>
-            {esHoy ? "Tiempo real · actualiza cada 5 min" : `Historial · ${historial.length} días con datos`}
+            {usandoRT ? "Tiempo real · cada 5 min" : `Historial · ${historial.length} días`}
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -9313,32 +9307,23 @@ function CplWAChart({ client }) {
             {tieneHistorial && <button className={"pill "+(modoVista==="historial"?"active":"")} onClick={()=>setModoVista("historial")}>Historial</button>}
             {tieneRT && <button className={"pill "+(modoVista==="hoy"?"active":"")} onClick={()=>setModoVista("hoy")}>Hoy</button>}
           </div>
-          {cplActual && (
+          {cplAct && (
             <div style={{textAlign:"right"}}>
-              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color}}>
-                ${fmtNum(cplActual,2)}
-              </div>
-              {cplDelta!==null && (
-                <div style={{fontSize:10,color:cplDelta>0?"var(--red)":"var(--green)"}}>
-                  {cplDelta>0?"▲":"▼"} {fmtNum(Math.abs(cplDelta),1)}% vs prom.
-                </div>
-              )}
+              <div style={{fontFamily:"var(--mono)",fontWeight:700,fontSize:18,color}}>${fmtNum(cplAct,2)}</div>
+              {cplDelta!==null && <div style={{fontSize:10,color:cplDelta>0?"var(--red)":"var(--green)"}}>{cplDelta>0?"▲":"▼"} {fmtNum(Math.abs(cplDelta),1)}% vs prom.</div>}
             </div>
           )}
-          {loading && <span style={{fontSize:10,color:"var(--muted)"}}>⟳</span>}
-          {client.waConfig?.enabled && <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={fetchPuntosRT}>↻</button>}
+          {client.waConfig?.enabled && <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={fetchPuntosRT} disabled={loading}>{loading?"⟳":"↻"}</button>}
         </div>
       </div>
 
-      {/* Gráfica */}
       {puntos.length > 0 && (() => {
-        const W    = Math.max(puntos.length * 40, 400);
-        const step = W / Math.max(puntos.length-1,1);
-        const pts  = puntos.map((p,i) => `${i*step},${95-(((p.joins||0)/maxVal)*85)}`);
+        const W    = Math.max(puntos.length*40, 400);
+        const step = W/Math.max(puntos.length-1,1);
+        const pts  = puntos.map((p,i)=>`${i*step},${95-(((p.joins||0)/maxVal)*85)}`);
         return (
           <div style={{position:"relative",marginBottom:8}} onMouseLeave={()=>setHovIdx(null)}>
-            <svg width="100%" height="100" viewBox={`0 0 ${W} 100`}
-              preserveAspectRatio="none" style={{display:"block",overflow:"visible"}}>
+            <svg width="100%" height="100" viewBox={`0 0 ${W} 100`} preserveAspectRatio="none" style={{display:"block",overflow:"visible"}}>
               <defs>
                 <linearGradient id="waHistGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
@@ -9357,27 +9342,26 @@ function CplWAChart({ client }) {
               <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
                 background:"var(--surface2)",border:"1px solid var(--border)",
                 borderRadius:8,padding:"6px 12px",fontSize:11,pointerEvents:"none",zIndex:10,whiteSpace:"nowrap"}}>
-                <div style={{color:"var(--muted)",marginBottom:2}}>{esHoy?hov.hora:hov.fecha}</div>
+                <div style={{color:"var(--muted)",marginBottom:2}}>{usandoRT?hov.hora:hov.fecha}</div>
                 <div style={{color,fontWeight:700}}>{hov.joins} personas en WP</div>
                 {hov.cplWA&&<div style={{color:"var(--accent2)"}}>CPL WA: ${fmtNum(hov.cplWA,2)}</div>}
-                {!esHoy&&hov.leadsFB>0&&<div style={{color:"var(--muted)"}}>Captura: {fmtNum(hov.joins/hov.leadsFB*100,1)}%</div>}
+                {!usandoRT&&hov.leadsFB>0&&<div style={{color:"var(--muted)"}}>Captura: {fmtNum(hov.joins/hov.leadsFB*100,1)}%</div>}
               </div>
             )}
             <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"var(--muted)",marginTop:2}}>
               {[puntos[0],puntos[Math.floor(puntos.length/2)],puntos[puntos.length-1]]
-                .filter(Boolean).map((p,i)=><span key={i}>{esHoy?p.hora:p.fecha?.slice(5)}</span>)}
+                .filter(Boolean).map((p,i)=><span key={i}>{usandoRT?p.hora:p.fecha?.slice(5)}</span>)}
             </div>
           </div>
         );
       })()}
 
-      {/* Grid de métricas WA */}
       {tieneHistorial && (
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginTop:8}}>
           {[
-            ["Total en WP", fmtNum(totalPersonas), color],
-            ["CPL WA prom.", cplPromedio?`$${fmtNum(cplPromedio,2)}`:"—", "var(--accent2)"],
-            ["Mejor CPL WA", cplsValidos.length?`$${fmtNum(Math.min(...cplsValidos),2)}`:"—", "var(--green)"],
+            ["Total en WP", fmtNum(totalWP), color],
+            ["CPL WA prom.", cplProm?`$${fmtNum(cplProm,2)}`:"—", "var(--accent2)"],
+            ["Mejor CPL WA", cplsV.length?`$${fmtNum(Math.min(...cplsV),2)}`:"—", "var(--green)"],
             ["Días con data", historial.length, "var(--muted)"],
           ].map(([l,v,c])=>(
             <div key={l} style={{textAlign:"center",padding:"5px",background:"var(--surface2)",borderRadius:8}}>
@@ -9391,53 +9375,6 @@ function CplWAChart({ client }) {
   );
 }
 
-  const fechaHoyISO = (() => {
-    const ec = new Date(Date.now() - 5*60*60*1000);
-    return ec.toISOString().slice(0,10);
-  })();
-
-  async function fetchPuntos() {
-    setLoading(true);
-    try {
-      // Contar joins acumulados por hora del día de hoy
-      const desde = `${fechaHoyISO}T00:00:00-05:00`;
-      const hasta = new Date().toISOString();
-      const r = await fetch(
-        `${SUPA_URL}/rest/v1/wa_eventos?client_id=eq.${client.id}&tipo=eq.join&ts=gte.${encodeURIComponent(desde)}&ts=lte.${encodeURIComponent(hasta)}&select=ts&order=ts.asc`,
-        { headers: HL }
-      );
-      const eventos = await r.json();
-      if (!Array.isArray(eventos) || !eventos.length) { setLoading(false); return; }
-
-      // Agrupar por hora para construir serie de tiempo
-      const porHora = {};
-      eventos.forEach(ev => {
-        const hora = ev.ts.slice(0,13); // "2026-06-24T08"
-        porHora[hora] = (porHora[hora] || 0) + 1;
-      });
-
-      // Obtener gasto del último registro para calcular CPL acumulado
-      const ultRec = (client.records||[]).slice(-1)[0];
-      const gasto  = parseFloat(ultRec?.inversion) || 0;
-
-      // Construir puntos con joins acumulados y CPL
-      let acum = 0;
-      const nuevos = Object.entries(porHora).sort().map(([hora, joins]) => {
-        acum += joins;
-        const cplWA = acum > 0 && gasto > 0 ? gasto / acum : null;
-        const horaLabel = hora.slice(11) + ":00";
-        return { hora: horaLabel, joins: acum, cplWA, ts: hora };
-      });
-      setPuntos(nuevos);
-    } catch(e) { console.error("[CPL WA]", e.message); }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    fetchPuntos();
-    intervalRef.current = setInterval(fetchPuntos, 5 * 60 * 1000);
-    return () => clearInterval(intervalRef.current);
-  }, [client.id, fechaHoyISO]);
 
 function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const { token, cuentas: _cuentas } = client.fbConfig || {};
