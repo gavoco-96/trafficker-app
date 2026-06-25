@@ -10760,128 +10760,21 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
             )}
           </div>
 
-          {/* Bot de consultas */}
+          {/* Bot de consultas — activo si tiene wa_lid configurado */}
           <div className="card" style={{padding:"20px 24px",borderColor:"rgba(77,159,255,.25)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <div>
                 <div style={{fontWeight:700,fontSize:15}}>🤖 Bot de consultas WhatsApp</div>
                 <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
-                  El bot responde en grupos y privados con reportes y proyecciones
+                  Configura el bot en la pestaña <strong>🤖 Bot WA</strong> de la ficha del cliente
                 </div>
               </div>
-              <div onClick={()=>setConfig({...config,bot_consultas_activo:!config.bot_consultas_activo})}
-                style={{cursor:"pointer",width:44,height:24,borderRadius:12,background:config.bot_consultas_activo?"var(--accent)":"var(--border)",position:"relative",transition:"background .2s",flexShrink:0}}>
-                <div style={{position:"absolute",top:3,left:config.bot_consultas_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
-              </div>
-            </div>
-            {/* Campo wa_lid — ID de WhatsApp del cliente */}
-            {config.bot_consultas_activo && (
-              <div style={{marginBottom:16,padding:"12px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                  <div style={{fontSize:12,fontWeight:600}}>📲 WhatsApp ID del cliente</div>
-                  {config.wa_lid && <span style={{fontSize:10,color:"var(--green)",fontWeight:600}}>● Autorizado</span>}
-                </div>
-                <div style={{fontSize:11,color:"var(--muted)",marginBottom:8,lineHeight:1.6}}>
-                  Pide al cliente que te escriba al bot. El log de Railway mostrará su ID (<code>num=XXXXXXXXX</code>). Pégalo aquí para que el bot lo reconozca.
-                </div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <input
-                    type="text"
-                    value={config.wa_lid || ""}
-                    onChange={e => setConfig({...config, wa_lid: e.target.value.trim()})}
-                    placeholder="Ej: 20873809518617"
-                    style={{flex:1, fontSize:12, fontFamily:"var(--mono)"}}
-                  />
-                  {config.wa_lid && (
-                    <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:"var(--red)"}}
-                      onClick={()=>setConfig({...config, wa_lid: ""})}>✕ Limpiar</button>
-                  )}
-                </div>
-                {config.wa_lid && (
-                  <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
-                    JID guardado: <code style={{color:"var(--accent2)"}}>{config.wa_lid}@lid</code>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {config.bot_consultas_activo && (() => {
-              const DEFAULT_TPL = {
-                corte:       "✂️ *Corte del día — {hora}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Corte parcial · {hora} Ecuador_",
-                ayer:        "📊 *Reporte diario — {cliente}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
-                semanal:     "📅 *Resumen semanal — {cliente}*\n━━━━━━━━━━━━━━━━━━\nDel {desde} al {hasta}\n\n💵 Total: ${inversion}\n💵 Prom/día: ${inv_dia}\n👥 FB: {leads}\n💬 WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Últimos {dias} días · Trafficker Pro_",
-                proyeccion:  "🎯 *Proyección — ${presupuesto}/día*\n━━━━━━━━━━━━━━━━━━\n👥 Registros FB est.: {leads_est}\n💬 Personas WP est.: {wp_est}\n📊 CPL FB: ${cpl_fb_est}\n📊 CPL WP: ${cpl_wp_est}\n━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
-                presupuesto: "💰 *Presupuesto activo — Facebook*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n{lineas_campanas}\n━━━━━━━━━━━━━━━━━━\n💵 *Total diario: ${total}*\n_Trafficker Pro_",
-              };
-              const VARS = {
-                corte:       ["{hora}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
-                ayer:        ["{cliente}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
-                semanal:     ["{cliente}","${inversion}","{inv_dia}","{leads}","{personas_wp}","{desde}","{hasta}","{dias}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
-                proyeccion:  ["${presupuesto}","{leads_est}","{wp_est}","${cpl_fb_est}","${cpl_wp_est}"],
-                presupuesto: ["${total}","{fecha}","{lineas_campanas}"],
-              };
-              const LABELS = { corte:"✂️ Corte del día", ayer:"📊 Reporte de ayer", semanal:"📅 Resumen semanal", proyeccion:"🎯 Proyección", presupuesto:"💰 Presupuesto FB" };
-              const [openTpl, setOpenTpl] = useState(null);
-              const [tplState, setTplState] = useState(config.wa_templates || {});
-
-              function saveTpl(key, val) {
-                const next = { ...tplState, [key]: val };
-                setTplState(next);
-                setConfig({ ...config, wa_templates: next });
+              {config.wa_lid
+                ? <span style={{fontSize:11,color:"var(--green)",fontWeight:600,padding:"4px 10px",borderRadius:20,background:"rgba(16,185,129,.1)"}}>● Activo</span>
+                : <span style={{fontSize:11,color:"var(--muted)",padding:"4px 10px",borderRadius:20,background:"var(--surface2)"}}>Sin configurar</span>
               }
+            </div>
 
-              return (
-                <div style={{background:"rgba(77,159,255,.06)",borderRadius:8,padding:"12px 14px",fontSize:12}}>
-                  <div style={{fontWeight:600,marginBottom:10}}>Comandos disponibles:</div>
-                  {[
-                    ["hola / menu",    "Muestra el menú principal"],
-                    ["1 / corte",      "Corte del día (datos en tiempo real)"],
-                    ["2 / ayer",       "Reporte del día anterior"],
-                    ["3 / semanal",    "Resumen de los últimos 7 días"],
-                    ["4 / proyección", "Proyección con presupuesto personalizado"],
-                    ["5 / presupuesto","Campañas activas en Facebook"],
-                  ].map(([cmd,desc])=>(
-                    <div key={cmd} style={{display:"flex",gap:8,marginBottom:4}}>
-                      <code style={{background:"rgba(0,0,0,.2)",padding:"1px 6px",borderRadius:4,fontSize:10,whiteSpace:"nowrap"}}>{cmd}</code>
-                      <span style={{color:"var(--muted)",fontSize:11}}>{desc}</span>
-                    </div>
-                  ))}
-                  <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
-                    ✅ Funciona en grupos y mensajes privados al número del bot.
-                  </div>
-
-                  <div style={{marginTop:16,borderTop:"1px solid var(--border)",paddingTop:14}}>
-                    <div style={{fontWeight:600,fontSize:12,marginBottom:10}}>✏️ Personalizar mensajes del bot</div>
-                    {Object.entries(LABELS).map(([key, label]) => (
-                      <div key={key} style={{marginBottom:8,borderRadius:8,border:"1px solid var(--border)",overflow:"hidden"}}>
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--surface2)",cursor:"pointer"}}
-                          onClick={()=>setOpenTpl(openTpl===key?null:key)}>
-                          <span style={{fontSize:12,fontWeight:500}}>{label}</span>
-                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                            {tplState[key] && <span style={{fontSize:10,color:"var(--green)"}}>● Personalizado</span>}
-                            <span style={{color:"var(--muted)",fontSize:11}}>{openTpl===key?"▲":"▼"}</span>
-                          </div>
-                        </div>
-                        {openTpl===key && (
-                          <div style={{padding:"12px",background:"var(--surface)"}}>
-                            <div style={{fontSize:11,color:"var(--muted)",marginBottom:8,lineHeight:1.6}}>
-                              Variables: {VARS[key].map(v=><code key={v} style={{background:"rgba(0,0,0,.25)",padding:"1px 5px",borderRadius:3,marginRight:4,fontSize:10,color:"var(--accent2)"}}>{v}</code>)}
-                            </div>
-                            <textarea value={tplState[key]??DEFAULT_TPL[key]} onChange={e=>saveTpl(key,e.target.value)}
-                              rows={7} style={{width:"100%",resize:"vertical",fontFamily:"var(--mono)",fontSize:11}}/>
-                            <button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:6}}
-                              onClick={()=>saveTpl(key,DEFAULT_TPL[key])}>↺ Restaurar default</button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    <div style={{fontSize:11,color:"var(--muted)",marginTop:6,lineHeight:1.6}}>
-                      💡 Los cambios se guardan en el cliente. El bot los lee en cada mensaje.
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
           </div>
           <div className="card" style={{padding:"20px 24px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
@@ -12258,9 +12151,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "bot"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : "✈️ Telegram"}
+              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
             </button>
           ))}
         </div>
@@ -12342,6 +12235,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
               await handleUpdate({ ...client, tgConfig: cfg });
             }}
           />
+        )}
+        {tab === "bot" && (
+          <BotClienteConfig client={client} onUpdate={handleUpdate} />
         )}
       </div>
     </div>
@@ -14007,6 +13903,128 @@ function BotAdminPanel() {
           <div style={{ marginTop:16, padding:"10px 14px", borderRadius:8, background:"rgba(255,222,89,.06)", border:"1px solid rgba(255,222,89,.15)", fontSize:11, color:"var(--muted)" }}>
             ⚠️ Nunca expongas la <code>service_role</code> key en el frontend. Úsala solo en Railway.
           </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+// ─── BOT CONFIG POR CLIENTE ───────────────────────────────────
+function BotClienteConfig({ client, onUpdate }) {
+  const DEFAULT_TPL = {
+    corte:       "✂️ *Corte del día — {hora}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Corte parcial · {hora} Ecuador_",
+    ayer:        "📊 *Reporte diario — {cliente}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
+    semanal:     "📅 *Resumen semanal — {cliente}*\n━━━━━━━━━━━━━━━━━━\nDel {desde} al {hasta}\n\n💵 Total: ${inversion}\n💵 Prom/día: ${inv_dia}\n👥 FB: {leads}\n💬 WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Últimos {dias} días · Trafficker Pro_",
+    proyeccion:  "🎯 *Proyección — ${presupuesto}/día*\n━━━━━━━━━━━━━━━━━━\n👥 Registros FB est.: {leads_est}\n💬 Personas WP est.: {wp_est}\n📊 CPL FB: ${cpl_fb_est}\n📊 CPL WP: ${cpl_wp_est}\n━━━━━━━━━━━━━━━━━━\n_Trafficker Pro_",
+    presupuesto: "💰 *Presupuesto activo — Facebook*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n{lineas_campanas}\n━━━━━━━━━━━━━━━━━━\n💵 *Total diario: ${total}*\n_Trafficker Pro_",
+  };
+  const VARS = {
+    corte:       ["{hora}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+    ayer:        ["{cliente}","${inversion}","{leads}","{personas_wp}","{fecha}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+    semanal:     ["{cliente}","${inversion}","{inv_dia}","{leads}","{personas_wp}","{desde}","{hasta}","{dias}","{linea_cpl_fb}","{linea_cpl_wp}","{linea_captura}"],
+    proyeccion:  ["${presupuesto}","{leads_est}","{wp_est}","${cpl_fb_est}","${cpl_wp_est}"],
+    presupuesto: ["${total}","{fecha}","{lineas_campanas}"],
+  };
+  const LABELS = { corte:"✂️ Corte del día", ayer:"📊 Reporte de ayer", semanal:"📅 Resumen semanal", proyeccion:"🎯 Proyección", presupuesto:"💰 Presupuesto FB" };
+
+  const waConfig = client.waConfig || {};
+  const [lid, setLid]         = useState(waConfig.wa_lid || "");
+  const [openTpl, setOpenTpl] = useState(null);
+  const [tpls, setTpls]       = useState(waConfig.wa_templates || {});
+  const [saving, setSaving]   = useState(false);
+  const { show, el: toastEl } = useToast();
+
+  async function saveLid() {
+    setSaving(true);
+    const clean = lid.replace(/\D/g, "");
+    await onUpdate({ ...client, waConfig: { ...waConfig, wa_lid: clean, bot_consultas_activo: !!clean } });
+    show(clean ? "✓ WhatsApp ID guardado — bot activo" : "✓ ID eliminado — bot desactivado", "ok");
+    setSaving(false);
+  }
+
+  async function saveTpl(key, val) {
+    const next = { ...tpls, [key]: val };
+    setTpls(next);
+    await onUpdate({ ...client, waConfig: { ...waConfig, wa_templates: next } });
+  }
+
+  return (
+    <>
+      {toastEl}
+      <div className="sec-header">
+        <div className="sec-title">🤖 Bot de WhatsApp</div>
+      </div>
+
+      <div className="card" style={{padding:"20px 24px", marginBottom:"1.25rem"}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>📲 WhatsApp ID del cliente</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
+          Pide al cliente que escriba al bot. El log de Railway mostrará <code>num=XXXXXXXXX</code> — pégalo aquí y el bot responderá automáticamente a ese número.
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+          <input type="text" value={lid} onChange={e=>setLid(e.target.value.replace(/\D/g,""))}
+            placeholder="Ej: 20873809518617"
+            style={{flex:1,fontSize:13,fontFamily:"var(--mono)"}}/>
+          <button className="btn btn-primary btn-sm" onClick={saveLid} disabled={saving}>
+            {saving ? "..." : "💾 Guardar"}
+          </button>
+          {lid && <button className="btn btn-ghost btn-sm" style={{color:"var(--red)"}}
+            onClick={()=>setLid("")}>✕</button>}
+        </div>
+        {lid
+          ? <div style={{fontSize:11,color:"var(--green)"}}>● Bot activo — responde a <code>{lid}@lid</code></div>
+          : <div style={{fontSize:11,color:"var(--muted)"}}>Sin ID — bot inactivo para este cliente</div>}
+      </div>
+
+      <div className="card" style={{padding:"20px 24px", marginBottom:"1.25rem"}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>📋 Comandos disponibles</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {[
+            ["hola · menu",     "Muestra el menú principal"],
+            ["1 · corte",       "Corte del día — datos en tiempo real desde Facebook"],
+            ["2 · ayer",        "Reporte del día anterior"],
+            ["3 · semanal",     "Resumen de los últimos 7 días"],
+            ["4 · proyeccion",  "Proyección con presupuesto — flujo interactivo"],
+            ["5 · presupuesto", "Campañas activas en Facebook con presupuesto diario"],
+          ].map(([cmd,desc])=>(
+            <div key={cmd} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"7px 10px",borderRadius:8,background:"var(--surface2)"}}>
+              <code style={{background:"rgba(37,211,102,.1)",color:"var(--green)",padding:"2px 8px",borderRadius:5,fontSize:11,whiteSpace:"nowrap",flexShrink:0}}>{cmd}</code>
+              <span style={{fontSize:12,color:"var(--muted)",paddingTop:1}}>{desc}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{marginTop:10,fontSize:11,color:"var(--muted)"}}>✅ Funciona por DM al número del bot y en grupos donde el bot sea miembro.</div>
+      </div>
+
+      {lid && (
+        <div className="card" style={{padding:"20px 24px"}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>✏️ Personalizar mensajes</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>Edita el texto que envía el bot para cada comando.</div>
+          {Object.entries(LABELS).map(([key, label]) => (
+            <div key={key} style={{marginBottom:8,borderRadius:8,border:"1px solid var(--border)",overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 14px",background:"var(--surface2)",cursor:"pointer"}}
+                onClick={()=>setOpenTpl(openTpl===key?null:key)}>
+                <span style={{fontSize:13,fontWeight:500}}>{label}</span>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  {tpls[key] && <span style={{fontSize:10,color:"var(--green)",fontWeight:600}}>● Personalizado</span>}
+                  <span style={{color:"var(--muted)",fontSize:12}}>{openTpl===key?"▲":"▼"}</span>
+                </div>
+              </div>
+              {openTpl===key && (
+                <div style={{padding:"14px",background:"var(--surface)"}}>
+                  <div style={{fontSize:11,color:"var(--muted)",marginBottom:8,lineHeight:1.8}}>
+                    Variables: {VARS[key].map(v=>(
+                      <code key={v} style={{background:"rgba(0,0,0,.25)",padding:"1px 6px",borderRadius:3,marginRight:4,fontSize:10,color:"var(--accent2)"}}>{v}</code>
+                    ))}
+                  </div>
+                  <textarea value={tpls[key] ?? DEFAULT_TPL[key]} onChange={e=>saveTpl(key,e.target.value)}
+                    rows={8} style={{width:"100%",resize:"vertical",fontFamily:"var(--mono)",fontSize:11}}/>
+                  <button className="btn btn-ghost btn-sm" style={{fontSize:11,marginTop:6}}
+                    onClick={()=>saveTpl(key,DEFAULT_TPL[key])}>↺ Restaurar default</button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </>
