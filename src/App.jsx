@@ -12728,6 +12728,7 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
               </div>
             </div>
           )}
+          {tab==="metricas" && <ClientMetricasView client={client} />}
           {tab==="metricas" && (
             <ClientMetricasView client={client} />
           )}
@@ -13386,11 +13387,18 @@ function OnboardingWizard({ onSave, onCancel }) {
     color: "#004AAD", logo: "", producto: "", telefono: "", email: "",
     representante: "", serviciosContratados: [],
     tgToken: "", tgChatId: "",
-    fbToken: "", fbAdAccountId: ""
+    fbToken: "", fbAdAccountId: "",
+    wa_lid: "", presupuesto_diario: ""
   });
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const steps = ["Datos del cliente", "Telegram & Automatizacion", "Facebook Ads"];
+  const steps = [
+    { label:"Datos del cliente",   required:true  },
+    { label:"Facebook Ads",        required:false },
+    { label:"Bot WhatsApp",        required:false },
+    { label:"Presupuesto diario",  required:false },
+    { label:"Telegram",            required:false },
+  ];
 
   function finish() {
     if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña");
@@ -13460,6 +13468,8 @@ function OnboardingWizard({ onSave, onCancel }) {
       tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: plantillasBase } : { plantillas: plantillasBase },
       waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
       presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
+      waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
+      presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
       fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: fbMetricsApollo } : {},
       schedConfig: {
         enabled: false, hora: "08:00", dias: [1,2,3,4,5],
@@ -13479,7 +13489,7 @@ function OnboardingWizard({ onSave, onCancel }) {
           <div className="onboarding-steps">
             {steps.map((_, i) => <div key={i} className={"onboarding-step " + (i < step ? "done" : i === step ? "active" : "pending")} />)}
           </div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>{steps[step]}</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{steps[step].label}</div>
         </div>
 
         {step === 0 && (
@@ -13548,10 +13558,10 @@ function OnboardingWizard({ onSave, onCancel }) {
           </div>
         )}
 
-        {step === 1 && (
+        {step === 4 && (
           <div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Configura Telegram para enviar reportes automaticos. Si no tienes los datos ahora, puedes configurarlo despues desde la tab ✈️ Telegram del cliente.
+              Configura Telegram para enviar reportes automáticos. Puedes configurarlo después desde la tab ✈️ Telegram del cliente.
             </div>
             <div className="field">
               <label>Bot Token de Telegram</label>
@@ -13593,24 +13603,55 @@ function OnboardingWizard({ onSave, onCancel }) {
           </div>
         )}
 
-        {step === 2 && (
+        {step === 1 && (
           <div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Conecta la cuenta publicitaria de Facebook para sincronizar metricas automaticamente. Puedes configurarlo despues desde la tab 📘 Facebook.
+              Conecta la cuenta publicitaria de Facebook. Puedes configurarlo después desde la tab 📘 Facebook.
             </div>
             <div className="field"><label>Access Token de Facebook</label><input type="text" value={form.fbToken} onChange={e => f("fbToken", e.target.value)} placeholder="EAAOWMIieni... (opcional)" /></div>
             <div className="field"><label>Ad Account ID</label><input type="text" value={form.fbAdAccountId} onChange={e => f("fbAdAccountId", e.target.value)} placeholder="120247229359120062 (opcional)" /></div>
           </div>
         )}
-
+        {step === 2 && (
+          <div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
+              Configura el WhatsApp ID del cliente para que el bot le responda automáticamente. El cliente debe escribirle al bot primero — el log de Railway mostrará su ID.
+            </div>
+            <div className="field">
+              <label>WhatsApp ID del cliente</label>
+              <input type="text" value={form.wa_lid||""} onChange={e=>f("wa_lid",e.target.value.replace(/\D/g,""))}
+                placeholder="Ej: 20873809518617 (opcional)" style={{fontFamily:"var(--mono)"}}/>
+              {form.wa_lid && <div style={{fontSize:11,color:"var(--green)",marginTop:4}}>● Bot se activará para este número</div>}
+            </div>
+          </div>
+        )}
+        {step === 3 && (
+          <div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
+              Define el presupuesto diario del cliente en Facebook. Se usa para detectar alertas de gasto disparado y para las proyecciones del bot.
+            </div>
+            <div className="field">
+              <label>Presupuesto diario en Facebook ($)</label>
+              <input type="number" value={form.presupuesto_diario||""} onChange={e=>f("presupuesto_diario",e.target.value)}
+                placeholder="Ej: 150 (opcional)" min="0" step="1"/>
+              {form.presupuesto_diario && <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Se alertará si el gasto supera el 120% de este valor</div>}
+            </div>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", justifyContent: "space-between" }}>
           <button className="btn btn-ghost" onClick={step === 0 ? onCancel : () => setStep(s => s - 1)}>
             {step === 0 ? "Cancelar" : "← Anterior"}
           </button>
-          {step < steps.length - 1
-            ? <button className="btn btn-primary" onClick={() => { if (step === 0 && (!form.name || !form.username || !form.password)) return alert("Completa nombre, usuario y contraseña"); setStep(s => s + 1); }}>Siguiente →</button>
-            : <button className="btn btn-primary" onClick={finish}>Crear cliente ✓</button>
-          }
+          <div style={{display:"flex",gap:8}}>
+            {step > 0 && step < steps.length - 1 && (
+              <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:"var(--muted)"}}
+                onClick={() => setStep(s => s + 1)}>Omitir →</button>
+            )}
+            {step < steps.length - 1
+              ? <button className="btn btn-primary" onClick={() => { if (step === 0 && (!form.name || !form.username || !form.password)) return alert("Completa nombre, usuario y contraseña"); setStep(s => s + 1); }}>Siguiente →</button>
+              : <button className="btn btn-primary" onClick={finish}>Crear cliente ✓</button>
+            }
+          </div>
         </div>
       </div>
     </div>
