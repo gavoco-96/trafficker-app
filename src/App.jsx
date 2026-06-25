@@ -14065,7 +14065,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       />
     </>
   );
-  if (editingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setEditingClient(null)}>← Volver</button><div className="topbar-title">Editar: {editingClient.name}</div></div><div className="content"><ClientForm initial={editingClient} onSave={async c => { await onUpdate({ ...editingClient, ...c }); show("✓ Cliente actualizado", "ok"); setEditingClient(null); }} onCancel={() => setEditingClient(null)} /></div></div></div>;
+  if (editingClient) return <div className="app"><Sidebar /><div className="main"><div className="topbar"><button className="btn btn-ghost btn-sm" onClick={() => setEditingClient(null)}>← Volver</button><div className="topbar-title">Editar: {editingClient.name}</div></div><div className="content"><ClientForm initial={editingClient} onSave={async c => { await onUpdate({ ...editingClient, ...c, waConfig: { ...(editingClient.waConfig||{}), ...(c.waConfig||{}) } }); show("✓ Cliente actualizado", "ok"); setEditingClient(null); }} onCancel={() => setEditingClient(null)} /></div></div></div>;
 
   return (
     <>
