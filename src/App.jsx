@@ -10345,50 +10345,94 @@ function GruposSelector({ grupos, seleccionados, onChange, label }) {
 // ─── PANEL DE ALERTAS ─────────────────────────────────────────
 const SUPA_ALERTAS_URL = `${SUPA_URL}/rest/v1/wa_alertas`;
 
-function ConexionWAPanel({ client }) {
-  const [status, setStatus] = useState(null);
-  const intervalRef = useRef(null);
-  const BOT = import.meta.env.VITE_BOT_URL || "";
+function ConexionWAPanel({ client, onUpdate }) {
+  // Sesión WA PROPIA del cliente — independiente del número admin
+  const clientId = client?.id;
+  const BOT      = import.meta.env.VITE_BOT_URL || "";
+  const qrUrl    = BOT && clientId ? `${BOT}/qr/cliente/${clientId}` : null;
+  const healthUrl= BOT && clientId ? `${BOT}/health/cliente/${clientId}` : null;
+
+  const [status, setStatus]       = useState(null);
+  const [disconnecting, setDisc]  = useState(false);
+  const { show, el: toastEl }     = useToast();
+  const intervalRef               = useRef(null);
 
   async function checkStatus() {
-    if (!BOT) return;
+    if (!healthUrl) return;
     try {
-      const r = await fetch(`${BOT}/health`, { cache: "no-store" });
+      const r = await fetch(healthUrl, { cache: "no-store" });
       setStatus(await r.json());
     } catch { setStatus({ connected: false, error: true }); }
   }
 
+  async function disconnect() {
+    if (!BOT || !clientId) return;
+    setDisc(true);
+    try {
+      await fetch(`${BOT}/disconnect/cliente/${clientId}`, { method: "POST" });
+      show("✓ Sesión limpiada — escanea el QR para reconectar", "ok");
+      setTimeout(checkStatus, 2000);
+    } catch { show("Error al desconectar", "err"); }
+    setDisc(false);
+  }
+
   useEffect(() => {
     checkStatus();
-    intervalRef.current = setInterval(checkStatus, 20000);
+    intervalRef.current = setInterval(checkStatus, 15000);
     return () => clearInterval(intervalRef.current);
-  }, []);
+  }, [clientId]);
 
   const estado    = status?.estado || (status?.connected ? "conectado" : "desconectado");
   const colorMap  = { conectado:"rgba(16,185,129,.08)", esperando_qr:"rgba(255,222,89,.06)", desconectado:"rgba(239,68,68,.08)", iniciando:"rgba(77,159,255,.06)" };
   const borderMap = { conectado:"rgba(16,185,129,.25)", esperando_qr:"rgba(255,222,89,.2)",  desconectado:"rgba(239,68,68,.2)",  iniciando:"rgba(77,159,255,.2)"  };
   const dotMap    = { conectado:"var(--green)", esperando_qr:"var(--amber)", desconectado:"var(--red)", iniciando:"var(--accent)" };
-  const labelMap  = { conectado:"✅ Bot conectado — puedes escribir al número de Trafficker Pro", esperando_qr:"📷 Bot iniciando...", desconectado:"🔴 Bot temporalmente desconectado — reconectando...", iniciando:"⏳ Bot iniciando..." };
+  const labelMap  = { conectado:"✅ WhatsApp conectado", esperando_qr:"📷 Esperando escaneo de QR", desconectado:"🔴 Desconectado", iniciando:"⏳ Iniciando..." };
 
   return (
-    <div className="card" style={{padding:"20px"}}>
-      <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>📡 Estado del Bot WhatsApp</div>
-      {!BOT && <div style={{fontSize:13,color:"var(--muted)"}}>Bot no configurado.</div>}
-      {BOT && !status && <div style={{fontSize:13,color:"var(--muted)"}}>⟳ Verificando...</div>}
-      {status && (
-        <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:colorMap[estado]||colorMap.desconectado,border:`1px solid ${borderMap[estado]||borderMap.desconectado}`}}>
-          <div style={{width:12,height:12,borderRadius:"50%",flexShrink:0,background:dotMap[estado]||dotMap.desconectado,boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}`}}/>
-          <div>
-            <div style={{fontWeight:700,fontSize:13,color:dotMap[estado]||dotMap.desconectado}}>{labelMap[estado]||estado}</div>
-            {status.ultima_conexion && estado==="conectado" && (
-              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
-                Activo desde: {new Date(status.ultima_conexion).toLocaleString("es-EC")}
+    <>
+      {toastEl}
+      <div className="card" style={{padding:"20px 24px", marginBottom:"1.25rem"}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>📡 Conexión WhatsApp del cliente</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.6}}>
+          Cada cliente tiene su propia sesión de WhatsApp para gestionar sus grupos. Esta sesión es independiente del número del administrador.
+        </div>
+
+        {!BOT && <div style={{fontSize:13,color:"var(--red)"}}>⚠️ VITE_BOT_URL no configurado en Vercel.</div>}
+        {BOT && !status && <div style={{fontSize:13,color:"var(--muted)"}}>⟳ Verificando...</div>}
+
+        {status && (
+          <>
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,marginBottom:14,background:colorMap[estado]||colorMap.desconectado,border:`1px solid ${borderMap[estado]||borderMap.desconectado}`}}>
+              <div style={{width:12,height:12,borderRadius:"50%",flexShrink:0,background:dotMap[estado]||dotMap.desconectado,boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}`}}/>
+              <div>
+                <div style={{fontWeight:700,fontSize:13,color:dotMap[estado]||dotMap.desconectado}}>{labelMap[estado]||estado}</div>
+                {status.ultima_conexion && estado==="conectado" && <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Activo desde: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
+                {status.motivo && estado!=="conectado" && <div style={{fontSize:11,color:"var(--red)",marginTop:2}}>Motivo: {status.motivo}</div>}
               </div>
-            )}
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{fontSize:11}}>📷 Ver QR en nueva pestaña</a>}
+              <button className="btn btn-danger btn-sm" onClick={disconnect} disabled={disconnecting} style={{fontSize:11}}>
+                {disconnecting ? "..." : "🔌 Desconectar y forzar nuevo QR"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* QR embebido cuando no está conectado */}
+      {qrUrl && status && !status.connected && (
+        <div className="card" style={{padding:"20px 24px"}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>📷 Escanear QR</div>
+          <div style={{fontSize:12,color:"var(--muted)",marginBottom:14}}>
+            Abre WhatsApp → <strong>⋮ → Dispositivos vinculados → Vincular un dispositivo</strong><br/>
+            Escanea este código con el número del cliente.
           </div>
+          <iframe src={qrUrl} style={{width:"100%",maxWidth:460,height:520,border:"none",borderRadius:12,background:"#0a0f1e",display:"block"}} title="QR WhatsApp cliente"/>
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>El QR se refresca automáticamente. Cada cliente tiene su propio QR independiente.</div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 function AlertasPanel() {
@@ -11466,6 +11510,7 @@ function LinkCard({ link, baseUrl, onCopy, onEdit, onToggle, onDelete, onDetalle
             {!activo && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>Inactivo</span>}
             {link.usar_landing && <span style={{fontSize:10, background:"rgba(255,222,89,.1)", color:"var(--amber)", padding:"2px 8px", borderRadius:10}}>🛡️ Landing</span>}
             {link.tipo_link === "descargable" && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>📥 Descargable</span>}
+            {link.tipo_link === "walink" && <span style={{fontSize:10, background:"rgba(37,211,102,.1)", color:"#25D366", padding:"2px 8px", borderRadius:10}}>💬 WaLink</span>}
             {link.rotacion_automatica && <span style={{fontSize:10, background:"rgba(16,185,129,.1)", color:"var(--green)", padding:"2px 8px", borderRadius:10}}>🔄 Rotación</span>}
             {/* Badge de inactividad */}
             {inactivoCritico && <span style={{fontSize:10, background:"rgba(239,68,68,.15)", color:"var(--red)", padding:"2px 8px", borderRadius:10}}>⚠️ {diasSinClick}d sin clicks</span>}
@@ -11578,7 +11623,9 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
     nombre: link?.nombre || "",
     slug: link?.slug || genSlug(),
     grupo: link?.grupo || "",
-    tipo_link: link?.tipo_link || "redirect", // "redirect" | "descargable"
+    tipo_link: link?.tipo_link || "redirect", // "redirect" | "descargable" | "walink"
+    wa_numero: link?.wa_numero || "",
+    wa_mensaje: link?.wa_mensaje || "",
     usar_landing: link?.usar_landing ?? false,
     landing_titulo: link?.landing_titulo || "¡Únete al grupo!",
     landing_descripcion: link?.landing_descripcion || "Haz clic para unirte al grupo de WhatsApp",
@@ -11605,6 +11652,8 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
         url: d.url ? convertirUrlDescarga(d.url) : d.url
       }));
       setForm(p => ({...p, tipo_link: tipo, destinos: nuevosDestinos, usar_landing: false}));
+    } else if (tipo === "walink") {
+      setForm(p => ({...p, tipo_link: tipo, usar_landing: false}));
     } else {
       f("tipo_link", tipo);
     }
@@ -11670,6 +11719,7 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
         {[
           {id:"redirect",   icon:"🔗", label:"Redirección",  desc:"WA, landing, formulario"},
           {id:"descargable",icon:"📥", label:"Descargable",   desc:"Drive, Dropbox, OneDrive"},
+          {id:"walink",     icon:"💬", label:"WaLink",        desc:"Mensaje WA predeterminado"},
         ].map(t => (
           <div key={t.id} onClick={()=>setTipoLink(t.id)}
             style={{flex:1,padding:"10px 14px",borderRadius:10,cursor:"pointer",border:`2px solid ${form.tipo_link===t.id?"var(--accent)":"var(--border)"}`,background:form.tipo_link===t.id?"rgba(0,74,173,.08)":"var(--surface2)",transition:"border .15s"}}>
@@ -11682,6 +11732,34 @@ function LinkForm({ link, onSave, onCancel, baseUrl }) {
       {form.tipo_link === "descargable" && (
         <div style={{padding:"10px 14px",borderRadius:8,background:"rgba(16,185,129,.06)",border:"1px solid rgba(16,185,129,.2)",marginBottom:"1rem",fontSize:12}}>
           📥 <b>Modo descargable activo</b> — Los URLs de Google Drive, Dropbox y OneDrive se convierten automáticamente a enlaces de descarga directa. La landing intermedia se desactiva.
+        </div>
+      )}
+
+      {form.tipo_link === "walink" && (
+        <div style={{padding:"14px 16px",borderRadius:10,background:"rgba(37,211,102,.06)",border:"1px solid rgba(37,211,102,.2)",marginBottom:"1rem"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"var(--green)",marginBottom:10}}>💬 WaLink — enlace directo a WhatsApp con mensaje predeterminado</div>
+          <div className="form-row">
+            <div className="field">
+              <label>Número de WhatsApp *</label>
+              <input type="text" value={form.wa_numero} onChange={e=>f("wa_numero",e.target.value.replace(/[^\d+]/g,""))}
+                placeholder="593987654321 (sin + ni espacios)"/>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>Incluye código de país: Ecuador = 593XXXXXXXXX</div>
+            </div>
+            <div className="field">
+              <label>Mensaje predeterminado *</label>
+              <textarea value={form.wa_mensaje} onChange={e=>f("wa_mensaje",e.target.value)}
+                rows={3} placeholder="Ej: Hola, vi tu publicidad y me interesa saber más..." style={{resize:"vertical"}}/>
+            </div>
+          </div>
+          {form.wa_numero && form.wa_mensaje && (
+            <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"var(--surface2)",fontSize:11}}>
+              <span style={{color:"var(--muted)"}}>Preview: </span>
+              <a href={`https://wa.me/${form.wa_numero.replace(/\D/g,"")}?text=${encodeURIComponent(form.wa_mensaje)}`}
+                target="_blank" rel="noreferrer" style={{color:"var(--green)",fontFamily:"var(--mono)",wordBreak:"break-all"}}>
+                wa.me/{form.wa_numero.replace(/\D/g,"")}?text={encodeURIComponent(form.wa_mensaje).slice(0,40)}...
+              </a>
+            </div>
+          )}
         </div>
       )}
 
@@ -12728,7 +12806,6 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
               </div>
             </div>
           )}
-          {tab==="metricas" && <ClientMetricasView client={client} />}
           {tab==="metricas" && (
             <ClientMetricasView client={client} />
           )}
@@ -13387,18 +13464,11 @@ function OnboardingWizard({ onSave, onCancel }) {
     color: "#004AAD", logo: "", producto: "", telefono: "", email: "",
     representante: "", serviciosContratados: [],
     tgToken: "", tgChatId: "",
-    fbToken: "", fbAdAccountId: "",
-    wa_lid: "", presupuesto_diario: ""
+    fbToken: "", fbAdAccountId: ""
   });
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const steps = [
-    { label:"Datos del cliente",   required:true  },
-    { label:"Facebook Ads",        required:false },
-    { label:"Bot WhatsApp",        required:false },
-    { label:"Presupuesto diario",  required:false },
-    { label:"Telegram",            required:false },
-  ];
+  const steps = ["Datos del cliente", "Telegram & Automatizacion", "Facebook Ads"];
 
   function finish() {
     if (!form.name || !form.username || !form.password) return alert("Completa nombre, usuario y contraseña");
@@ -13468,8 +13538,6 @@ function OnboardingWizard({ onSave, onCancel }) {
       tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: plantillasBase } : { plantillas: plantillasBase },
       waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
       presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
-      waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
-      presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
       fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: fbMetricsApollo } : {},
       schedConfig: {
         enabled: false, hora: "08:00", dias: [1,2,3,4,5],
@@ -13489,7 +13557,7 @@ function OnboardingWizard({ onSave, onCancel }) {
           <div className="onboarding-steps">
             {steps.map((_, i) => <div key={i} className={"onboarding-step " + (i < step ? "done" : i === step ? "active" : "pending")} />)}
           </div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>{steps[step].label}</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{steps[step]}</div>
         </div>
 
         {step === 0 && (
@@ -13558,10 +13626,10 @@ function OnboardingWizard({ onSave, onCancel }) {
           </div>
         )}
 
-        {step === 4 && (
+        {step === 1 && (
           <div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Configura Telegram para enviar reportes automáticos. Puedes configurarlo después desde la tab ✈️ Telegram del cliente.
+              Configura Telegram para enviar reportes automaticos. Si no tienes los datos ahora, puedes configurarlo despues desde la tab ✈️ Telegram del cliente.
             </div>
             <div className="field">
               <label>Bot Token de Telegram</label>
@@ -13603,55 +13671,24 @@ function OnboardingWizard({ onSave, onCancel }) {
           </div>
         )}
 
-        {step === 1 && (
+        {step === 2 && (
           <div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Conecta la cuenta publicitaria de Facebook. Puedes configurarlo después desde la tab 📘 Facebook.
+              Conecta la cuenta publicitaria de Facebook para sincronizar metricas automaticamente. Puedes configurarlo despues desde la tab 📘 Facebook.
             </div>
             <div className="field"><label>Access Token de Facebook</label><input type="text" value={form.fbToken} onChange={e => f("fbToken", e.target.value)} placeholder="EAAOWMIieni... (opcional)" /></div>
             <div className="field"><label>Ad Account ID</label><input type="text" value={form.fbAdAccountId} onChange={e => f("fbAdAccountId", e.target.value)} placeholder="120247229359120062 (opcional)" /></div>
           </div>
         )}
-        {step === 2 && (
-          <div>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Configura el WhatsApp ID del cliente para que el bot le responda automáticamente. El cliente debe escribirle al bot primero — el log de Railway mostrará su ID.
-            </div>
-            <div className="field">
-              <label>WhatsApp ID del cliente</label>
-              <input type="text" value={form.wa_lid||""} onChange={e=>f("wa_lid",e.target.value.replace(/\D/g,""))}
-                placeholder="Ej: 20873809518617 (opcional)" style={{fontFamily:"var(--mono)"}}/>
-              {form.wa_lid && <div style={{fontSize:11,color:"var(--green)",marginTop:4}}>● Bot se activará para este número</div>}
-            </div>
-          </div>
-        )}
-        {step === 3 && (
-          <div>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: "1rem", lineHeight: 1.6, background: "var(--surface2)", padding: "10px 14px", borderRadius: 8 }}>
-              Define el presupuesto diario del cliente en Facebook. Se usa para detectar alertas de gasto disparado y para las proyecciones del bot.
-            </div>
-            <div className="field">
-              <label>Presupuesto diario en Facebook ($)</label>
-              <input type="number" value={form.presupuesto_diario||""} onChange={e=>f("presupuesto_diario",e.target.value)}
-                placeholder="Ej: 150 (opcional)" min="0" step="1"/>
-              {form.presupuesto_diario && <div style={{fontSize:11,color:"var(--muted)",marginTop:4}}>Se alertará si el gasto supera el 120% de este valor</div>}
-            </div>
-          </div>
-        )}
+
         <div style={{ display: "flex", gap: 10, marginTop: "1.5rem", justifyContent: "space-between" }}>
           <button className="btn btn-ghost" onClick={step === 0 ? onCancel : () => setStep(s => s - 1)}>
             {step === 0 ? "Cancelar" : "← Anterior"}
           </button>
-          <div style={{display:"flex",gap:8}}>
-            {step > 0 && step < steps.length - 1 && (
-              <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:"var(--muted)"}}
-                onClick={() => setStep(s => s + 1)}>Omitir →</button>
-            )}
-            {step < steps.length - 1
-              ? <button className="btn btn-primary" onClick={() => { if (step === 0 && (!form.name || !form.username || !form.password)) return alert("Completa nombre, usuario y contraseña"); setStep(s => s + 1); }}>Siguiente →</button>
-              : <button className="btn btn-primary" onClick={finish}>Crear cliente ✓</button>
-            }
-          </div>
+          {step < steps.length - 1
+            ? <button className="btn btn-primary" onClick={() => { if (step === 0 && (!form.name || !form.username || !form.password)) return alert("Completa nombre, usuario y contraseña"); setStep(s => s + 1); }}>Siguiente →</button>
+            : <button className="btn btn-primary" onClick={finish}>Crear cliente ✓</button>
+          }
         </div>
       </div>
     </div>
@@ -14195,9 +14232,7 @@ function useNotificaciones(clients) {
 
   async function enviarWA(msg) {
     if (!BOT) return;
-    try {
-      await fetch(`${BOT}/notify-admin`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ text: msg }) });
-    } catch {}
+    try { await fetch(`${BOT}/notify-admin`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ text: msg }) }); } catch {}
   }
 
   async function checkAlertas() {
@@ -14213,7 +14248,7 @@ function useNotificaciones(clients) {
           if (accId) {
             const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
             if (!d.error && d.data?.[0] && parseFloat(d.data[0].spend) > c.presupuesto_diario * 1.2)
-              nuevas.push({ id:`gasto_${c.id}_${hoy}`, tipo:"gasto", cliente:nombre, msg:`🔴 Gasto disparado — ${nombre}\nGasto: $${parseFloat(d.data[0].spend).toFixed(2)} / Presupuesto: $${c.presupuesto_diario}` });
+              nuevas.push({ id:`gasto_${c.id}_${hoy}`, tipo:"gasto", cliente:nombre, msg:`🔴 Gasto disparado — ${nombre}` });
             if (d.error?.code === 190)
               nuevas.push({ id:`token_${c.id}`, tipo:"token", cliente:nombre, msg:`⚠️ Token FB vencido — ${nombre}` });
           }
@@ -14276,7 +14311,7 @@ function NotificacionesBell({ notifs, dismiss, dismissAll }) {
                 <span style={{fontSize:18,flexShrink:0}}>{icon[n.tipo]||"📌"}</span>
                 <div style={{flex:1}}>
                   <div style={{fontSize:12,fontWeight:600,color:color[n.tipo]||"var(--text)",marginBottom:2}}>{n.cliente}</div>
-                  <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5}}>{n.msg.replace(/\n/g," · ")}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5}}>{n.msg}</div>
                 </div>
                 <button onClick={()=>dismiss(n.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:14,padding:"0 2px"}}>✕</button>
               </div>
@@ -14310,7 +14345,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="sidebar-logo"><div className="sidebar-logo-badge">Admin</div><div className="sidebar-logo-name">Jorge Falcones</div><div className="sidebar-logo-role">Trafficker digital</div></div>
       <div className="nav">
         <div className="nav-label">Panel</div>
-        {["clientes", "resumen", "salud", "agenda", "filmmakers", "banner", "campanas", "links", "comandos", "bot"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "Resumen general" : v === "salud" ? "🏥 Salud general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : v === "bot" ? "🤖 WhatsApp Bot" : "🤖 Comandos Bot"}</div>)}
+        {["clientes", "resumen", "agenda", "filmmakers", "banner", "campanas", "links", "comandos", "bot"].map(v => <div key={v} className={`nav-item ${view === v && !selectedId && !addingClient && !editingClient ? "active" : ""}`} onClick={() => { setSelectedId(null); setAddingClient(false); setEditingClient(null); setView(v); }}><div className="nav-dot" style={{ background: view === v && !selectedId ? "var(--accent)" : "var(--border)" }} />{v === "clientes" ? "Mis clientes" : v === "resumen" ? "📊 Panel general" : v === "agenda" ? "📅 Mi Agenda" : v === "filmmakers" ? "🎬 Filmmakers" : v === "banner" ? "🖼️ Comunicaciones" : v === "campanas" ? "📣 Campanas" : v === "links" ? "🔗 Links" : v === "bot" ? "🤖 WhatsApp Bot" : "🤖 Comandos Bot"}</div>)}
         {clients.length > 0 && <><div className="nav-label">Clientes</div>{clients.map(c => <div key={c.id} className={`nav-item ${selectedId === c.id ? "active" : ""}`} onClick={() => { setSelectedId(c.id); setAddingClient(false); setEditingClient(null); }}><div style={{ width: 7, height: 7, borderRadius: "50%", background: c.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span></div>)}</>}
       </div>
       <div className="sidebar-footer"><DbStatus /><button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 10 }} onClick={onLogout}>Cerrar sesión</button></div>
@@ -14349,9 +14384,10 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
       <div className="app"><Sidebar />
         <div className="main">
           <div className="topbar">
-            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : view === "links" ? "🔗 Links Enmascarados" : "Comandos del Bot"}</div>
+            <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "📊 Panel general" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : view === "links" ? "🔗 Links Enmascarados" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
+              <NotificacionesBell notifs={notifs} dismiss={dismiss} dismissAll={dismissAll} />
               <NotificacionesBell notifs={notifs} dismiss={dismiss} dismissAll={dismissAll} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
@@ -14374,9 +14410,14 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
               {clients.length === 0 && <div className="empty"><div style={{ fontSize: 32, marginBottom: 12, opacity: .3 }}>◎</div><div>Sin clientes. Crea el primero.</div></div>}
             </div>}
             {view === "resumen" && <div>
-              <div className="grid4" style={{ marginBottom: "1.25rem" }}><MetricCard label="Total clientes" value={clients.length} /><MetricCard label="WhatsApp" value={clients.filter(c => c.niche === "whatsapp").length} /><MetricCard label="Web" value={clients.filter(c => c.niche === "web").length} /><MetricCard label="Lanzamiento" value={clients.filter(c => c.niche === "lanzamiento").length} /></div>
-              <div className="card">
-                <div className="card-title">Inversión total por cliente</div>
+              <div className="grid4" style={{ marginBottom: "1.25rem" }}>
+                <MetricCard label="Total clientes" value={clients.length} />
+                <MetricCard label="WhatsApp" value={clients.filter(c => c.niche === "whatsapp").length} />
+                <MetricCard label="Web" value={clients.filter(c => c.niche === "web").length} />
+                <MetricCard label="Lanzamiento" value={clients.filter(c => c.niche === "lanzamiento").length} />
+              </div>
+              <div className="card" style={{marginBottom:"1.25rem"}}>
+                <div className="card-title">💵 Inversión total por cliente</div>
                 {clients.map(c => {
                   const total = sum(c.records || [], "inversion");
                   const maxInv = Math.max(...clients.map(cc => sum(cc.records || [], "inversion")), 1);
@@ -14391,8 +14432,8 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
                   );
                 })}
               </div>
+              <HealthDashboard clients={clients} />
             </div>}
-            {view === "salud" && <HealthDashboard clients={clients} />}
             {view === "agenda" && <AgendaConsolidadaPanel clients={clients} />}
             {view === "filmmakers" && <FilmakersAdminPanel filmmakers={filmmakers} clients={clients} onSave={saveFilmmakers} />}
             {view === "banner" && (
