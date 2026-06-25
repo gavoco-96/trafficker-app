@@ -10773,6 +10773,37 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
                 <div style={{position:"absolute",top:3,left:config.bot_consultas_activo?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
               </div>
             </div>
+            {/* Campo wa_lid — ID de WhatsApp del cliente */}
+            {config.bot_consultas_activo && (
+              <div style={{marginBottom:16,padding:"12px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                  <div style={{fontSize:12,fontWeight:600}}>📲 WhatsApp ID del cliente</div>
+                  {config.wa_lid && <span style={{fontSize:10,color:"var(--green)",fontWeight:600}}>● Autorizado</span>}
+                </div>
+                <div style={{fontSize:11,color:"var(--muted)",marginBottom:8,lineHeight:1.6}}>
+                  Pide al cliente que te escriba al bot. El log de Railway mostrará su ID (<code>num=XXXXXXXXX</code>). Pégalo aquí para que el bot lo reconozca.
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <input
+                    type="text"
+                    value={config.wa_lid || ""}
+                    onChange={e => setConfig({...config, wa_lid: e.target.value.trim()})}
+                    placeholder="Ej: 20873809518617"
+                    style={{flex:1, fontSize:12, fontFamily:"var(--mono)"}}
+                  />
+                  {config.wa_lid && (
+                    <button className="btn btn-ghost btn-sm" style={{fontSize:11,color:"var(--red)"}}
+                      onClick={()=>setConfig({...config, wa_lid: ""})}>✕ Limpiar</button>
+                  )}
+                </div>
+                {config.wa_lid && (
+                  <div style={{marginTop:8,fontSize:11,color:"var(--muted)"}}>
+                    JID guardado: <code style={{color:"var(--accent2)"}}>{config.wa_lid}@lid</code>
+                  </div>
+                )}
+              </div>
+            )}
+
             {config.bot_consultas_activo && (() => {
               const DEFAULT_TPL = {
                 corte:       "✂️ *Corte del día — {hora}*\n━━━━━━━━━━━━━━━━━━\n📅 {fecha}\n\n💵 Gasto: ${inversion}\n👥 Registros FB: {leads}\n💬 Personas WP: {personas_wp}\n{linea_cpl_fb}{linea_cpl_wp}{linea_captura}━━━━━━━━━━━━━━━━━━\n_Corte parcial · {hora} Ecuador_",
