@@ -13736,6 +13736,7 @@ function ComandosPanel({ globalConfig, onSave }) {
 // ─── BOT ADMIN PANEL (solo admin) ────────────────────────────
 function BotAdminPanel() {
   const BOT = import.meta.env.VITE_BOT_URL || "";
+  const [tab, setTab]               = useState("conexion");
   const [status, setStatus]         = useState(null);
   const [disconnecting, setDisc]    = useState(false);
   const { show, el: toastEl }       = useToast();
@@ -13773,61 +13774,207 @@ function BotAdminPanel() {
   const labelMap  = { conectado:"✅ Conectado a WhatsApp", esperando_qr:"📷 Esperando escaneo de QR", desconectado:"🔴 Desconectado — reconectando...", iniciando:"⏳ Iniciando..." };
   const qrUrl     = BOT ? `${BOT}/qr` : null;
 
+  const SUBTABS = [
+    { id:"conexion",  label:"📡 Conexión" },
+    { id:"comandos",  label:"🤖 Comandos" },
+    { id:"variables", label:"⚙️ Variables de entorno" },
+  ];
+
   return (
     <>
       {toastEl}
       <div className="sec-header">
         <div>
           <div className="sec-title">🤖 WhatsApp Bot — Panel Admin</div>
-          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Tu número empresarial · Gestionado desde Railway</div>
+          <div style={{ fontSize:12, color:"var(--muted)", marginTop:2 }}>Tu número empresarial · Gestionado desde Railway</div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={checkStatus} style={{ fontSize: 11 }}>🔄 Actualizar</button>
+        <button className="btn btn-ghost btn-sm" onClick={checkStatus} style={{ fontSize:11 }}>🔄 Actualizar</button>
       </div>
 
-      {!BOT && (
-        <div style={{ padding:"14px 16px", borderRadius:10, background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.2)", fontSize:13, color:"var(--red)", marginBottom:"1rem" }}>
-          ⚠️ Configura <code>VITE_BOT_URL</code> en Vercel apuntando a Railway.
+      {/* ── Sub-tabs ── */}
+      <div style={{ display:"flex", gap:4, marginBottom:"1.25rem", borderBottom:"1px solid var(--border)", paddingBottom:0 }}>
+        {SUBTABS.map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{ padding:"7px 14px", fontSize:12, fontWeight: tab===t.id ? 600 : 400, border:"none", background:"none", cursor:"pointer",
+              color: tab===t.id ? "var(--accent)" : "var(--muted)",
+              borderBottom: tab===t.id ? "2px solid var(--accent)" : "2px solid transparent",
+              marginBottom:-1, transition:"all .15s" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══ TAB: CONEXIÓN ══════════════════════════════════════ */}
+      {tab === "conexion" && (
+        <>
+          {!BOT && (
+            <div style={{ padding:"14px 16px", borderRadius:10, background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.2)", fontSize:13, color:"var(--red)", marginBottom:"1rem" }}>
+              ⚠️ Configura <code>VITE_BOT_URL</code> en Vercel apuntando a Railway.
+            </div>
+          )}
+          <div className="card" style={{ padding:"20px 24px", marginBottom:"1.25rem" }}>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>📡 Estado de conexión</div>
+            {!status && BOT && <div style={{ color:"var(--muted)", fontSize:13 }}>⟳ Verificando...</div>}
+            {status && (
+              <>
+                <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px", borderRadius:10, marginBottom:16, background:colorMap[estado]||colorMap.desconectado, border:`1px solid ${borderMap[estado]||borderMap.desconectado}` }}>
+                  <div style={{ width:12, height:12, borderRadius:"50%", flexShrink:0, background:dotMap[estado]||dotMap.desconectado, boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}` }}/>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:13, color:dotMap[estado]||dotMap.desconectado }}>{labelMap[estado]||estado}</div>
+                    {status.ultima_conexion && <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>Última conexión: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
+                    {status.motivo && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--red)", marginTop:2 }}>Motivo: {status.motivo}</div>}
+                    {status.intentos > 0 && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--amber)", marginTop:2 }}>Intentos: {status.intentos}</div>}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize:11 }}>📷 Ver / Escanear QR</a>}
+                  <button className="btn btn-danger btn-sm" onClick={disconnect} disabled={disconnecting} style={{ fontSize:11 }}>
+                    {disconnecting ? "Desconectando..." : "🔌 Desconectar y forzar nuevo QR"}
+                  </button>
+                </div>
+                {status.error && (
+                  <div style={{ marginTop:12, padding:"10px 14px", borderRadius:8, background:"rgba(239,68,68,.06)", fontSize:12, color:"var(--muted)" }}>
+                    No se pudo contactar al bot. Verifica que Railway esté activo.
+                    {BOT && <> · <a href={`${BOT}/health`} target="_blank" rel="noreferrer" style={{ color:"var(--accent)", fontSize:11 }}>Abrir /health ↗</a></>}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {qrUrl && status && !status.connected && (
+            <div className="card" style={{ padding:"20px 24px" }}>
+              <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>📷 Escanear QR</div>
+              <div style={{ fontSize:12, color:"var(--muted)", marginBottom:14 }}>
+                WhatsApp → ⋮ → <strong>Dispositivos vinculados → Vincular un dispositivo</strong>
+              </div>
+              <iframe src={qrUrl} style={{ width:"100%", maxWidth:460, height:520, border:"none", borderRadius:12, background:"#0a0f1e", display:"block" }} title="QR WhatsApp" />
+              <div style={{ fontSize:11, color:"var(--muted)", marginTop:8 }}>El QR se refresca automáticamente. Una vez conectado esta pantalla mostrará ✅.</div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══ TAB: COMANDOS ══════════════════════════════════════ */}
+      {tab === "comandos" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
+          {/* Comandos del admin */}
+          <div className="card" style={{ padding:"20px 24px" }}>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>👑 Comandos del Admin (tu número)</div>
+            <div style={{ fontSize:12, color:"var(--muted)", marginBottom:14 }}>Escríbele al bot desde tu número con <code>ADMIN_PHONE</code> configurado</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {[
+                ["lista",                   "Lista todos tus clientes activos con estado del bot"],
+                ["[cliente] corte",         "Corte del día en tiempo real del cliente"],
+                ["[cliente] ayer",          "Reporte del día anterior del cliente"],
+                ["[cliente] semanal",       "Resumen de los últimos 7 días del cliente"],
+                ["[cliente] proyeccion",    "Inicia flujo de proyección para ese cliente"],
+                ["[cliente] presupuesto",   "Presupuesto activo en Facebook del cliente"],
+                ["[cliente] menu",          "Muestra el menú principal del cliente"],
+              ].map(([cmd, desc]) => (
+                <div key={cmd} style={{ display:"flex", gap:10, alignItems:"flex-start", padding:"8px 12px", borderRadius:8, background:"var(--surface2)" }}>
+                  <code style={{ background:"rgba(77,159,255,.12)", color:"var(--accent)", padding:"2px 8px", borderRadius:5, fontSize:11, whiteSpace:"nowrap", flexShrink:0 }}>{cmd}</code>
+                  <span style={{ fontSize:12, color:"var(--muted)", paddingTop:1 }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop:12, padding:"10px 14px", borderRadius:8, background:"rgba(77,159,255,.06)", fontSize:11, color:"var(--muted)" }}>
+              💡 <strong>[cliente]</strong> puede ser el nombre, la primera palabra del nombre, o el slug del ID.<br/>
+              Ej: <code>evelyn corte</code> · <code>advantagestrat ayer</code> · <code>ec semanal</code>
+            </div>
+          </div>
+
+          {/* Comandos del cliente */}
+          <div className="card" style={{ padding:"20px 24px" }}>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>👤 Comandos del Cliente</div>
+            <div style={{ fontSize:12, color:"var(--muted)", marginBottom:14 }}>Disponibles cuando escribe al bot por DM o en sus grupos de WA</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {[
+                ["hola · menu · hi",        "Muestra el menú principal con botones"],
+                ["1 · corte",               "Corte del día — datos en tiempo real desde Facebook"],
+                ["2 · ayer · reporte",      "Reporte del día anterior"],
+                ["3 · semanal · semana",    "Resumen de los últimos 7 días"],
+                ["4 · proyeccion",          "Proyección — luego escribe el monto diario en $"],
+                ["5 · presupuesto",         "Campañas activas en Facebook con presupuesto"],
+              ].map(([cmd, desc]) => (
+                <div key={cmd} style={{ display:"flex", gap:10, alignItems:"flex-start", padding:"8px 12px", borderRadius:8, background:"var(--surface2)" }}>
+                  <code style={{ background:"rgba(37,211,102,.10)", color:"var(--green)", padding:"2px 8px", borderRadius:5, fontSize:11, whiteSpace:"nowrap", flexShrink:0 }}>{cmd}</code>
+                  <span style={{ fontSize:12, color:"var(--muted)", paddingTop:1 }}>{desc}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop:12, padding:"10px 14px", borderRadius:8, background:"rgba(37,211,102,.05)", fontSize:11, color:"var(--muted)" }}>
+              ✅ El bot identifica al cliente por su número de teléfono (campo <strong>Teléfono</strong> en la ficha).<br/>
+              En grupos, cualquier miembro puede consultar — el bot responde con datos del cliente dueño del grupo.
+            </div>
+          </div>
+
+          {/* Flujo de proyección */}
+          <div className="card" style={{ padding:"20px 24px" }}>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>🔄 Flujo de Proyección</div>
+            <div style={{ fontSize:12, color:"var(--muted)", marginBottom:12 }}>Este comando es interactivo — el bot espera tu respuesta</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:4, fontSize:12 }}>
+              {[
+                ["1.", "Escribe <code>proyeccion</code> o <code>4</code>"],
+                ["2.", "El bot responde con CPL histórico y % captura"],
+                ["3.", "Escribes el monto diario en $ (ej: <code>150</code>)"],
+                ["4.", "El bot calcula leads, personas WP, asistentes, ventas y ROAS estimados"],
+                ["5.", "Puedes escribir otro monto para recalcular"],
+              ].map(([n, txt]) => (
+                <div key={n} style={{ display:"flex", gap:10, padding:"6px 0" }}>
+                  <span style={{ fontWeight:700, color:"var(--accent)", flexShrink:0 }}>{n}</span>
+                  <span style={{ color:"var(--muted)" }} dangerouslySetInnerHTML={{__html: txt}}/>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="card" style={{ padding:"20px 24px", marginBottom:"1.25rem" }}>
-        <div style={{ fontWeight:700, fontSize:15, marginBottom:14 }}>📡 Estado de conexión</div>
-        {!status && BOT && <div style={{ color:"var(--muted)", fontSize:13 }}>⟳ Verificando...</div>}
-        {status && (
-          <>
-            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px", borderRadius:10, marginBottom:16, background:colorMap[estado]||colorMap.desconectado, border:`1px solid ${borderMap[estado]||borderMap.desconectado}` }}>
-              <div style={{ width:12, height:12, borderRadius:"50%", flexShrink:0, background:dotMap[estado]||dotMap.desconectado, boxShadow:`0 0 8px ${dotMap[estado]||dotMap.desconectado}` }}/>
-              <div>
-                <div style={{ fontWeight:700, fontSize:13, color:dotMap[estado]||dotMap.desconectado }}>{labelMap[estado]||estado}</div>
-                {status.ultima_conexion && <div style={{ fontSize:11, color:"var(--muted)", marginTop:2 }}>Última conexión: {new Date(status.ultima_conexion).toLocaleString("es-EC")}</div>}
-                {status.motivo && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--red)", marginTop:2 }}>Motivo: {status.motivo}</div>}
-                {status.intentos > 0 && estado!=="conectado" && <div style={{ fontSize:11, color:"var(--amber)", marginTop:2 }}>Intentos: {status.intentos}</div>}
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {qrUrl && <a href={qrUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ fontSize:11 }}>📷 Ver / Escanear QR</a>}
-              <button className="btn btn-danger btn-sm" onClick={disconnect} disabled={disconnecting} style={{ fontSize:11 }}>
-                {disconnecting ? "Desconectando..." : "🔌 Desconectar y forzar nuevo QR"}
-              </button>
-            </div>
-            {status.error && (
-              <div style={{ marginTop:12, padding:"10px 14px", borderRadius:8, background:"rgba(239,68,68,.06)", fontSize:12, color:"var(--muted)" }}>
-                No se pudo contactar al bot. Verifica que Railway esté activo.
-                {BOT && <> · <a href={`${BOT}/health`} target="_blank" rel="noreferrer" style={{ color:"var(--accent)", fontSize:11 }}>Abrir /health ↗</a></>}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {qrUrl && status && !status.connected && (
+      {/* ══ TAB: VARIABLES DE ENTORNO ══════════════════════════ */}
+      {tab === "variables" && (
         <div className="card" style={{ padding:"20px 24px" }}>
-          <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>📷 Escanear QR</div>
-          <div style={{ fontSize:12, color:"var(--muted)", marginBottom:14 }}>
-            WhatsApp → ⋮ → <strong>Dispositivos vinculados → Vincular un dispositivo</strong>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>⚙️ Variables de entorno requeridas</div>
+          <div style={{ fontSize:12, color:"var(--muted)", marginBottom:16 }}>Configúralas en Railway (bot) y Vercel (app)</div>
+
+          <div style={{ fontWeight:600, fontSize:12, marginBottom:8, color:"var(--accent)" }}>Railway — Bot</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:20 }}>
+            {[
+              ["SUPABASE_URL",      "URL de tu proyecto Supabase",                              true],
+              ["SUPABASE_KEY",      "service_role key de Supabase",                             true],
+              ["ADMIN_SESSION_ID",  "ID de la sesión (ej: admin)",                              true],
+              ["ADMIN_PHONE",       "Tu número en formato 593XXXXXXXXX — activa modo admin",    true],
+              ["PORT",              "Railway lo inyecta automáticamente",                       false],
+            ].map(([k, desc, req]) => (
+              <div key={k} style={{ padding:"10px 14px", borderRadius:8, background:"var(--surface2)", display:"flex", gap:12, alignItems:"flex-start" }}>
+                <code style={{ background:"rgba(0,0,0,.2)", padding:"2px 8px", borderRadius:5, fontSize:11, flexShrink:0, color: req ? "var(--accent2)" : "var(--muted)" }}>{k}</code>
+                <div style={{ flex:1 }}>
+                  <span style={{ fontSize:12, color:"var(--muted)" }}>{desc}</span>
+                  {req && <span style={{ marginLeft:6, fontSize:10, color:"var(--red)", fontWeight:600 }}>requerida</span>}
+                </div>
+              </div>
+            ))}
           </div>
-          <iframe src={qrUrl} style={{ width:"100%", maxWidth:460, height:520, border:"none", borderRadius:12, background:"#0a0f1e", display:"block" }} title="QR WhatsApp" />
-          <div style={{ fontSize:11, color:"var(--muted)", marginTop:8 }}>El QR se refresca automáticamente. Una vez conectado esta pantalla mostrará ✅.</div>
+
+          <div style={{ fontWeight:600, fontSize:12, marginBottom:8, color:"var(--accent)" }}>Vercel — App</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {[
+              ["VITE_BOT_URL",      "URL pública del bot en Railway (sin / al final)",          true],
+              ["VITE_SUPABASE_URL", "URL de tu proyecto Supabase",                              true],
+              ["VITE_SUPABASE_KEY", "anon key de Supabase",                                    true],
+            ].map(([k, desc, req]) => (
+              <div key={k} style={{ padding:"10px 14px", borderRadius:8, background:"var(--surface2)", display:"flex", gap:12, alignItems:"flex-start" }}>
+                <code style={{ background:"rgba(0,0,0,.2)", padding:"2px 8px", borderRadius:5, fontSize:11, flexShrink:0, color: req ? "var(--accent2)" : "var(--muted)" }}>{k}</code>
+                <div style={{ flex:1 }}>
+                  <span style={{ fontSize:12, color:"var(--muted)" }}>{desc}</span>
+                  {req && <span style={{ marginLeft:6, fontSize:10, color:"var(--red)", fontWeight:600 }}>requerida</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop:16, padding:"10px 14px", borderRadius:8, background:"rgba(255,222,89,.06)", border:"1px solid rgba(255,222,89,.15)", fontSize:11, color:"var(--muted)" }}>
+            ⚠️ Nunca expongas la <code>service_role</code> key en el frontend. Úsala solo en Railway.
+          </div>
         </div>
       )}
     </>
