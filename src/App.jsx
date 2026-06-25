@@ -10586,7 +10586,7 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
     setLoading(true);
     try {
       const [g, c] = await Promise.all([
-        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
+        fetch(clientProp?.id ? `${SUPA_GRUPOS_URL}?client_id=eq.${encodeURIComponent(clientProp.id)}&select=*&order=creado_en.desc` : `${SUPA_GRUPOS_URL}?select=*&limit=0`, { headers: HL }).then(r=>r.json()),
         fetch(`${SUPA_CONFIG_URL}?id=eq.global&select=*`, { headers: HL }).then(r=>r.json())
       ]);
       setGrupos(Array.isArray(g) ? g : []);
@@ -10659,9 +10659,12 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
           {loading ? <div style={{color:"var(--muted)",textAlign:"center",padding:"3rem"}}>Cargando grupos...</div> : (
             grupos.length === 0 ? (
               <div style={{textAlign:"center",padding:"3rem",color:"var(--muted)"}}>
-                <div style={{fontSize:40,marginBottom:12}}>💬</div>
-                <div style={{fontWeight:600,marginBottom:8}}>No hay grupos sincronizados</div>
-                <div style={{fontSize:13}}>Conecta el bot de WhatsApp y los grupos aparecerán aquí automáticamente.</div>
+                <div style={{fontSize:40,marginBottom:12,opacity:.3}}>📱</div>
+                <div style={{fontWeight:600,marginBottom:8}}>Sin grupos aún</div>
+                <div style={{fontSize:13,lineHeight:1.7,maxWidth:320,margin:"0 auto"}}>
+                  El cliente debe escanear su propio número en la pestaña <strong style={{color:"var(--text)"}}>Conexión WA</strong>.<br/>
+                  Una vez conectado, sus grupos aparecerán aquí automáticamente.
+                </div>
               </div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -14123,11 +14126,14 @@ function BotClienteConfig({ client, onUpdate }) {
   const LABELS = { corte:"✂️ Corte del día", ayer:"📊 Reporte de ayer", semanal:"📅 Resumen semanal", proyeccion:"🎯 Proyección", presupuesto:"💰 Presupuesto FB" };
 
   const waConfig = client.waConfig || {};
-  const [lid, setLid]         = useState(waConfig.wa_lid || "");
-  const [openTpl, setOpenTpl] = useState(null);
-  const [tpls, setTpls]       = useState(waConfig.wa_templates || {});
-  const [saving, setSaving]   = useState(false);
-  const { show, el: toastEl } = useToast();
+  const [lid, setLid]               = useState(waConfig.wa_lid || "");
+  const [openTpl, setOpenTpl]       = useState(null);
+  const [tpls, setTpls]             = useState(waConfig.wa_templates || {});
+  const [saving, setSaving]         = useState(false);
+  const [delayBienvenida, setDelayB]= useState(waConfig.delay_bienvenida_min ?? 3);
+  const [delayRemarketing, setDelayR]= useState(waConfig.delay_remarketing_min ?? 5);
+  const [savingDelay, setSavingDelay]= useState(false);
+  const { show, el: toastEl }       = useToast();
 
   async function saveLid() {
     setSaving(true);
@@ -14135,6 +14141,15 @@ function BotClienteConfig({ client, onUpdate }) {
     await onUpdate({ ...client, waConfig: { ...waConfig, wa_lid: clean, bot_consultas_activo: !!clean } });
     show(clean ? "✓ WhatsApp ID guardado — bot activo" : "✓ ID eliminado — bot desactivado", "ok");
     setSaving(false);
+  }
+
+  async function saveDelays() {
+    if (delayBienvenida < 1) return show("⚠️ El delay mínimo es 1 minuto para proteger el número", "err");
+    if (delayRemarketing < 1) return show("⚠️ El delay mínimo es 1 minuto para proteger el número", "err");
+    setSavingDelay(true);
+    await onUpdate({ ...client, waConfig: { ...waConfig, delay_bienvenida_min: delayBienvenida, delay_remarketing_min: delayRemarketing } });
+    show("✓ Delays guardados", "ok");
+    setSavingDelay(false);
   }
 
   async function saveTpl(key, val) {
@@ -14168,6 +14183,83 @@ function BotClienteConfig({ client, onUpdate }) {
         {lid
           ? <div style={{fontSize:11,color:"var(--green)"}}>● Bot activo — responde a <code>{lid}@lid</code></div>
           : <div style={{fontSize:11,color:"var(--muted)"}}>Sin ID — bot inactivo para este cliente</div>}
+      </div>
+
+      {/* ── Configuración de delays anti-ban ── */}
+      <div className="card" style={{padding:"20px 24px", marginBottom:"1.25rem", borderColor:"rgba(255,222,89,.25)"}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>⏱️ Delays de envío — Protección anti-ban</div>
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:16,lineHeight:1.6}}>
+          WhatsApp monitorea el volumen y velocidad de mensajes. En lanzamientos con cientos de contactos,
+          enviar mensajes muy seguidos activa filtros automáticos de spam que pueden banear el número del cliente.
+        </div>
+
+        {/* Advertencia si delay es muy bajo */}
+        {(delayBienvenida < 2 || delayRemarketing < 2) && (
+          <div style={{padding:"10px 14px",borderRadius:8,background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",marginBottom:14,fontSize:12}}>
+            ⚠️ <strong>Riesgo alto de ban:</strong> WhatsApp puede suspender el número si detecta mensajes masivos muy rápidos.
+            Se recomienda mínimo 2-3 minutos entre mensajes de bienvenida y 5+ minutos para remarketing.
+          </div>
+        )}
+
+        <div className="grid2" style={{gap:16,marginBottom:16}}>
+          <div>
+            <label style={{fontSize:12,fontWeight:600,display:"block",marginBottom:6}}>
+              👋 Delay mensaje de bienvenida
+              <span style={{fontSize:10,color:"var(--muted)",fontWeight:400,marginLeft:6}}>(cuando alguien entra al grupo)</span>
+            </label>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input type="number" value={delayBienvenida} min={1} max={60}
+                onChange={e=>setDelayB(Math.max(1,parseInt(e.target.value)||1))}
+                style={{width:80,textAlign:"center",fontFamily:"var(--mono)",fontSize:14,fontWeight:700}}/>
+              <span style={{fontSize:13,color:"var(--muted)"}}>minutos</span>
+            </div>
+            <div style={{marginTop:6,display:"flex",gap:4,flexWrap:"wrap"}}>
+              {[1,2,3,5,10].map(v=>(
+                <button key={v} onClick={()=>setDelayB(v)}
+                  className={"btn btn-sm " + (delayBienvenida===v?"btn-primary":"btn-ghost")}
+                  style={{fontSize:10,padding:"2px 8px"}}>{v}m</button>
+              ))}
+            </div>
+            <div style={{marginTop:6,fontSize:11,color:delayBienvenida<2?"var(--red)":"var(--green)"}}>
+              {delayBienvenida < 2 ? "⚠️ Riesgo alto" : delayBienvenida < 5 ? "🟡 Aceptable" : "✅ Seguro"}
+              {" "}— Con 10 ingresos/5min: {(10*delayBienvenida).toFixed(0)} min para completar la cola
+            </div>
+          </div>
+
+          <div>
+            <label style={{fontSize:12,fontWeight:600,display:"block",marginBottom:6}}>
+              🔁 Delay remarketing
+              <span style={{fontSize:10,color:"var(--muted)",fontWeight:400,marginLeft:6}}>(contactos que no entraron)</span>
+            </label>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input type="number" value={delayRemarketing} min={1} max={120}
+                onChange={e=>setDelayR(Math.max(1,parseInt(e.target.value)||1))}
+                style={{width:80,textAlign:"center",fontFamily:"var(--mono)",fontSize:14,fontWeight:700}}/>
+              <span style={{fontSize:13,color:"var(--muted)"}}>minutos</span>
+            </div>
+            <div style={{marginTop:6,display:"flex",gap:4,flexWrap:"wrap"}}>
+              {[2,5,10,15,30].map(v=>(
+                <button key={v} onClick={()=>setDelayR(v)}
+                  className={"btn btn-sm " + (delayRemarketing===v?"btn-primary":"btn-ghost")}
+                  style={{fontSize:10,padding:"2px 8px"}}>{v}m</button>
+              ))}
+            </div>
+            <div style={{marginTop:6,fontSize:11,color:delayRemarketing<3?"var(--red)":delayRemarketing<5?"var(--amber)":"var(--green)"}}>
+              {delayRemarketing < 3 ? "⚠️ Riesgo alto" : delayRemarketing < 5 ? "🟡 Aceptable" : "✅ Seguro"}
+              {" "}— 50 contactos tardará {(50*delayRemarketing/60).toFixed(1)}h en completarse
+            </div>
+          </div>
+        </div>
+
+        <div style={{padding:"10px 14px",borderRadius:8,background:"rgba(77,159,255,.06)",border:"1px solid rgba(77,159,255,.15)",fontSize:12,color:"var(--muted)",marginBottom:14,lineHeight:1.7}}>
+          💡 <strong>¿Por qué importa?</strong> En un lanzamiento con 600 contactos de remarketing,
+          con 5 min de delay envías ~12 mensajes/hora — un ritmo natural. Con 1 min serían 60/hora,
+          lo que WhatsApp detecta como spam masivo. El número del cliente es su activo más valioso — protégelo.
+        </div>
+
+        <button className="btn btn-primary btn-sm" onClick={saveDelays} disabled={savingDelay}>
+          {savingDelay ? "Guardando..." : "💾 Guardar delays"}
+        </button>
       </div>
 
       <div className="card" style={{padding:"20px 24px", marginBottom:"1.25rem"}}>
