@@ -5657,8 +5657,8 @@ function ClientForm({ initial, onSave, onCancel }) {
       <div className="section-label">Información del negocio</div>
       <div className="form-row"><div className="field"><label>Nombre del negocio</label><input type="text" value={form.name} onChange={e => f("name", e.target.value)} placeholder="Ej: Bella Estética" /></div><div className="field"><label>Producto / Servicio</label><input type="text" value={form.producto} onChange={e => f("producto", e.target.value)} placeholder="Ej: Tratamientos faciales" /></div></div>
       <div className="form-row"><div className="field"><label>Representante</label><input type="text" value={form.representante} onChange={e => f("representante", e.target.value)} /></div><div className="field"><label>Teléfono</label><input type="text" value={form.telefono} onChange={e => f("telefono", e.target.value)} /></div></div>
-      <div className="form-row"><div className="field"><label>WhatsApp ID <span style={{fontSize:10,color:"var(--muted)",fontWeight:400}}>del cliente (para el bot)</span></label><input type="text" value={form.waConfig?.wa_lid || ""} onChange={e => f("waConfig", {...(form.waConfig||{}), wa_lid: e.target.value.replace(/\D/g,"")})} placeholder="Ej: 20873809518617" style={{fontFamily:"var(--mono)",fontSize:12}} />{form.waConfig?.wa_lid && <div style={{fontSize:10,color:"var(--green)",marginTop:4}}>● Bot autorizado para este número</div>}</div><div className="field"><label>Correo electrónico</label><input type="text" value={form.email} onChange={e => f("email", e.target.value)} /></div></div>
-      <div className="form-row"><div className="field"><label>Dirección</label><input type="text" value={form.direccion} onChange={e => f("direccion", e.target.value)} /></div></div>
+      <div className="form-row"><div className="field"><label>WhatsApp ID <span style={{fontSize:10,color:"var(--muted)",fontWeight:400}}>del cliente (para el bot)</span></label><input type="text" value={form.waConfig?.wa_lid || ""} onChange={e => f("waConfig", {...(form.waConfig||{}), wa_lid: e.target.value.replace(/\D/g,"")})} placeholder="Ej: 20873809518617" style={{fontFamily:"var(--mono)",fontSize:12}} />{form.waConfig?.wa_lid && <div style={{fontSize:10,color:"var(--green)",marginTop:4}}>● Bot autorizado para este número</div>}</div><div className="field"><label>Presupuesto diario FB ($) <span style={{fontSize:10,color:"var(--muted)",fontWeight:400}}>alertas de gasto</span></label><input type="number" value={form.presupuesto_diario||""} onChange={e=>f("presupuesto_diario",e.target.value?parseFloat(e.target.value):"")} placeholder="Ej: 150" min="0"/></div></div>
+      <div className="form-row"><div className="field"><label>Correo electrónico</label><input type="text" value={form.email} onChange={e => f("email", e.target.value)} /></div><div className="field"><label>Dirección</label><input type="text" value={form.direccion} onChange={e => f("direccion", e.target.value)} /></div></div>
       <div className="section-label">Acceso al portal</div>
       <div className="form-row">
         <div className="field"><label>Iniciales (logo)</label><input type="text" value={form.logo} onChange={e => f("logo", e.target.value.slice(0, 2).toUpperCase())} maxLength={2} /></div>
@@ -12676,10 +12676,10 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
         <div className="sidebar-logo"><div className="sidebar-logo-badge">Mi panel</div><div className="sidebar-logo-name">{client.name}</div><div className="sidebar-logo-role">Solo lectura</div></div>
         <div className="nav">
           <div className="nav-label">Vistas</div>
-          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos",...(client.waConfig?.enabled?["grupos"]:[]),"antecedentes"]).map(v=>(
+          {(["inicio","hermes",...(isApollo?["captura","calidad"]:["estudio"]),"embudos","metricas",...(client.waConfig?.enabled?["grupos"]:[]),"antecedentes"]).map(v=>(
             <div key={v} className={`nav-item ${tab===v?"active":""}`} onClick={()=>setTab(v)}>
               <div className="nav-dot" style={{background:tab===v?"var(--accent)":"var(--border)"}}/>
-              {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":v==="grupos"?"💬 Grupos WA":"📚 Historial"}
+              {v==="inicio"?"🏠 Inicio":v==="hermes"?(isApollo?"🚀 APOLLO":"✦ HERMES"):v==="estudio"?"🎬 Estudio":v==="captura"?"📊 Captura WP":v==="calidad"?"⭐ Calidad":v==="embudos"?"🎯 Embudos":v==="metricas"?"📊 Mis métricas":v==="grupos"?"💬 Grupos WA":"📚 Historial"}
             </div>
           ))}
         </div>
@@ -12728,8 +12728,122 @@ ${rows.slice(-14).map(r=>{const inv=parseFloat(r.inversion)||0,leads=parseFloat(
               </div>
             </div>
           )}
+          {tab==="metricas" && (
+            <ClientMetricasView client={client} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ─── VISTA MÉTRICAS CLIENTE ───────────────────────────────────
+function ClientMetricasView({ client }) {
+  const [period, setPeriod] = useState("30d");
+  const records = (client.records || []).sort((a,b) => a.date.localeCompare(b.date));
+
+  const filtered = (() => {
+    const hoy = new Date();
+    const dias = period==="7d"?7:period==="30d"?30:hoy.getDate();
+    if (period==="all") return records;
+    const desde = new Date(hoy); desde.setDate(desde.getDate()-dias+1);
+    return records.filter(r => r.date >= desde.toISOString().slice(0,10));
+  })();
+
+  const inv    = filtered.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
+  const leads  = filtered.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
+  const wp     = filtered.reduce((a,r)=>a+(parseFloat(r.personas_wp)||0),0);
+  const alc    = filtered.reduce((a,r)=>a+(parseFloat(r.alcance)||0),0);
+  const cpl    = leads>0&&inv>0 ? inv/leads : 0;
+  const cplWp  = wp>0&&inv>0 ? inv/wp : 0;
+  const pctCap = leads>0&&wp>0 ? wp/leads*100 : 0;
+  const invDia = filtered.length>0 ? inv/filtered.length : 0;
+
+  const cpl7 = (() => { const r=records.slice(-7); const i=r.reduce((a,x)=>a+(parseFloat(x.inversion)||0),0); const l=r.reduce((a,x)=>a+(parseFloat(x.resultados||x.formularios||x.leads)||0),0); return l>0&&i>0?i/l:0; })();
+  const cpl7p= (() => { const r=records.slice(-14,-7); const i=r.reduce((a,x)=>a+(parseFloat(x.inversion)||0),0); const l=r.reduce((a,x)=>a+(parseFloat(x.resultados||x.formularios||x.leads)||0),0); return l>0&&i>0?i/l:0; })();
+  const trend = cpl7>0&&cpl7p>0 ? ((cpl7-cpl7p)/cpl7p*100) : 0;
+  const fmt = (n,d=2) => n ? parseFloat(n).toFixed(d) : "—";
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:"1.25rem",flexWrap:"wrap"}}>
+        {[["7d","7 días"],["30d","30 días"],["mtd","Este mes"],["all","Todo"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setPeriod(v)} className={"btn btn-sm "+(period===v?"btn-primary":"btn-ghost")} style={{fontSize:12}}>{l}</button>
+        ))}
+        <span style={{fontSize:11,color:"var(--muted)",alignSelf:"center",marginLeft:4}}>{filtered.length} días con datos</span>
+      </div>
+
+      <div className="grid4" style={{marginBottom:"1.25rem"}}>
+        {[
+          ["💵 Inversión total", inv>0?`$${fmt(inv)}`:"-", null],
+          ["👥 Registros FB",    fmt(leads,0),               null],
+          ["💬 Personas WP",     fmt(wp,0),                  null],
+          ["📊 CPL Facebook",    cpl>0?`$${fmt(cpl)}`:"-",   trend!==0?trend:null],
+        ].map(([label,val,t])=>(
+          <div key={label} className="card" style={{padding:"16px 18px"}}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>{label}</div>
+            <div style={{fontSize:24,fontWeight:700,fontFamily:"var(--mono)"}}>{val}</div>
+            {t!==null && <div style={{fontSize:11,marginTop:4,color:t>0?"var(--red)":"var(--green)"}}>{t>0?"▲":"▼"} {Math.abs(t).toFixed(1)}% vs semana ant.</div>}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid4" style={{marginBottom:"1.25rem"}}>
+        {[
+          ["📈 Inversión/día",  invDia>0?`$${fmt(invDia)}`:"-"],
+          ["🎯 CPL WhatsApp",   cplWp>0?`$${fmt(cplWp)}`:"-"],
+          ["🔁 % Captura",      pctCap>0?`${fmt(pctCap,1)}%`:"-"],
+          ["👁 Alcance",         alc>0?fmt(alc,0):"-"],
+        ].map(([label,val])=>(
+          <div key={label} className="card" style={{padding:"14px 16px"}}>
+            <div style={{fontSize:11,color:"var(--muted)",marginBottom:4}}>{label}</div>
+            <div style={{fontSize:20,fontWeight:700,fontFamily:"var(--mono)"}}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {filtered.length>1 && (
+        <div className="card" style={{padding:"20px 24px",marginBottom:"1.25rem"}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:16}}>📈 Inversión diaria</div>
+          <MiniChart rows={filtered} field="inversion" color={client.color||"#4d9fff"} />
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"var(--muted)",marginTop:6}}>
+            <span>{filtered[0]?.date}</span><span>{filtered[filtered.length-1]?.date}</span>
+          </div>
+        </div>
+      )}
+
+      {filtered.length>0 && (
+        <div className="card" style={{padding:"20px 24px"}}>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>📋 Historial reciente</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{borderBottom:"1px solid var(--border)"}}>
+                {["Fecha","Inversión","Registros FB","Personas WP","CPL FB","% Captura"].map(h=>(
+                  <th key={h} style={{padding:"6px 10px",textAlign:"left",fontSize:11,color:"var(--muted)",fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {filtered.slice(-14).reverse().map(r=>{
+                  const i=parseFloat(r.inversion)||0, l=parseFloat(r.resultados||r.formularios||r.leads)||0, w=parseFloat(r.personas_wp)||0;
+                  const cplR=l>0&&i>0?i/l:0, capR=l>0&&w>0?w/l*100:0;
+                  return (
+                    <tr key={r.date} style={{borderBottom:"1px solid var(--border)"}}>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)",fontSize:11}}>{r.date}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)"}}>{i>0?`$${i.toFixed(2)}`:"-"}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)"}}>{l||"-"}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)"}}>{w||"-"}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)"}}>{cplR>0?`$${cplR.toFixed(2)}`:"-"}</td>
+                      <td style={{padding:"7px 10px",fontFamily:"var(--mono)"}}>{capR>0?`${capR.toFixed(1)}%`:"-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {!filtered.length && <div className="empty"><div style={{fontSize:32,opacity:.3}}>📊</div><div style={{marginTop:8}}>Sin datos para este período.</div></div>}
     </div>
   );
 }
@@ -13344,6 +13458,8 @@ function OnboardingWizard({ onSave, onCancel }) {
       hermesData: hermesData,
       apolloData: apolloData,
       tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: plantillasBase } : { plantillas: plantillasBase },
+      waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
+      presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
       fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: fbMetricsApollo } : {},
       schedConfig: {
         enabled: false, hora: "08:00", dias: [1,2,3,4,5],
@@ -14094,6 +14210,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "Resumen general" : view === "salud" ? "Salud de clientes" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : view === "links" ? "🔗 Links Enmascarados" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
+              <NotificacionesBell notifs={notifs} dismiss={dismiss} dismissAll={dismissAll} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
             </div>
