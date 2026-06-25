@@ -14188,6 +14188,106 @@ function BotClienteConfig({ client, onUpdate }) {
   );
 }
 
+// ─── NOTIFICACIONES PROACTIVAS (ADMIN) ───────────────────────
+function useNotificaciones(clients) {
+  const BOT = import.meta.env.VITE_BOT_URL || "";
+  const [notifs, setNotifs] = useState([]);
+
+  async function enviarWA(msg) {
+    if (!BOT) return;
+    try {
+      await fetch(`${BOT}/notify-admin`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ text: msg }) });
+    } catch {}
+  }
+
+  async function checkAlertas() {
+    if (!clients?.length) return;
+    const hoy = new Date().toISOString().slice(0,10);
+    const nuevas = [];
+    for (const c of clients) {
+      if (!c?.id || c.id.startsWith("__")) continue;
+      const nombre = c.name || c.id;
+      if (c.presupuesto_diario && c.fbConfig?.token) {
+        try {
+          const accId = c.fbConfig?.cuentas?.[0]?.adAccountId || c.fbConfig?.adAccountId;
+          if (accId) {
+            const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
+            if (!d.error && d.data?.[0] && parseFloat(d.data[0].spend) > c.presupuesto_diario * 1.2)
+              nuevas.push({ id:`gasto_${c.id}_${hoy}`, tipo:"gasto", cliente:nombre, msg:`🔴 Gasto disparado — ${nombre}\nGasto: $${parseFloat(d.data[0].spend).toFixed(2)} / Presupuesto: $${c.presupuesto_diario}` });
+            if (d.error?.code === 190)
+              nuevas.push({ id:`token_${c.id}`, tipo:"token", cliente:nombre, msg:`⚠️ Token FB vencido — ${nombre}` });
+          }
+        } catch {}
+      }
+      if (new Date().getHours() >= 20 && !(c.records||[]).some(r=>r.date===hoy) && (c.records||[]).length > 0)
+        nuevas.push({ id:`sindata_${c.id}_${hoy}`, tipo:"sindata", cliente:nombre, msg:`📋 Sin datos del día — ${nombre}` });
+      const mision = c.hermesData || c.apolloData;
+      if (mision?.fases) {
+        const fase = mision.fases.find(f => f.estado === "en_progreso");
+        if (fase && Math.round((fase.tareasCompletadas||0)/Math.max(fase.totalTareas||1,1)*100) >= 100)
+          nuevas.push({ id:`mision_${c.id}_${fase.id}`, tipo:"mision", cliente:nombre, msg:`🎯 Fase completada — ${nombre}: ${fase.nombre}` });
+      }
+    }
+    setNotifs(prev => {
+      const ids = new Set(prev.map(n=>n.id));
+      const unicas = nuevas.filter(n=>!ids.has(n.id));
+      unicas.forEach(n=>enviarWA(n.msg));
+      return [...prev, ...unicas].slice(-50);
+    });
+  }
+
+  useEffect(() => {
+    const t = setTimeout(checkAlertas, 5000);
+    const iv = setInterval(checkAlertas, 15*60*1000);
+    return () => { clearTimeout(t); clearInterval(iv); };
+  }, [clients?.length]);
+
+  function dismiss(id) { setNotifs(p=>p.filter(n=>n.id!==id)); }
+  function dismissAll() { setNotifs([]); }
+  return { notifs, dismiss, dismissAll };
+}
+
+function NotificacionesBell({ notifs, dismiss, dismissAll }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function h(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const icon  = { gasto:"🔴", token:"⚠️", sindata:"📋", mision:"🎯" };
+  const color = { gasto:"var(--red)", token:"var(--amber)", sindata:"var(--muted)", mision:"var(--green)" };
+  return (
+    <div ref={ref} style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{position:"relative",background:"none",border:"none",cursor:"pointer",padding:"6px",borderRadius:8,color:"var(--text)",fontSize:16}}>
+        🔔
+        {notifs.length > 0 && <span style={{position:"absolute",top:0,right:0,background:"var(--red)",color:"#fff",borderRadius:"50%",fontSize:9,fontWeight:700,width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{notifs.length>9?"9+":notifs.length}</span>}
+      </button>
+      {open && (
+        <div style={{position:"absolute",right:0,top:"calc(100% + 8px)",width:320,maxHeight:440,overflowY:"auto",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:12,boxShadow:"0 8px 40px rgba(0,0,0,.4)",zIndex:1000}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontWeight:700,fontSize:14}}>🔔 Alertas {notifs.length>0&&`(${notifs.length})`}</span>
+            {notifs.length>0 && <button className="btn btn-ghost btn-sm" style={{fontSize:10}} onClick={dismissAll}>Limpiar todo</button>}
+          </div>
+          {!notifs.length
+            ? <div style={{padding:"2rem",textAlign:"center",color:"var(--muted)",fontSize:13}}>✅ Sin alertas pendientes</div>
+            : notifs.slice().reverse().map(n=>(
+              <div key={n.id} style={{padding:"12px 16px",borderBottom:"1px solid var(--border)",display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{fontSize:18,flexShrink:0}}>{icon[n.tipo]||"📌"}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:600,color:color[n.tipo]||"var(--text)",marginBottom:2}}>{n.cliente}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5}}>{n.msg.replace(/\n/g," · ")}</div>
+                </div>
+                <button onClick={()=>dismiss(n.id)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)",fontSize:14,padding:"0 2px"}}>✕</button>
+              </div>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── ADMIN PANEL ──────────────────────────────────────────────────────────────
 function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, banners, onSaveBanners, globalConfig, onSaveGlobalConfig, filmmakers, saveFilmmakers }) {
   // Listener para actualización de cliente desde el panel de filmmakers
@@ -14203,6 +14303,7 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
   const [deleteModal, setDeleteModal] = useState(null);
   const { show, el: toastEl } = useToast();
   const selected = clients.find(c => c.id === selectedId);
+  const { notifs, dismiss, dismissAll } = useNotificaciones(clients);
 
   const Sidebar = () => (
     <div className="sidebar">
