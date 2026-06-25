@@ -11008,7 +11008,7 @@ function GruposPanelGlobal() {
     setLoading(true);
     try {
       const [g, c] = await Promise.all([
-        fetch(`${SUPA_GRUPOS_URL}?select=*&order=creado_en.desc`, { headers: HL }).then(r=>r.json()),
+        fetch(clientProp?.id ? `${SUPA_GRUPOS_URL}?client_id=eq.${encodeURIComponent(clientProp.id)}&select=*&order=creado_en.desc` : `${SUPA_GRUPOS_URL}?select=*&limit=0`, { headers: HL }).then(r=>r.json()),
         fetch(`${SUPA_URL}/rest/v1/clients?select=data`, { headers: HL }).then(r=>r.json()),
       ]);
       setGrupos(Array.isArray(g) ? g : []);
@@ -14479,7 +14479,6 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
             <div className="topbar-title">{view === "clientes" ? "Mis clientes" : view === "resumen" ? "📊 Panel general" : view === "agenda" ? "Mi Agenda" : view === "banner" ? "Comunicaciones / Banner" : view === "campanas" ? "Campanas de mensajeria" : view === "links" ? "🔗 Links Enmascarados" : "Comandos del Bot"}</div>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <NotificationBell clients={clients} onGoToClient={(id) => { setSelectedId(id); }} />
-              <NotificacionesBell notifs={notifs} dismiss={dismiss} dismissAll={dismissAll} />
               <NotificacionesBell notifs={notifs} dismiss={dismiss} dismissAll={dismissAll} />
               {view === "clientes" && clients.length > 0 && <button className="btn btn-danger btn-sm" onClick={() => setDeleteModal("all")}>🗑 Borrar todo</button>}
               {view === "clientes" && <button className="btn btn-primary btn-sm" onClick={() => setAddingClient(true)}>+ Nuevo cliente</button>}
