@@ -10841,6 +10841,33 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
                   <textarea value={config.bienvenida_texto||""} onChange={e=>setConfig({...config,bienvenida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, bienvenido/a al grupo 👋&#10;&#10;Aquí encontrarás..."/>
                 </div>
                 <MediaUpload label="Imagen o video" value={config.bienvenida_media_url||""} tipo={config.bienvenida_media_tipo||""} onChangeUrl={v=>setConfig({...config,bienvenida_media_url:v})} onChangeTipo={v=>setConfig({...config,bienvenida_media_tipo:v})} />
+
+              {/* Delay de envío */}
+              <div style={{marginTop:12,padding:"10px 14px",borderRadius:8,background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.15)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:13}}>⏱️</span>
+                  <span style={{fontSize:12,fontWeight:600}}>Delay entre mensajes</span>
+                  {(config.bienvenida_delay_min||0) < 1 && <span style={{fontSize:10,color:"var(--red)",fontWeight:600}}>⚠️ Riesgo de ban</span>}
+                  {(config.bienvenida_delay_min||0) >= 1 && (config.bienvenida_delay_min||0) < 3 && <span style={{fontSize:10,color:"var(--amber)"}}>🟡 Aceptable</span>}
+                  {(config.bienvenida_delay_min||0) >= 3 && <span style={{fontSize:10,color:"var(--green)"}}>✅ Seguro</span>}
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  {[0,1,2,3,5,10].map(v=>(
+                    <button key={v} onClick={()=>setConfig({...config,bienvenida_delay_min:v})}
+                      className={"btn btn-sm "+((config.bienvenida_delay_min??0)===v?"btn-primary":"btn-ghost")}
+                      style={{fontSize:11,padding:"3px 10px"}}>
+                      {v===0?"Inmediato":v+"min"}
+                    </button>
+                  ))}
+                  <input type="number" min="0" max="60" value={config.bienvenida_delay_min??0}
+                    onChange={e=>setConfig({...config,bienvenida_delay_min:Math.max(0,parseInt(e.target.value)||0)})}
+                    style={{width:60,textAlign:"center",fontFamily:"var(--mono)",fontSize:12}}/>
+                  <span style={{fontSize:11,color:"var(--muted)"}}>min</span>
+                </div>
+                <div style={{fontSize:11,color:"var(--muted)",marginTop:6,lineHeight:1.5}}>
+                  {(config.bienvenida_delay_min||0) === 0 ? "⚠️ Sin delay — WhatsApp puede detectar envíos masivos instantáneos y banear el número" : `Cada mensaje espera ${config.bienvenida_delay_min}min — con 50 contactos tardará ${(50*(config.bienvenida_delay_min||0)/60).toFixed(1)}h`}
+                </div>
+              </div>
               </div>
             )}
           </div>
@@ -10864,6 +10891,33 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
                   <textarea value={config.despedida_texto||""} onChange={e=>setConfig({...config,despedida_texto:e.target.value})} rows={5} style={{width:"100%",resize:"vertical"}} placeholder="Hasta luego {nombre} 👋&#10;&#10;Fue un placer tenerte con nosotros..."/>
                 </div>
                 <MediaUpload label="Imagen o video" value={config.despedida_media_url||""} tipo={config.despedida_media_tipo||""} onChangeUrl={v=>setConfig({...config,despedida_media_url:v})} onChangeTipo={v=>setConfig({...config,despedida_media_tipo:v})} />
+
+              {/* Delay de envío */}
+              <div style={{marginTop:12,padding:"10px 14px",borderRadius:8,background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.15)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:13}}>⏱️</span>
+                  <span style={{fontSize:12,fontWeight:600}}>Delay entre mensajes</span>
+                  {(config.despedida_delay_min||0) < 1 && <span style={{fontSize:10,color:"var(--red)",fontWeight:600}}>⚠️ Riesgo de ban</span>}
+                  {(config.despedida_delay_min||0) >= 1 && (config.despedida_delay_min||0) < 3 && <span style={{fontSize:10,color:"var(--amber)"}}>🟡 Aceptable</span>}
+                  {(config.despedida_delay_min||0) >= 3 && <span style={{fontSize:10,color:"var(--green)"}}>✅ Seguro</span>}
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  {[0,1,2,3,5,10].map(v=>(
+                    <button key={v} onClick={()=>setConfig({...config,despedida_delay_min:v})}
+                      className={"btn btn-sm "+((config.despedida_delay_min??0)===v?"btn-primary":"btn-ghost")}
+                      style={{fontSize:11,padding:"3px 10px"}}>
+                      {v===0?"Inmediato":v+"min"}
+                    </button>
+                  ))}
+                  <input type="number" min="0" max="60" value={config.despedida_delay_min??0}
+                    onChange={e=>setConfig({...config,despedida_delay_min:Math.max(0,parseInt(e.target.value)||0)})}
+                    style={{width:60,textAlign:"center",fontFamily:"var(--mono)",fontSize:12}}/>
+                  <span style={{fontSize:11,color:"var(--muted)"}}>min</span>
+                </div>
+                <div style={{fontSize:11,color:"var(--muted)",marginTop:6,lineHeight:1.5}}>
+                  {(config.despedida_delay_min||0) === 0 ? "⚠️ Sin delay — WhatsApp puede detectar envíos masivos instantáneos y banear el número" : `Cada mensaje espera ${config.despedida_delay_min}min — con 50 contactos tardará ${(50*(config.despedida_delay_min||0)/60).toFixed(1)}h`}
+                </div>
+              </div>
               </div>
             )}
           </div>
@@ -10902,7 +10956,7 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
               </div>
               <div className="form-row" style={{marginBottom:12}}>
                 <div className="field" style={{maxWidth:180}}>
-                  <label>Enviar después de (minutos)</label>
+                  <label>Esperar antes de enviar (min)</label>
                   <input type="number" min="1" value={config.remarketing_msg1_min||10} onChange={e=>setConfig({...config,remarketing_msg1_min:parseInt(e.target.value)||10})} />
                 </div>
               <GruposSelector grupos={grupos} seleccionados={config.grupos_remarketing1||[]} onChange={v=>setConfig({...config,grupos_remarketing1:v})} label="Aplicar a leads de estos grupos" />
@@ -10911,6 +10965,33 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
               <div className="field">
                 <label>Mensaje <span style={{color:"var(--muted)",fontWeight:400}}>— usa {"{nombre}"} y {"{link}"}</span></label>
                 <textarea value={config.remarketing_msg1_texto||""} onChange={e=>setConfig({...config,remarketing_msg1_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre} 👋, vimos que te registraste pero aún no te has unido al grupo. Aquí tienes el link: {link}"/>
+              </div>
+
+              {/* Delay de envío */}
+              <div style={{marginTop:12,padding:"10px 14px",borderRadius:8,background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.15)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:13}}>⏱️</span>
+                  <span style={{fontSize:12,fontWeight:600}}>Delay entre mensajes</span>
+                  {(config.remarketing_msg1_delay_min||0) < 1 && <span style={{fontSize:10,color:"var(--red)",fontWeight:600}}>⚠️ Riesgo de ban</span>}
+                  {(config.remarketing_msg1_delay_min||0) >= 1 && (config.remarketing_msg1_delay_min||0) < 3 && <span style={{fontSize:10,color:"var(--amber)"}}>🟡 Aceptable</span>}
+                  {(config.remarketing_msg1_delay_min||0) >= 3 && <span style={{fontSize:10,color:"var(--green)"}}>✅ Seguro</span>}
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  {[0,1,2,3,5,10].map(v=>(
+                    <button key={v} onClick={()=>setConfig({...config,remarketing_msg1_delay_min:v})}
+                      className={"btn btn-sm "+((config.remarketing_msg1_delay_min??0)===v?"btn-primary":"btn-ghost")}
+                      style={{fontSize:11,padding:"3px 10px"}}>
+                      {v===0?"Inmediato":v+"min"}
+                    </button>
+                  ))}
+                  <input type="number" min="0" max="60" value={config.remarketing_msg1_delay_min??0}
+                    onChange={e=>setConfig({...config,remarketing_msg1_delay_min:Math.max(0,parseInt(e.target.value)||0)})}
+                    style={{width:60,textAlign:"center",fontFamily:"var(--mono)",fontSize:12}}/>
+                  <span style={{fontSize:11,color:"var(--muted)"}}>min</span>
+                </div>
+                <div style={{fontSize:11,color:"var(--muted)",marginTop:6,lineHeight:1.5}}>
+                  {(config.remarketing_msg1_delay_min||0) === 0 ? "⚠️ Sin delay — WhatsApp puede detectar envíos masivos instantáneos y banear el número" : `Cada mensaje espera ${config.remarketing_msg1_delay_min}min — con 50 contactos tardará ${(50*(config.remarketing_msg1_delay_min||0)/60).toFixed(1)}h`}
+                </div>
               </div>
               <div style={{marginTop:10,padding:"8px 12px",background:"rgba(77,159,255,.06)",borderRadius:8,fontSize:12,color:"var(--muted)"}}>
                 💡 Este mensaje se envía al WhatsApp privado del lead, no al grupo.
@@ -10944,6 +11025,28 @@ function GruposPanel({ client: clientProp, onUpdate: onUpdateProp }) {
                   <div className="field">
                     <label>Mensaje</label>
                     <textarea value={config.remarketing_msg2_texto||""} onChange={e=>setConfig({...config,remarketing_msg2_texto:e.target.value})} rows={4} style={{width:"100%",resize:"vertical"}} placeholder="Hola {nombre}, es tu última oportunidad de unirte 🚀 {link}"/>
+                  </div>
+                  <div style={{marginTop:12,padding:"10px 14px",borderRadius:8,background:"rgba(255,222,89,.06)",border:"1px solid rgba(255,222,89,.15)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                      <span style={{fontSize:13}}>⏱️</span>
+                      <span style={{fontSize:12,fontWeight:600}}>Delay entre mensajes</span>
+                      {(config.remarketing_msg2_delay_min??0)<1&&<span style={{fontSize:10,color:"var(--red)",fontWeight:600}}>⚠️ Riesgo de ban</span>}
+                      {(config.remarketing_msg2_delay_min??0)>=1&&(config.remarketing_msg2_delay_min??0)<3&&<span style={{fontSize:10,color:"var(--amber)"}}>🟡 Aceptable</span>}
+                      {(config.remarketing_msg2_delay_min??0)>=3&&<span style={{fontSize:10,color:"var(--green)"}}>✅ Seguro</span>}
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                      {[0,1,2,3,5,10].map(v=>(
+                        <button key={v} onClick={()=>setConfig({...config,remarketing_msg2_delay_min:v})}
+                          className={"btn btn-sm "+((config.remarketing_msg2_delay_min??0)===v?"btn-primary":"btn-ghost")}
+                          style={{fontSize:11,padding:"3px 10px"}}>
+                          {v===0?"Inmediato":v+"min"}
+                        </button>
+                      ))}
+                      <input type="number" min="0" max="60" value={config.remarketing_msg2_delay_min??0}
+                        onChange={e=>setConfig({...config,remarketing_msg2_delay_min:Math.max(0,parseInt(e.target.value)||0)})}
+                        style={{width:60,textAlign:"center",fontFamily:"var(--mono)",fontSize:12}}/>
+                      <span style={{fontSize:11,color:"var(--muted)"}}>min</span>
+                    </div>
                   </div>
                   <div style={{marginTop:10,padding:"8px 12px",background:"rgba(255,222,89,.06)",borderRadius:8,fontSize:12,color:"var(--amber)"}}>
                     ⚠️ Recomendamos no enviar más de 2 mensajes para evitar que el número sea reportado como spam.
