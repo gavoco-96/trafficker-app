@@ -8644,14 +8644,28 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
       checklist: {},
       hermesData: !isApollo ? {
         momentos: {},
-        // Mantener metas pero limpiar actuals
-        kpisHermes: (client.hermesData?.kpisHermes || []).map(k => ({ ...k, actual: "" })),
+        // Mover actual → historico (columna ANTES), limpiar actual (columna AHORA)
+        kpisHermes: (client.hermesData?.kpisHermes || []).map(k => {
+          const calcFinal = calcularKPI(k, records, client.capturaConfig?.lastData || {});
+          const valorFinal = calcFinal !== null
+            ? String(calcFinal)
+            : (k.actual || "");
+          return { ...k, historico: valorFinal || k.historico || "", actual: "" };
+        }),
         biblioteca: client.hermesData?.biblioteca || []
       } : client.hermesData,
       apolloData: isApollo ? {
         ...client.apolloData,
-        // Mantener metas pero limpiar actuals — nueva misión empieza desde cero
-        kpisApollo: (client.apolloData?.kpisApollo || []).map(k => ({ ...k, actual: "" })),
+        // Mover actual → historico (columna ANTES), limpiar actual (columna AHORA)
+        // Las metas se conservan para la nueva misión
+        kpisApollo: (client.apolloData?.kpisApollo || []).map(k => {
+          // Calcular el valor real final usando los records
+          const calcFinal = calcularKPI(k, records, client.capturaConfig?.lastData || {});
+          const valorFinal = calcFinal !== null
+            ? String(calcFinal)
+            : (k.actual || "");
+          return { ...k, historico: valorFinal || k.historico || "", actual: "" };
+        }),
         momentos: {},
         faseActual: 0,
         fechaLanzamiento: "",
