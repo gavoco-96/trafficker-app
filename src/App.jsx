@@ -8642,10 +8642,16 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
       records: [],
       kpis: [],
       checklist: {},
-      hermesData: !isApollo ? { momentos: {}, kpisHermes: [], biblioteca: client.hermesData?.biblioteca || [] } : client.hermesData,
+      hermesData: !isApollo ? {
+        momentos: {},
+        // Mantener metas pero limpiar actuals
+        kpisHermes: (client.hermesData?.kpisHermes || []).map(k => ({ ...k, actual: "" })),
+        biblioteca: client.hermesData?.biblioteca || []
+      } : client.hermesData,
       apolloData: isApollo ? {
         ...client.apolloData,
-        kpisApollo: [],
+        // Mantener metas pero limpiar actuals — nueva misión empieza desde cero
+        kpisApollo: (client.apolloData?.kpisApollo || []).map(k => ({ ...k, actual: "" })),
         momentos: {},
         faseActual: 0,
         fechaLanzamiento: "",
@@ -8859,20 +8865,46 @@ function MisionesPanel({ client, onUpdate, readOnly }) {
                     </div>
                   )}
 
-                  {/* KPIs finales */}
+                  {/* KPIs finales — definido vs resultado vs meta */}
                   {(m.kpis || []).length > 0 && (
                     <div style={{ marginBottom:"1rem" }}>
-                      <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>KPIs finales</div>
-                      <div className="grid2">
-                        {m.kpis.map(k => (
-                          <div key={k.id} style={{ background:"var(--surface2)", borderRadius:8, padding:"8px 12px" }}>
-                            <div style={{ fontSize:11, color:"var(--muted)" }}>{k.nombre}</div>
-                            <div style={{ fontFamily:"var(--mono)", fontWeight:700, fontSize:16, color:"var(--accent2)", marginTop:2 }}>
-                              {k.actual || "—"} <span style={{ fontSize:10, color:"var(--muted)" }}>{k.unidad}</span>
-                            </div>
-                            {k.meta && <div style={{ fontSize:10, color:"var(--muted)" }}>Meta: {k.meta}</div>}
-                          </div>
-                        ))}
+                      <div style={{ fontSize:11, fontWeight:600, color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em", marginBottom:8 }}>📊 KPIs finales — resultado vs meta</div>
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                          <thead>
+                            <tr style={{ borderBottom:"1px solid var(--border)" }}>
+                              {["KPI","Resultado","Meta","Logro"].map(h => (
+                                <th key={h} style={{ padding:"6px 10px", textAlign:"left", fontSize:10, color:"var(--muted)", fontWeight:600, whiteSpace:"nowrap" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {m.kpis.filter(k => k.nombre).map(k => {
+                              const actual = parseFloat(String(k.actual||"").replace(/[^0-9.]/g,"")) || 0;
+                              const meta   = parseFloat(String(k.meta||"").replace(/[^0-9.]/g,"")) || 0;
+                              const pct    = meta > 0 && actual > 0 ? Math.round(actual/meta*100) : null;
+                              const color  = pct === null ? "var(--muted)" : pct >= 100 ? "var(--green)" : pct >= 70 ? "var(--amber)" : "var(--red)";
+                              const emoji  = pct === null ? "—" : pct >= 100 ? "✅" : pct >= 70 ? "🟡" : "❌";
+                              return (
+                                <tr key={k.id} style={{ borderBottom:"1px solid var(--border)" }}>
+                                  <td style={{ padding:"8px 10px", fontWeight:500 }}>{k.nombre}</td>
+                                  <td style={{ padding:"8px 10px", fontFamily:"var(--mono)", fontWeight:700, color:"var(--accent2)" }}>
+                                    {k.actual || "—"} <span style={{ fontSize:10, color:"var(--muted)", fontWeight:400 }}>{k.unidad}</span>
+                                  </td>
+                                  <td style={{ padding:"8px 10px", fontFamily:"var(--mono)", color:"var(--muted)" }}>
+                                    {k.meta || "—"} <span style={{ fontSize:10 }}>{k.unidad}</span>
+                                  </td>
+                                  <td style={{ padding:"8px 10px" }}>
+                                    <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
+                                      <span>{emoji}</span>
+                                      {pct !== null && <span style={{ fontSize:11, color, fontWeight:600 }}>{pct}%</span>}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   )}
