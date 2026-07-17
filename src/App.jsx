@@ -4265,7 +4265,8 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
     try {
       // Intentar primero a nivel account — más rápido
       const _s=timeRange.since||"",_u=timeRange.until||"";
-      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${allFields}&time_range={'since':'${_s}','until':'${_u}'}&level=account&access_token=${token}`;
+      const _p = new URLSearchParams({ fields: allFields, time_range: JSON.stringify({since:_s,until:_u}), level: "account", access_token: token });
+      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?${_p}`;
       const json = await fetch(url).then(r=>r.json());
       if (json.error) { console.warn("[FB RT]", json.error.message); continue; }
       
@@ -6082,7 +6083,8 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   const camposBase = ["spend", "actions", "impressions", "reach"];
   const todosCampos = [...new Set([...fbFields.split(","), ...camposBase])].join(",");
   
-  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${todosCampos}&time_range={'since':'${date}','until':'${date}'}&level=account&access_token=${token}`;
+  const _sp = new URLSearchParams({ fields: todosCampos, time_range: JSON.stringify({since:date,until:date}), level: "account", access_token: token });
+  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?${_sp}`;
 
   try {
     const res = await fetch(url);
@@ -9697,7 +9699,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       let puntosPorHoraAcum = {};
       const activas = (cuentas||[]).filter(c=>c.adAccountId);
       for (const cuenta of activas) {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={'since':'${hoy}','until':'${hoy}'}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
+        const _hp = new URLSearchParams({ fields: "spend,actions,date_start,date_stop", time_range: JSON.stringify({since:hoy,until:hoy}), time_increment: "hourly", level: "account", limit: "48", access_token: token });
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?${_hp}`;
         const res  = await fetch(url);
         const json = await res.json();
         if (json.error || !json.data?.length) continue;
@@ -9754,8 +9757,14 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
     for (const cuenta of cuentasActivas) {
       try {
-        // URL con time_range sin encodear — Facebook acepta JSON directo en query string
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${token}`;
+        // Construir URL con parámetros correctamente encoded
+        const params = new URLSearchParams({
+          fields: "spend,actions",
+          time_range: JSON.stringify({ since: hoy, until: hoy }),
+          level: "account",
+          access_token: token,
+        });
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?${params}`;
         const json = await fetch(url).then(r=>r.json());
         if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
         const row = json.data?.[0];
