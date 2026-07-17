@@ -6114,24 +6114,31 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
         // (inline para no depender de función global en el contexto del componente)
         const acts = row.actions || [];
         const LEAD_TYPES = [
-          "lead","onsite_conversion.lead_grouped","complete_registration",
-          "offsite_conversion.fb_pixel_lead","offsite_conversion.fb_pixel_complete_registration",
-          "offsite_complete_registration_add_meta_leads","omni_complete_registration",
-          "contact","submit_application","subscribe"
+          "offsite_complete_registration_add_meta_leads",
+          "omni_complete_registration",
+          "complete_registration",
+          "offsite_conversion.fb_pixel_complete_registration",
+          "offsite_conversion.fb_pixel_lead",
+          "lead",
         ];
-        // Tomar el tipo con MAYOR valor (no el primero de la lista)
-        // Evita que "onsite_conversion.lead=2" tape "offsite_complete_registration=1651"
+        // Tipos de engagement a IGNORAR (valores bajos, no son conversiones reales)
+        const LEAD_EXCLUIR = [
+          "onsite_conversion.lead",
+          "onsite_web_lead",
+          "offsite_search_add_meta_leads",
+          "offsite_content_view_add_meta_leads",
+          "onsite_conversion.lead_grouped",
+        ];
         let val = 0;
         for (const tipo of LEAD_TYPES) {
+          if (LEAD_EXCLUIR.includes(tipo)) continue;
           const a = acts.find(x => x.action_type === tipo);
-          if (a) {
-            const v = parseFloat(a.value)||0;
-            if (v > val) val = v; // quedarse con el mayor
-          }
+          if (a) { const v = parseFloat(a.value)||0; if (v > val) val = v; }
         }
-        // Fallback: buscar cualquier action con "registration" o "lead" y tomar el mayor
+        // Fallback solo para registration con valor significativo
         if (val === 0) {
-          acts.filter(x => x.action_type?.includes("registration")||x.action_type?.includes("lead"))
+          acts
+            .filter(x => !LEAD_EXCLUIR.includes(x.action_type) && x.action_type?.includes("registration"))
             .forEach(x => { const v=parseFloat(x.value)||0; if(v>val) val=v; });
         }
         record[m.campo] = val;
@@ -9695,12 +9702,15 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           const inv = parseFloat(d.spend)||0;
           // Inline — evita error de scope en Vite build
           const _a = d.actions||[];
-          const _T = ["offsite_complete_registration_add_meta_leads","omni_complete_registration",
+          const _T = [
+            "offsite_complete_registration_add_meta_leads","omni_complete_registration",
             "complete_registration","offsite_conversion.fb_pixel_complete_registration",
-            "onsite_conversion.lead_grouped","offsite_conversion.fb_pixel_lead","lead"];
+            "offsite_conversion.fb_pixel_lead","lead"
+          ];
+          const _EX = ["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"];
           let nl = 0;
-          for (const t of _T) { const x=_a.find(a=>a.action_type===t); if(x){const v=parseFloat(x.value)||0;if(v>nl)nl=v;} }
-          if (nl===0) _a.filter(a=>a.action_type?.includes("registration")||a.action_type?.includes("lead"))
+          for (const t of _T) { if(_EX.includes(t)) continue; const x=_a.find(a=>a.action_type===t); if(x){const v=parseFloat(x.value)||0;if(v>nl)nl=v;} }
+          if (nl===0) _a.filter(a=>!_EX.includes(a.action_type)&&a.action_type?.includes("registration"))
             .forEach(a=>{const v=parseFloat(a.value)||0;if(v>nl)nl=v;});
           const ts  = new Date((d.date_start||hoy).replace(" ","T")).getTime();
           if (!puntosPorHoraAcum[ts]) puntosPorHoraAcum[ts] = { inv:0, nl:0, date_start: d.date_start };
