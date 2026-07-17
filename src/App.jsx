@@ -4264,9 +4264,14 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
   for (const cuenta of activas) {
     try {
       // Intentar primero a nivel account — más rápido
-      const _s=timeRange.since||"",_u=timeRange.until||"";
-      const _p = new URLSearchParams({ fields: allFields, time_range: JSON.stringify({since:_s,until:_u}), level: "account", access_token: token });
-      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?${_p}`;
+      const _s=timeRange.since||timeRange.start||"",_u=timeRange.until||timeRange.end||"";
+      const multiUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+      multiUrl.searchParams.set("fields", allFields);
+      multiUrl.searchParams.set("since", _s);
+      multiUrl.searchParams.set("until", _u);
+      multiUrl.searchParams.set("level", level);
+      multiUrl.searchParams.set("access_token", token);
+      const url = multiUrl.toString();
       const json = await fetch(url).then(r=>r.json());
       if (json.error) { console.warn("[FB RT]", json.error.message); continue; }
       
@@ -6083,8 +6088,13 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   const camposBase = ["spend", "actions", "impressions", "reach"];
   const todosCampos = [...new Set([...fbFields.split(","), ...camposBase])].join(",");
   
-  const _sp = new URLSearchParams({ fields: todosCampos, time_range: JSON.stringify({since:date,until:date}), level: "account", access_token: token });
-  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?${_sp}`;
+  const syncUrl = new URL(`https://graph.facebook.com/v19.0/act_${adAccountId}/insights`);
+  syncUrl.searchParams.set("fields", todosCampos);
+  syncUrl.searchParams.set("since", date);
+  syncUrl.searchParams.set("until", date);
+  syncUrl.searchParams.set("level", "account");
+  syncUrl.searchParams.set("access_token", token);
+  const url = syncUrl.toString();
 
   try {
     const res = await fetch(url);
@@ -9699,8 +9709,14 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       let puntosPorHoraAcum = {};
       const activas = (cuentas||[]).filter(c=>c.adAccountId);
       for (const cuenta of activas) {
-        const _hp = new URLSearchParams({ fields: "spend,actions,date_start,date_stop", time_range: JSON.stringify({since:hoy,until:hoy}), time_increment: "hourly", level: "account", limit: "48", access_token: token });
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?${_hp}`;
+        const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+        histUrl.searchParams.set("fields", "spend,actions,date_start,date_stop");
+        histUrl.searchParams.set("date_preset", "today");
+        histUrl.searchParams.set("time_increment", "hourly");
+        histUrl.searchParams.set("level", "account");
+        histUrl.searchParams.set("limit", "48");
+        histUrl.searchParams.set("access_token", token);
+        const url = histUrl.toString();
         const res  = await fetch(url);
         const json = await res.json();
         if (json.error || !json.data?.length) continue;
@@ -9757,9 +9773,13 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
     for (const cuenta of cuentasActivas) {
       try {
-        // URL idéntica al diagnóstico que funciona
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${token}`;
-        const json = await fetch(url).then(r=>r.json());
+        // Usar date_preset=today — evita problemas de encoding con time_range
+        const rtUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+        rtUrl.searchParams.set("fields", "spend,actions");
+        rtUrl.searchParams.set("date_preset", "today");
+        rtUrl.searchParams.set("level", "account");
+        rtUrl.searchParams.set("access_token", token);
+        const json = await fetch(rtUrl.toString()).then(r=>r.json());
         if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
         const row = json.data?.[0];
         if (!row) continue;
