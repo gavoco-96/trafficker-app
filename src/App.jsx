@@ -9819,15 +9819,32 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     datosVista = histDiario.map(d=>({...d, fecha:d.fecha.slice(5)}));
   }
 
+  // ── CPL acumulado de la misión (referencia cuando hoy está distorsionado) ──
+  const _allRecs = [...(client.misiones||[]).flatMap(m=>m.records||[]), ...(client.records||[])];
+  const _totalInv = _allRecs.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
+  const _totalRes = _allRecs.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
+  const cplAcumGlobal = _totalInv>0&&_totalRes>0 ? _totalInv/_totalRes : 0;
+
+  // Detectar distorsión ANTES de construir la gráfica
+  const _ultimoRaw = datosVista.length>0 ? datosVista[datosVista.length-1] : null;
+  const _leadsHoy = _ultimoRaw?.leads || 0;
+  const _graficaDistorsionada = _leadsHoy < 50 && cplAcumGlobal > 0 &&
+    _ultimoRaw && Math.abs(_ultimoRaw.cpl - cplAcumGlobal)/cplAcumGlobal > 0.5;
+
+  // Si está distorsionada, reemplazar datosVista con punto único del CPL acumulado
+  const datosVistaFinal = _graficaDistorsionada && cplAcumGlobal > 0
+    ? [{ ..._ultimoRaw, cpl: cplAcumGlobal }]
+    : datosVista;
+
   // Combinar hoy+ayer para calcular escala Y
   const todosLosVals = [
-    ...datosVista.map(d=>d.cpl),
+    ...datosVistaFinal.map(d=>d.cpl),
     ...datosAyer.map(d=>d.cpl)
   ].filter(v=>v>0);
 
-  const n=datosVista.length, hasData=todosLosVals.length>0;
-  const ultimo=datosVista.length>0?datosVista[datosVista.length-1]:null;
-  const primero=datosVista.length>0?datosVista[0]:null;
+  const n=datosVistaFinal.length, hasData=todosLosVals.length>0;
+  const ultimo=datosVistaFinal.length>0?datosVistaFinal[datosVistaFinal.length-1]:null;
+  const primero=datosVistaFinal.length>0?datosVistaFinal[0]:null;
   const minCpl=hasData?Math.min(...todosLosVals):0;
   const maxCpl=hasData?Math.max(...todosLosVals):0;
   const cambio=hasData&&primero&&ultimo?((ultimo.cpl-primero.cpl)/primero.cpl*100):0;
@@ -9852,15 +9869,15 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const allPts24h = modoRT ? [...datosAyer, ...datosVista].sort((a,b)=>a.ts-b.ts) : [];
 
   const pathHoy = modoRT && datosVista.length>0
-    ? datosVista.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts, allPts24h)+" "+yP(d.cpl)).join(" ")
+    ? datosVistaFinal.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts, allPts24h)+" "+yP(d.cpl)).join(" ")
     : !modoRT && datosVista.length>0
-      ? datosVista.map((d,i)=>(i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ")
+      ? datosVistaFinal.map((d,i)=>(i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ")
       : "";
 
   const areaHoy = modoRT && datosVista.length>0
-    ? `M ${xPts(datosVista[0].ts, allPts24h)} ${PAD.top+cH} `+datosVista.map(d=>`L ${xPts(d.ts,allPts24h)} ${yP(d.cpl)}`).join(" ")+` L ${xPts(datosVista[datosVista.length-1].ts,allPts24h)} ${PAD.top+cH} Z`
+    ? `M ${xPts(datosVistaFinal[0].ts, allPts24h)} ${PAD.top+cH} `+datosVistaFinal.map(d=>`L ${xPts(d.ts,allPts24h)} ${yP(d.cpl)}`).join(" ")+` L ${xPts(datosVistaFinal[datosVistaFinal.length-1].ts,allPts24h)} ${PAD.top+cH} Z`
     : !modoRT && datosVista.length>0
-      ? `M ${xP(0)} ${PAD.top+cH} `+datosVista.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z`
+      ? `M ${xP(0)} ${PAD.top+cH} `+datosVistaFinal.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z`
       : "";
 
   const pathAyer = datosAyer.length>0
