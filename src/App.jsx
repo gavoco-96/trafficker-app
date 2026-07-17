@@ -4215,9 +4215,19 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   
 // ─── HELPER: extraer leads de múltiples action_types de FB ───
 function extraerLeadsFB(actions) {
-  const TIPOS = ["lead","onsite_conversion.lead_grouped","complete_registration",
-    "offsite_conversion.fb_pixel_lead","offsite_conversion.fb_pixel_complete_registration",
-    "contact","submit_application","subscribe"];
+  const TIPOS = [
+    "lead",
+    "onsite_conversion.lead_grouped",
+    "complete_registration",
+    "offsite_conversion.fb_pixel_lead",
+    "offsite_conversion.fb_pixel_complete_registration",
+    "offsite_complete_registration_add_meta_leads",  // aparece en diagnóstico
+    "omni_complete_registration",                    // aparece en diagnóstico
+    "contact",
+    "submit_application",
+    "subscribe",
+    "offsite_conversion.fb_pixel_custom",
+  ];
   let total = 0;
   for (const tipo of TIPOS) {
     const a = (actions||[]).find(x => x.action_type === tipo);
@@ -6058,8 +6068,25 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
     const record = { date };
     selectedMetrics.forEach(m => {
       if (m.key === "actions_lead") {
-        // Usar extraerLeadsFB para cubrir complete_registration, lead, etc.
-        const val = extraerLeadsFB(row.actions || []);
+        // Buscar en TODOS los tipos de acción relacionados con leads/registros
+        // (inline para no depender de función global en el contexto del componente)
+        const acts = row.actions || [];
+        const LEAD_TYPES = [
+          "lead","onsite_conversion.lead_grouped","complete_registration",
+          "offsite_conversion.fb_pixel_lead","offsite_conversion.fb_pixel_complete_registration",
+          "offsite_complete_registration_add_meta_leads","omni_complete_registration",
+          "contact","submit_application","subscribe"
+        ];
+        let val = 0;
+        for (const tipo of LEAD_TYPES) {
+          const a = acts.find(x => x.action_type === tipo);
+          if (a) { val += parseFloat(a.value)||0; break; } // tomar el primero que coincida
+        }
+        // Fallback: buscar cualquier action que contenga "registration" o "lead"
+        if (val === 0) {
+          const fb = acts.find(x => x.action_type?.includes("registration")||x.action_type?.includes("lead"));
+          if (fb) val = parseFloat(fb.value)||0;
+        }
         record[m.campo] = val;
         record["resultados"] = val;
         record["formularios"] = val;
