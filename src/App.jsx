@@ -9605,7 +9605,8 @@ function CplWAChart({ client }) {
 
 function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
+  const cuentas = _cuentas || [];
+  const adAccountId = (cuentas[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
 
   const [rango, setRango]           = useState("24h");
   const [loading, setLoading]       = useState(false);
