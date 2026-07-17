@@ -4251,10 +4251,22 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
       const json = await fetch(url).then(r=>r.json());
       if (json.error || !json.data?.length) continue;
       for (const d of json.data) {
-        inv   += parseFloat(d.spend)||0;
-        leads += extraerLeadsFB(d.actions||[]);
-        alc   += parseFloat(d.reach)||0;
-        impr  += parseFloat(d.impressions)||0;
+        inv  += parseFloat(d.spend)||0;
+        alc  += parseFloat(d.reach)||0;
+        impr += parseFloat(d.impressions)||0;
+        // Inline para evitar errores de scope en build de Vite
+        const _acts = d.actions||[];
+        const _TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration",
+          "complete_registration","offsite_conversion.fb_pixel_complete_registration",
+          "onsite_conversion.lead_grouped","offsite_conversion.fb_pixel_lead","lead"];
+        let _best = 0;
+        for (const t of _TYPES) {
+          const _a = _acts.find(x=>x.action_type===t);
+          if (_a) { const v=parseFloat(_a.value)||0; if(v>_best) _best=v; }
+        }
+        if (_best===0) _acts.filter(x=>x.action_type?.includes("registration")||x.action_type?.includes("lead"))
+          .forEach(x=>{const v=parseFloat(x.value)||0;if(v>_best)_best=v;});
+        leads += _best;
       }
     } catch(e) { console.error("[FB multi]", e.message); }
   }
@@ -6077,15 +6089,20 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
           "offsite_complete_registration_add_meta_leads","omni_complete_registration",
           "contact","submit_application","subscribe"
         ];
+        // Tomar el tipo con MAYOR valor (no el primero de la lista)
+        // Evita que "onsite_conversion.lead=2" tape "offsite_complete_registration=1651"
         let val = 0;
         for (const tipo of LEAD_TYPES) {
           const a = acts.find(x => x.action_type === tipo);
-          if (a) { val += parseFloat(a.value)||0; break; } // tomar el primero que coincida
+          if (a) {
+            const v = parseFloat(a.value)||0;
+            if (v > val) val = v; // quedarse con el mayor
+          }
         }
-        // Fallback: buscar cualquier action que contenga "registration" o "lead"
+        // Fallback: buscar cualquier action con "registration" o "lead" y tomar el mayor
         if (val === 0) {
-          const fb = acts.find(x => x.action_type?.includes("registration")||x.action_type?.includes("lead"));
-          if (fb) val = parseFloat(fb.value)||0;
+          acts.filter(x => x.action_type?.includes("registration")||x.action_type?.includes("lead"))
+            .forEach(x => { const v=parseFloat(x.value)||0; if(v>val) val=v; });
         }
         record[m.campo] = val;
         record["resultados"] = val;
@@ -6216,10 +6233,14 @@ function FacebookPanel({ client, onUpdate }) {
     const todas = [];
     for (const cuenta of activas) {
       try {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]&limit=50&access_token=${token}`;
-        const res = await fetch(url);
-        const d = await res.json();
-        if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre, _cuentaId: cuenta.id})));
+        // Paginar campañas — FB limita a 50 por página
+        let campUrl = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]&limit=100&access_token=${token}`;
+        while (campUrl) {
+          const res = await fetch(campUrl);
+          const d = await res.json();
+          if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre, _cuentaId: cuenta.id})));
+          campUrl = d.paging?.next || null; // seguir paginando si hay más
+        }
       } catch {}
     }
     setCampaigns(todas);
