@@ -9738,43 +9738,59 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     setLoadingHist(false);
   }
 
-  // ── Fetch en tiempo real cada 30s ─────────────────────────────────────────
+  // ── Fetch CPL en tiempo real cada 30s ────────────────────────────────────
   async function fetchCplActual() {
-    if (!token || !cuentas?.length) return;
+    if (!token) return;
+    const cuentasActivas = (cuentas||[]).filter(c => c.adAccountId);
+    if (!cuentasActivas.length && adAccountId) cuentasActivas.push({ adAccountId, nombre:"Principal" });
+    if (!cuentasActivas.length) return;
+
     setLoading(true);
     const hoy = localDateStr();
-    try {
-      const multi = await fetchInsightsMultiCuenta(token, cuentas, { since: hoy, until: hoy }, "spend,actions");
-      if (multi && multi.inv > 0) {
-        const inv = multi.inv;
-        const nl  = multi.leads;
-        if (inv>0 && nl>0) {
-          const cpl=inv/nl;
-          const ahora=Date.now();
-          const punto={ ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
-          setPuntosRT(prev => {
-            const mapa={};
-            [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
-            return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
-          });
-          fetchCount.current++;
-          if (fetchCount.current%5===0) guardarPuntos([punto]);
-        }
-      }
-    } catch(e) { console.error("[CPL RT]", e.message); }
+    let totalInv = 0, totalLeads = 0;
+
+    for (const cuenta of cuentasActivas) {
+      try {
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions&time_range=${encodeURIComponent(JSON.stringify({since:hoy,until:hoy}))}&level=account&access_token=${token}`;
+        const json = await fetch(url).then(r=>r.json());
+        if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
+        const row = json.data?.[0];
+        if (!row) continue;
+        totalInv += parseFloat(row.spend)||0;
+        // Tipos reales de conversión — tomar el mayor, excluir engagement
+        const acts = row.actions||[];
+        const REALES  = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+        const IGNORAR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+        let nl = 0;
+        for (const t of REALES) { const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+        if (nl===0) for (const a of acts) { if(!IGNORAR.has(a.action_type)&&a.action_type.includes("registration")){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+        totalLeads += nl;
+        console.log(`[CPL RT] ${cuenta.nombre}: $${parseFloat(row.spend||0).toFixed(2)} | leads=${nl} | CPL=${nl>0?(parseFloat(row.spend||0)/nl).toFixed(2):"?"}`);
+      } catch(e) { console.error(`[CPL RT] ${cuenta.nombre}:`, e.message); }
+    }
+
+    if (totalInv>0 && totalLeads>0) {
+      const cpl=totalInv/totalLeads, ahora=Date.now();
+      const punto={ ts:ahora, hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit",second:"2-digit"}), fecha:hoy, esHoy:true, cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(totalInv.toFixed(2)), leads:totalLeads };
+      setPuntosRT(prev => { const m={}; [...prev,punto].forEach(p=>{m[p.ts]=p;}); return Object.values(m).sort((a,b)=>a.ts-b.ts).slice(-2880); });
+      fetchCount.current++;
+      if (fetchCount.current%5===0) guardarPuntos([punto]);
+      console.log(`[CPL RT] ✅ CPL=$${cpl.toFixed(2)} | ${totalLeads} leads | $${totalInv.toFixed(2)} invertidos`);
+    } else {
+      console.warn(`[CPL RT] ⚠️ inv=$${totalInv.toFixed(2)} leads=${totalLeads} — sin datos suficientes`);
+    }
     setLoading(false);
   }
 
   useEffect(() => {
-    if (!token || !adAccountId) return;
+    const hayConfig = token && ((cuentas||[]).some(c=>c.adAccountId) || adAccountId);
+    if (!hayConfig) return;
     // Si el componente padre ya maneja el interval (externalPuntos), solo cargar histórico
     fetchHistoricoHoy();
     if (externalPuntos !== undefined) return; // padre maneja el fetch en tiempo real
     fetchCplActual();
-    // Intervalo persistente — no se detiene al cambiar de tab
-    // Se limpia solo cuando el componente padre (AdminClientDetail) desmonta
+    // Intervalo 30s — persistente entre cambios de tab
     const t = setInterval(fetchCplActual, INTERVALO * 1000);
-    // Guardar referencia global para que persista entre renders
     window.__cplInterval = t;
     return () => {
       clearInterval(t);
