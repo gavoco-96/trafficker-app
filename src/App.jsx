@@ -457,9 +457,10 @@ const css = `
 const fmtNum = (n, dec = 0) => {
   if (n === "" || n === null || n === undefined || isNaN(Number(n))) return "—";
   const num = Number(n);
-  // Para números pequeños con decimales (CPL, CPC, etc.) usar formato sin separador de miles
-  // para evitar que $1.41 se confunda con $1,410
-  if (dec >= 2 && Math.abs(num) < 1000) {
+  // Para valores con decimales (precios unitarios como CPL, CPC, CPM):
+  // usar punto decimal sin separador de miles para evitar ambigüedad
+  // Ej: 1434.44 → "1434.44" no "1.434,44"
+  if (dec >= 2) {
     return num.toFixed(dec);
   }
   return num.toLocaleString("es-EC", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -9913,7 +9914,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
                 </div>
                 <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
                   {distorsionado
-                    ? <>CPL hoy: <span style={{fontFamily:"var(--mono)",color:"var(--amber)"}}>${fmtNum(ultimo.cpl,2)}</span> ({leadsHoy} leads) · Basado en {totalRes.toFixed(0)} leads totales</>
+                    ? <>CPL hoy: <span style={{fontFamily:"var(--mono)",color:"var(--amber)"}}>${fmtNum(ultimo.cpl,2)}</span> ({leadsHoy} leads hoy) · Misión: {totalRes.toFixed(0)} leads</>
                     : <>Min: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(minCpl,2)}</span>{" · "}Max: <span style={{fontFamily:"var(--mono)",color:"var(--red)"}}>${fmtNum(maxCpl,2)}</span>{cplAcum>0&&<span style={{marginLeft:8}}>· Misión: <span style={{fontFamily:"var(--mono)",fontWeight:700}}>${fmtNum(cplAcum,2)}</span></span>}</>
                   }
                   {modoRT && datosAyer.length>0 && <span style={{marginLeft:8,color:"rgba(255,255,255,.3)"}}>— Gris: ayer</span>}
