@@ -9712,7 +9712,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
         // FB no acepta time_increment=hourly con date_preset
         // Usar since/until con time_increment=1 (por día, no por hora)
         const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
-        histUrl.searchParams.set("fields", "spend,actions,date_start,date_stop");
+        histUrl.searchParams.set("fields", "spend,actions");
         histUrl.searchParams.set("since", hoy);
         histUrl.searchParams.set("until", hoy);
         histUrl.searchParams.set("level", "account");
