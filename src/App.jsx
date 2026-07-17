@@ -4212,39 +4212,69 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   const [corteLoading, setCorteLoading] = useState(false);
   const [corteError, setCorteError] = useState(null);
 
-  async function fetchCorteHoy() {
+  
+// ─── HELPER: extraer leads de múltiples action_types de FB ───
+function extraerLeadsFB(actions) {
+  const TIPOS = ["lead","onsite_conversion.lead_grouped","complete_registration",
+    "offsite_conversion.fb_pixel_lead","offsite_conversion.fb_pixel_complete_registration",
+    "contact","submit_application","subscribe"];
+  let total = 0;
+  for (const tipo of TIPOS) {
+    const a = (actions||[]).find(x => x.action_type === tipo);
+    if (a) total += parseFloat(a.value)||0;
+  }
+  if (total === 0) {
+    const fb = (actions||[]).find(x => x.action_type?.includes("lead")||x.action_type?.includes("registration")||x.action_type?.includes("contact"));
+    if (fb) total = parseFloat(fb.value)||0;
+  }
+  return total;
+}
+
+// ─── HELPER: insights sumados de múltiples cuentas FB ────────
+async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level="account") {
+  const activas = (cuentas||[]).filter(c => c.adAccountId);
+  if (!activas.length) return null;
+  let inv=0, leads=0, alc=0, impr=0;
+  for (const cuenta of activas) {
+    try {
+      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${fields}&time_range=${encodeURIComponent(JSON.stringify(timeRange))}&level=${level}&access_token=${token}`;
+      const json = await fetch(url).then(r=>r.json());
+      if (json.error || !json.data?.length) continue;
+      for (const d of json.data) {
+        inv   += parseFloat(d.spend)||0;
+        leads += extraerLeadsFB(d.actions||[]);
+        alc   += parseFloat(d.reach)||0;
+        impr  += parseFloat(d.impressions)||0;
+      }
+    } catch(e) { console.error("[FB multi]", e.message); }
+  }
+  const cpm = impr>0 ? (inv/impr)*1000 : 0;
+  return { inv, leads, alcance:alc, impr, cpm };
+}
+
+async function fetchCorteHoy() {
     const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
-    if (!token || !adAccountId) {
-      setCorteError("Sin credenciales de Facebook configuradas.");
-      return;
+    const cuentasActivas = (_cuentas || []).filter(c => c.adAccountId);
+    if (!cuentasActivas.length && client.fbConfig?.adAccountId) {
+      cuentasActivas.push({ adAccountId: client.fbConfig.adAccountId, nombre: "Principal" });
     }
-    setCorteLoading(true);
-    setCorteError(null);
-    setCorteFB(null);
+    if (!token || !cuentasActivas.length) {
+      setCorteError("Sin credenciales de Facebook configuradas."); return;
+    }
+    setCorteLoading(true); setCorteError(null); setCorteFB(null);
     try {
       const fields = "spend,actions,impressions,reach,cpm,ctr,cpc,date_start";
-      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fields}&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
-      const res  = await fetch(url);
-      const json = await res.json();
-      if (json.error) { setCorteError("FB: " + json.error.message); setCorteLoading(false); return; }
-      if (!json.data?.length) { setCorteError("Sin datos en Facebook para hoy todavía."); setCorteLoading(false); return; }
-      const d   = json.data[0];
-      const inv = parseFloat(d.spend) || 0;
-      const la  = (d.actions||[]).find(a => a.action_type==="lead" || a.action_type==="onsite_conversion.lead_grouped");
-      const leads = la ? parseFloat(la.value) : 0;
-      const alcance = parseFloat(d.reach) || 0;
-      const impr    = parseFloat(d.impressions) || 0;
-      const cpm  = parseFloat(d.cpm) || 0;
-      const ctr  = parseFloat(d.ctr) || 0;
-      const cpc  = parseFloat(d.cpc) || 0;
+      const multi = await fetchInsightsMultiCuenta(token, cuentasActivas, { since: hoy, until: hoy }, fields);
+      if (!multi || multi.inv === 0) {
+        setCorteError("Sin datos en Facebook para hoy todavía."); setCorteLoading(false); return;
+      }
+      const { inv, leads, alcance, impr, cpm, ctr } = multi;
+      const cpc = inv > 0 && alcance > 0 ? inv / alcance : 0;
       setCorteFB({ inv, leads, alcance, impr, cpm, ctr, cpc,
         cpl: inv > 0 && leads > 0 ? inv/leads : 0,
         hora: new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})
       });
-    } catch(e) {
-      setCorteError("Error de red: " + e.message);
-    }
+    } catch(e) { setCorteError("Error de red: " + e.message); }
     setCorteLoading(false);
   }
 
@@ -9511,16 +9541,29 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     setLoadingHist(true);
     const hoy = localDateStr();
     try {
-      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
-      const res  = await fetch(url);
-      const json = await res.json();
-      if (json.error || !json.data?.length) { setLoadingHist(false); return; }
-      const puntosPorHora = json.data.map(d => {
-        const inv = parseFloat(d.spend)||0;
-        const la  = (d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
-        const nl  = la ? parseFloat(la.value) : 0;
+      // Histórico horario — sumando todas las cuentas
+      let puntosPorHoraAcum = {};
+      const activas = (cuentas||[]).filter(c=>c.adAccountId);
+      for (const cuenta of activas) {
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
+        const res  = await fetch(url);
+        const json = await res.json();
+        if (json.error || !json.data?.length) continue;
+        json.data.forEach(d => {
+          const inv = parseFloat(d.spend)||0;
+          const nl  = extraerLeadsFB(d.actions||[]);
+          const ts  = new Date((d.date_start||hoy).replace(" ","T")).getTime();
+          if (!puntosPorHoraAcum[ts]) puntosPorHoraAcum[ts] = { inv:0, nl:0, date_start: d.date_start };
+          puntosPorHoraAcum[ts].inv += inv;
+          puntosPorHoraAcum[ts].nl  += nl;
+        });
+      }
+      const dummy = []; // para compatibilidad con código siguiente
+      if (!Object.keys(puntosPorHoraAcum).length) { setLoadingHist(false); return; }
+      const puntosPorHora = Object.entries(puntosPorHoraAcum).map(([tsKey, d]) => {
+        const inv = d.inv; const nl = d.nl;
         if (inv<=0 || nl<=0) return null;
-        const ts = new Date((d.date_start||hoy).replace(" ","T")).getTime();
+        const ts = parseInt(tsKey);
         return { ts, hora:new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
       }).filter(Boolean);
       if (puntosPorHora.length > 0) {
@@ -9537,18 +9580,14 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
   // ── Fetch en tiempo real cada 30s ─────────────────────────────────────────
   async function fetchCplActual() {
-    if (!token || !adAccountId) return;
+    if (!token || !cuentas?.length) return;
     setLoading(true);
     const hoy = localDateStr();
     try {
-      const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
-      const res  = await fetch(url);
-      const json = await res.json();
-      if (!json.error && json.data?.length) {
-        const d = json.data[0];
-        const inv=parseFloat(d.spend)||0;
-        const la=(d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
-        const nl=la?parseFloat(la.value):0;
+      const multi = await fetchInsightsMultiCuenta(token, cuentas, { since: hoy, until: hoy }, "spend,actions");
+      if (multi && multi.inv > 0) {
+        const inv = multi.inv;
+        const nl  = multi.leads;
         if (inv>0 && nl>0) {
           const cpl=inv/nl;
           const ahora=Date.now();
@@ -9562,7 +9601,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           if (fetchCount.current%5===0) guardarPuntos([punto]);
         }
       }
-    } catch {}
+    } catch(e) { console.error("[CPL RT]", e.message); }
     setLoading(false);
   }
 
