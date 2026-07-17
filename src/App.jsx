@@ -9898,20 +9898,24 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
             const totalInv = allRecs.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
             const totalRes = allRecs.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
             const cplAcum  = totalInv>0&&totalRes>0 ? totalInv/totalRes : 0;
-            // Si hay pocos leads hoy (CPL distorsionado), mostrar advertencia
             const leadsHoy = ultimo.leads || 0;
+            // Distorsionado = pocos leads hoy y CPL muy diferente al acumulado
             const distorsionado = leadsHoy < 50 && cplAcum > 0 && Math.abs(ultimo.cpl - cplAcum)/cplAcum > 0.5;
+            // Si está distorsionado, mostrar el CPL acumulado como número principal
+            const cplMostrar = distorsionado && cplAcum > 0 ? cplAcum : ultimo.cpl;
+            const colorMostrar = distorsionado && cplAcum > 0 ? "var(--accent2)" : color;
             return (
               <>
                 <div style={{display:"flex",alignItems:"baseline",gap:10,marginTop:4}}>
-                  <span style={{fontSize:28,fontWeight:800,fontFamily:"var(--mono)",color}}>${fmtNum(ultimo.cpl,2)}</span>
-                  <span style={{fontSize:13,color,fontWeight:600}}>{tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})</span>
-                  {distorsionado && <span style={{fontSize:10,color:"var(--amber)",background:"rgba(255,222,89,.1)",padding:"2px 8px",borderRadius:8}}>⚠️ Pocos leads hoy</span>}
+                  <span style={{fontSize:28,fontWeight:800,fontFamily:"var(--mono)",color:colorMostrar}}>${fmtNum(cplMostrar,2)}</span>
+                  {!distorsionado && <span style={{fontSize:13,color,fontWeight:600}}>{tend==="baja"?"▼":"▲"} {Math.abs(cambio).toFixed(2)}% ({rango})</span>}
+                  {distorsionado && <span style={{fontSize:10,color:"var(--amber)",background:"rgba(255,222,89,.1)",padding:"2px 8px",borderRadius:8}}>⚠️ Pocos leads hoy · CPL misión</span>}
                 </div>
                 <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
-                  Min: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(minCpl,2)}</span>
-                  {" · "}Max: <span style={{fontFamily:"var(--mono)",color:"var(--red)"}}>${fmtNum(maxCpl,2)}</span>
-                  {cplAcum>0 && <span style={{marginLeft:8}}>· CPL misión: <span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--accent2)"}}>${fmtNum(cplAcum,2)}</span></span>}
+                  {distorsionado
+                    ? <>CPL hoy: <span style={{fontFamily:"var(--mono)",color:"var(--amber)"}}>${fmtNum(ultimo.cpl,2)}</span> ({leadsHoy} leads) · Basado en {totalRes.toFixed(0)} leads totales</>
+                    : <>Min: <span style={{fontFamily:"var(--mono)",color:"var(--green)"}}>${fmtNum(minCpl,2)}</span>{" · "}Max: <span style={{fontFamily:"var(--mono)",color:"var(--red)"}}>${fmtNum(maxCpl,2)}</span>{cplAcum>0&&<span style={{marginLeft:8}}>· Misión: <span style={{fontFamily:"var(--mono)",fontWeight:700}}>${fmtNum(cplAcum,2)}</span></span>}</>
+                  }
                   {modoRT && datosAyer.length>0 && <span style={{marginLeft:8,color:"rgba(255,255,255,.3)"}}>— Gris: ayer</span>}
                 </div>
               </>
