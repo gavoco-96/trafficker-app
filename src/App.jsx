@@ -454,7 +454,16 @@ const css = `
 `;
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
-const fmtNum = (n, dec = 0) => (n === "" || n === null || n === undefined || isNaN(Number(n))) ? "—" : Number(n).toLocaleString("es-EC", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const fmtNum = (n, dec = 0) => {
+  if (n === "" || n === null || n === undefined || isNaN(Number(n))) return "—";
+  const num = Number(n);
+  // Para números pequeños con decimales (CPL, CPC, etc.) usar formato sin separador de miles
+  // para evitar que $1.41 se confunda con $1,410
+  if (dec >= 2 && Math.abs(num) < 1000) {
+    return num.toFixed(dec);
+  }
+  return num.toLocaleString("es-EC", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+};
 const fmtUSD = (n) => n && !isNaN(n) ? "$" + fmtNum(n, 2) : "—";
 const sum = (arr, k) => arr.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 const avg = (arr, k) => arr.length ? sum(arr, k) / arr.length : 0;
