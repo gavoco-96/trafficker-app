@@ -4864,7 +4864,8 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
 
   async function sincronizarConFacebook() {
     const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const adAccountId = (_cuentas?.[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
+  const cuentas     = _cuentas || [];
+  const adAccountId = (cuentas[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
     if (!token || !adAccountId) return show("Configura Facebook Ads en la tab 📘 Facebook primero", "err");
     setSyncing(true); setSyncResult(null);
     show("⏳ Obteniendo anuncios de Facebook (puede tomar unos segundos)...", "ok");
