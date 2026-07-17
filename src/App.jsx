@@ -9709,12 +9709,13 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       let puntosPorHoraAcum = {};
       const activas = (cuentas||[]).filter(c=>c.adAccountId);
       for (const cuenta of activas) {
+        // FB no acepta time_increment=hourly con date_preset
+        // Usar since/until con time_increment=1 (por día, no por hora)
         const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
         histUrl.searchParams.set("fields", "spend,actions,date_start,date_stop");
-        histUrl.searchParams.set("date_preset", "today");
-        histUrl.searchParams.set("time_increment", "hourly");
+        histUrl.searchParams.set("since", hoy);
+        histUrl.searchParams.set("until", hoy);
         histUrl.searchParams.set("level", "account");
-        histUrl.searchParams.set("limit", "48");
         histUrl.searchParams.set("access_token", token);
         const url = histUrl.toString();
         const res  = await fetch(url);
@@ -9773,10 +9774,11 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
     for (const cuenta of cuentasActivas) {
       try {
-        // Usar date_preset=today — evita problemas de encoding con time_range
+        // Usar since/until con URL.searchParams — encoding correcto automático
         const rtUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
         rtUrl.searchParams.set("fields", "spend,actions");
-        rtUrl.searchParams.set("date_preset", "today");
+        rtUrl.searchParams.set("since", hoy);
+        rtUrl.searchParams.set("until", hoy);
         rtUrl.searchParams.set("level", "account");
         rtUrl.searchParams.set("access_token", token);
         const json = await fetch(rtUrl.toString()).then(r=>r.json());
