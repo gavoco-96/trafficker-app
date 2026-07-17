@@ -4255,27 +4255,47 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return null;
   let inv=0, leads=0, alc=0, impr=0;
+  
+  // Campos que necesitamos siempre — incluyendo action_values para conversiones
+  const baseFields = ["spend","actions","impressions","reach","action_values"];
+  const extraFields = (fields||"").split(",").filter(f=>f&&!baseFields.includes(f));
+  const allFields = [...new Set([...baseFields, ...extraFields])].join(",");
+  
   for (const cuenta of activas) {
     try {
-      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${fields}&time_range=${encodeURIComponent(JSON.stringify(timeRange))}&level=${level}&access_token=${token}`;
+      // Intentar primero a nivel account — más rápido
+      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${allFields}&time_range=${encodeURIComponent(JSON.stringify(timeRange))}&level=account&access_token=${token}`;
       const json = await fetch(url).then(r=>r.json());
-      if (json.error || !json.data?.length) continue;
-      for (const d of json.data) {
+      if (json.error) { console.warn("[FB RT]", json.error.message); continue; }
+      
+      for (const d of (json.data||[])) {
         inv  += parseFloat(d.spend)||0;
         alc  += parseFloat(d.reach)||0;
         impr += parseFloat(d.impressions)||0;
-        // Inline para evitar errores de scope en build de Vite
         const _acts = d.actions||[];
-        const _TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration",
-          "complete_registration","offsite_conversion.fb_pixel_complete_registration",
-          "onsite_conversion.lead_grouped","offsite_conversion.fb_pixel_lead","lead"];
+        const _TYPES = [
+          "offsite_complete_registration_add_meta_leads",
+          "omni_complete_registration",
+          "complete_registration",
+          "offsite_conversion.fb_pixel_complete_registration",
+          "onsite_conversion.lead_grouped",
+          "offsite_conversion.fb_pixel_lead",
+          "lead"
+        ];
         let _best = 0;
+        // Tomar el valor más alto entre todos los tipos conocidos
         for (const t of _TYPES) {
           const _a = _acts.find(x=>x.action_type===t);
           if (_a) { const v=parseFloat(_a.value)||0; if(v>_best) _best=v; }
         }
-        if (_best===0) _acts.filter(x=>x.action_type?.includes("registration")||x.action_type?.includes("lead"))
-          .forEach(x=>{const v=parseFloat(x.value)||0;if(v>_best)_best=v;});
+        // Fallback: cualquier action con "registration" o "lead"
+        if (_best===0) {
+          _acts.filter(x=>x.action_type?.includes("registration")||x.action_type?.includes("lead"))
+            .forEach(x=>{const v=parseFloat(x.value)||0;if(v>_best)_best=v;});
+        }
+        // Log para debug en tiempo real
+        if (_best > 0) console.log(`[FB RT] ${cuenta.nombre}: inv=$${parseFloat(d.spend||0).toFixed(2)} leads=${_best} CPL=$${inv>0&&_best>0?(inv/_best).toFixed(2):"?"}`);
+        else console.warn(`[FB RT] ${cuenta.nombre}: inv=$${parseFloat(d.spend||0).toFixed(2)} — sin leads. Actions:`, _acts.map(a=>a.action_type+"="+a.value).join(", "));
         leads += _best;
       }
     } catch(e) { console.error("[FB multi]", e.message); }
@@ -10119,6 +10139,9 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
       <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10,color:"var(--muted)"}}>
         <span>{client.cplRtData?`${Object.keys(client.cplRtData).length} días guardados · ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos total`:"Sin historial RT aún"}</span>
+        {ultimo && Math.round(ultimo.leads||0) <= 2 && (
+          <span style={{marginLeft:8,color:"var(--amber)",fontSize:10}}>⚠️ Solo {Math.round(ultimo.leads||0)} leads RT detectados — abre DevTools Console para ver log [CPL RT]</span>
+        )}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {modoRT && datosAyer.length>0 && <span style={{color:"rgba(255,255,255,.25)"}}>— ayer</span>}
           {token&&adAccountId&&<button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px"}} onClick={()=>{fetchHistoricoHoy();fetchCplActual();}} disabled={loading||loadingHist}>🔄</button>}
