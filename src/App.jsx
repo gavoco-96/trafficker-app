@@ -6024,15 +6024,35 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
     .filter((v, i, arr) => arr.indexOf(v) === i) // deduplicar
     .join(",");
 
-  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${fbFields}&time_range={"since":"${date}","until":"${date}"}&level=account&access_token=${token}`;
+  // Asegurar que siempre tengamos spend y actions en los campos
+  const camposBase = ["spend", "actions", "impressions", "reach"];
+  const todosCampos = [...new Set([...fbFields.split(","), ...camposBase])].join(",");
+  
+  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${todosCampos}&time_range={"since":"${date}","until":"${date}"}&level=account&access_token=${token}`;
 
   try {
     const res = await fetch(url);
     const data = await res.json();
-    if (data.error) return { ok: false, error: data.error.message };
+    
+    // Log del error real para debug
+    if (data.error) {
+      console.error(`[FB API Error] act_${adAccountId} ${date}:`, data.error);
+      return { ok: false, error: data.error.message };
+    }
 
     const row = data.data?.[0];
-    if (!row) return { ok: false, error: "Sin datos para esta fecha en Facebook Ads." };
+    if (!row) {
+      // Intentar con date_preset si time_range no devuelve datos
+      console.warn(`[FB] Sin datos para ${date} en act_${adAccountId}`);
+      return { ok: false, error: "Sin datos para esta fecha en Facebook Ads." };
+    }
+    
+    // Log de qué actions devuelve FB para debug
+    if (row.actions?.length) {
+      console.log(`[FB] act_${adAccountId} ${date} — actions:`, row.actions.map(a => a.action_type + "=" + a.value).join(", "));
+    } else {
+      console.warn(`[FB] act_${adAccountId} ${date} — sin actions en la respuesta. spend=${row.spend}`);
+    }
 
     // Mapear campos de FB a campos internos
     const record = { date };
@@ -6522,6 +6542,25 @@ function FacebookPanel({ client, onUpdate }) {
           <button className="btn btn-primary btn-sm" disabled={syncing||!token||!cuentas.some(c=>c.adAccountId)} onClick={handleSync}
             style={{background:"var(--accent)"}}>
             {syncing ? "⟳ Sincronizando..." : syncMode==="range"?"⟳ Sincronizar rango":"⟳ Sincronizar"}
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} title="Probar conexión con FB API"
+            onClick={async () => {
+              const activas = cuentas.filter(c => c.adAccountId);
+              if (!activas.length || !token) return alert("Configura token y cuenta primero");
+              const fecha = syncMode==="range" ? rangeFrom : syncDate;
+              const results = [];
+              for (const cuenta of activas) {
+                try {
+                  const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,impressions&time_range={"since":"${fecha}","until":"${fecha}"}&level=account&access_token=${token}`;
+                  const d = await fetch(url).then(r=>r.json());
+                  if (d.error) results.push("❌ " + cuenta.nombre + ": " + d.error.message + " (código " + d.error.code + ")");
+                  else if (!d.data?.length) results.push("⚠️ " + cuenta.nombre + ": Sin datos para " + fecha + " — puede que el gasto sea $0 ese día o la cuenta no tenga campañas activas");
+                  else results.push("✅ " + cuenta.nombre + ": spend=$" + d.data[0].spend + " | actions: " + (d.data[0].actions||[]).map(a=>a.action_type+"="+a.value).join(", "));
+                } catch(e) { results.push("❌ " + cuenta.nombre + ": " + e.message); }
+              }
+              alert("DIAGNÓSTICO FB API — " + fecha + "\n\n" + results.join("\n\n"));
+            }}>
+            🔍 Diagnóstico
           </button>
           {syncStatus && (
             <span className={"fb-sync-badge "+(syncStatus==="ok"?"fb-sync-ok":syncStatus==="err"?"fb-sync-err":syncStatus==="partial"?"fb-sync-loading":"fb-sync-loading")}>
