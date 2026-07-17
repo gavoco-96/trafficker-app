@@ -9774,14 +9774,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
     for (const cuenta of cuentasActivas) {
       try {
-        // Usar since/until con URL.searchParams — encoding correcto automático
-        const rtUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
-        rtUrl.searchParams.set("fields", "spend,actions");
-        rtUrl.searchParams.set("since", hoy);
-        rtUrl.searchParams.set("until", hoy);
-        rtUrl.searchParams.set("level", "account");
-        rtUrl.searchParams.set("access_token", token);
-        const json = await fetch(rtUrl.toString()).then(r=>r.json());
+        // Construir URL manualmente — control total del formato
+        const rtUrlStr = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend%2Cactions&since=${hoy}&until=${hoy}&level=account&access_token=${encodeURIComponent(token)}`;
+        console.log("[CPL RT] URL:", rtUrlStr.replace(token, "TOKEN..."));
+        const json = await fetch(rtUrlStr).then(r=>r.json());
         if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
         const row = json.data?.[0];
         if (!row) continue;
