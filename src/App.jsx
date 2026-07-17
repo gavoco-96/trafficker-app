@@ -4265,7 +4265,7 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
     try {
       // Intentar primero a nivel account — más rápido
       const _s=timeRange.since||"",_u=timeRange.until||"";
-      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${allFields}&time_range={"since":"${_s}","until":"${_u}"}&level=account&access_token=${token}`;
+      const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=${allFields}&time_range={'since':'${_s}','until':'${_u}'}&level=account&access_token=${token}`;
       const json = await fetch(url).then(r=>r.json());
       if (json.error) { console.warn("[FB RT]", json.error.message); continue; }
       
@@ -6082,7 +6082,7 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   const camposBase = ["spend", "actions", "impressions", "reach"];
   const todosCampos = [...new Set([...fbFields.split(","), ...camposBase])].join(",");
   
-  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${todosCampos}&time_range={"since":"${date}","until":"${date}"}&level=account&access_token=${token}`;
+  const url = `https://graph.facebook.com/v19.0/act_${adAccountId}/insights?fields=${todosCampos}&time_range={'since':'${date}','until':'${date}'}&level=account&access_token=${token}`;
 
   try {
     const res = await fetch(url);
@@ -6638,7 +6638,7 @@ function FacebookPanel({ client, onUpdate }) {
               const results = [];
               for (const cuenta of activas) {
                 try {
-                  const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,impressions&time_range={"since":"${fecha}","until":"${fecha}"}&level=account&access_token=${token}`;
+                  const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,impressions&time_range={'since':'${fecha}','until':'${fecha}'}&level=account&access_token=${token}`;
                   const d = await fetch(url).then(r=>r.json());
                   if (d.error) results.push("❌ " + cuenta.nombre + ": " + d.error.message + " (código " + d.error.code + ")");
                   else if (!d.data?.length) results.push("⚠️ " + cuenta.nombre + ": Sin datos para " + fecha + " — puede que el gasto sea $0 ese día o la cuenta no tenga campañas activas");
@@ -9697,7 +9697,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       let puntosPorHoraAcum = {};
       const activas = (cuentas||[]).filter(c=>c.adAccountId);
       for (const cuenta of activas) {
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={"since":"${hoy}","until":"${hoy}"}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,date_start,date_stop&time_range={'since':'${hoy}','until':'${hoy}'}&time_increment=hourly&level=account&limit=48&access_token=${token}`;
         const res  = await fetch(url);
         const json = await res.json();
         if (json.error || !json.data?.length) continue;
@@ -9755,7 +9755,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     for (const cuenta of cuentasActivas) {
       try {
         // URL con time_range sin encodear — Facebook acepta JSON directo en query string
-        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${token}`;
+        const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${token}`;
         const json = await fetch(url).then(r=>r.json());
         if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
         const row = json.data?.[0];
@@ -12588,7 +12588,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
     async function fetchCpl() {
       try {
         const hoy = localDateStr();
-        const url = `https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend,actions&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${fbToken}`;
+        const url = `https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend,actions&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${fbToken}`;
         const res = await fetch(url);
         const json = await res.json();
         if (!json.error && json.data?.length) {
@@ -14744,7 +14744,7 @@ function useNotificaciones(clients) {
         try {
           const accId = c.fbConfig?.cuentas?.[0]?.adAccountId || c.fbConfig?.adAccountId;
           if (accId) {
-            const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range={"since":"${hoy}","until":"${hoy}"}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
+            const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
             if (!d.error && d.data?.[0] && parseFloat(d.data[0].spend) > c.presupuesto_diario * 1.2)
               nuevas.push({ id:`gasto_${c.id}_${hoy}`, tipo:"gasto", cliente:nombre, msg:`🔴 Gasto disparado — ${nombre}` });
             if (d.error?.code === 190)
