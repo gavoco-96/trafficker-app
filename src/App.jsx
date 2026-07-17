@@ -6015,6 +6015,10 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
       if (m.key === "actions_lead") return "actions";
       if (m.key === "actions_purchase") return "actions";
       if (m.key === "purchase_roas") return "purchase_roas";
+      // cost_per_result no es campo válido de FB API — usar cost_per_action_type
+      if (m.key === "cost_per_result") return "cost_per_action_type";
+      // clicks en FB API es "clicks" pero link clicks es "inline_link_clicks"
+      if (m.key === "clicks") return "inline_link_clicks";
       return m.key;
     })
     .filter((v, i, arr) => arr.indexOf(v) === i) // deduplicar
@@ -6044,6 +6048,18 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
         record[m.campo] = parseFloat(action?.value || 0);
       } else if (m.key === "purchase_roas") {
         record[m.campo] = parseFloat(row.purchase_roas?.[0]?.value || 0);
+      } else if (m.key === "cost_per_result") {
+        // FB devuelve cost_per_action_type como array — tomar el lead/registro
+        const cpr = (row.cost_per_action_type || []);
+        const best = cpr.find(x =>
+          x.action_type === "complete_registration" ||
+          x.action_type === "lead" ||
+          x.action_type === "onsite_conversion.lead_grouped"
+        ) || cpr[0];
+        record[m.campo] = parseFloat(best?.value || 0);
+      } else if (m.key === "clicks") {
+        // inline_link_clicks es el campo real en FB
+        record[m.campo] = parseFloat(row.inline_link_clicks || row.clicks || 0);
       } else if (row[m.key] !== undefined) {
         record[m.campo] = parseFloat(row[m.key]) || 0;
       }
@@ -6176,7 +6192,10 @@ function FacebookPanel({ client, onUpdate }) {
 
     for (const cuenta of activas) {
       const res = await fetchFbMetrics(token, cuenta.adAccountId, fecha, selectedMetrics);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.warn(`[FB Sync] ${cuenta.nombre} ${fecha}: ${res.error}`);
+        continue;
+      }
       const r = res.record;
       porCuenta.push({ cuenta: cuenta.nombre, adAccountId: cuenta.adAccountId, ...r });
       // Sumar campos numéricos
