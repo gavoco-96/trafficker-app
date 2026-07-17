@@ -9886,7 +9886,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const maxV=hasData?maxCpl*1.1:1, minV=hasData?Math.max(0,minCpl*0.9):0, rngV=maxV-minV||1;
 
   // Para el eje X en modo 24h usamos timestamps; en otros modos usamos índices
-  function xP(i, arr){ return PAD.left+(i/Math.max((arr||datosVista).length-1,1))*cW; }
+  function xP(i, arr){ return PAD.left+(i/Math.max((arr||datosVistaFinal).length-1,1))*cW; }
   function xPts(ts, allPts) {
     if (!allPts.length) return PAD.left;
     const minTs = allPts[0].ts, maxTs = allPts[allPts.length-1].ts;
@@ -9896,17 +9896,17 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   function yP(v){ return PAD.top+cH-((v-minV)/rngV)*cH; }
 
   // En modo 24h mezclar ayer y hoy para eje X compartido
-  const allPts24h = modoRT ? [...datosAyer, ...datosVista].sort((a,b)=>a.ts-b.ts) : [];
+  const allPts24h = modoRT ? [...datosAyer, ...datosVistaFinal].sort((a,b)=>a.ts-b.ts) : [];
 
-  const pathHoy = modoRT && datosVista.length>0
+  const pathHoy = modoRT && datosVistaFinal.length>0
     ? datosVistaFinal.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts, allPts24h)+" "+yP(d.cpl)).join(" ")
-    : !modoRT && datosVista.length>0
+    : !modoRT && datosVistaFinal.length>0
       ? datosVistaFinal.map((d,i)=>(i===0?"M ":"L ")+xP(i)+" "+yP(d.cpl)).join(" ")
       : "";
 
-  const areaHoy = modoRT && datosVista.length>0
+  const areaHoy = modoRT && datosVistaFinal.length>0
     ? `M ${xPts(datosVistaFinal[0].ts, allPts24h)} ${PAD.top+cH} `+datosVistaFinal.map(d=>`L ${xPts(d.ts,allPts24h)} ${yP(d.cpl)}`).join(" ")+` L ${xPts(datosVistaFinal[datosVistaFinal.length-1].ts,allPts24h)} ${PAD.top+cH} Z`
-    : !modoRT && datosVista.length>0
+    : !modoRT && datosVistaFinal.length>0
       ? `M ${xP(0)} ${PAD.top+cH} `+datosVistaFinal.map((d,i)=>`L ${xP(i)} ${yP(d.cpl)}`).join(" ")+` L ${xP(n-1)} ${PAD.top+cH} Z`
       : "";
 
@@ -9916,7 +9916,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
   const yTicks=[0,0.2,0.4,0.6,0.8,1].map(t=>minV+rngV*t);
   const xStep=Math.max(1,Math.floor(n/8));
-  const xLabels=datosVista.filter((_,i)=>i%xStep===0||i===n-1);
+  const xLabels=datosVistaFinal.filter((_,i)=>i%xStep===0||i===n-1);
 
   // Sparkline inferior
   const sparkD=histDiario.slice(-60), sN=sparkD.length;
@@ -10033,12 +10033,12 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
             {/* Labels X */}
             {modoRT ? (
-              datosVista.filter((_,i,arr)=>i===0||i===Math.floor(arr.length/2)||i===arr.length-1).map((d,i)=>(
+              datosVistaFinal.filter((_,i,arr)=>i===0||i===Math.floor(arr.length/2)||i===arr.length-1).map((d,i)=>(
                 <text key={i} x={xPts(d.ts,allPts24h)} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
               ))
             ) : (
               xLabels.map((d,i)=>(
-                <text key={i} x={xP(datosVista.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
+                <text key={i} x={xP(datosVistaFinal.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
               ))
             )}
 
@@ -10053,7 +10053,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
             {/* Anotaciones en la gráfica */}
             {modoRT && anotHoy.map(a=>{
-              const ptCercano = datosVista.reduce((prev,curr)=>Math.abs(curr.ts-a.ts)<Math.abs(prev.ts-a.ts)?curr:prev, datosVista[0]);
+              const ptCercano = datosVistaFinal.reduce((prev,curr)=>Math.abs(curr.ts-a.ts)<Math.abs(prev.ts-a.ts)?curr:prev, datosVistaFinal[0]);
               if (!ptCercano) return null;
               const cx = xPts(ptCercano.ts, allPts24h);
               const cy = yP(ptCercano.cpl);
@@ -10083,7 +10083,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
             <text x={PAD.left+cW-10} y={PAD.top+cH-10} textAnchor="end" fontSize="11" fill="rgba(255,255,255,.06)" fontWeight="700" letterSpacing="1">📊 TRAFFICK PRO</text>
 
             {/* Hover areas */}
-            {datosVista.map((d,i)=>(
+            {datosVistaFinal.map((d,i)=>(
               <rect key={i}
                 x={(modoRT?xPts(d.ts,allPts24h):xP(i))-Math.max(cW/Math.max(n,1)/2,3)}
                 y={PAD.top} width={Math.max(cW/Math.max(n,1),6)} height={cH}
@@ -10091,10 +10091,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
             ))}
 
             {/* Tooltip mejorado */}
-            {hovIdx!==null && hovIdx<datosVista.length && (()=>{
-              const d=datosVista[hovIdx];
+            {hovIdx!==null && hovIdx<datosVistaFinal.length && (()=>{
+              const d=datosVistaFinal[hovIdx];
               const cx=modoRT?xPts(d.ts,allPts24h):xP(hovIdx);
-              const tx=hovIdx<datosVista.length*0.65?cx+8:cx-165;
+              const tx=hovIdx<datosVistaFinal.length*0.65?cx+8:cx-165;
               const ty=Math.max(yP(d.cpl)-80,PAD.top);
               // Buscar dato de ayer a la misma hora
               const dAyer = datosAyer.find(a=>a.hora===d.fecha);
