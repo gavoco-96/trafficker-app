@@ -6034,10 +6034,9 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
     const record = { date };
     selectedMetrics.forEach(m => {
       if (m.key === "actions_lead") {
-        const action = (row.actions || []).find(a => a.action_type === "lead");
-        const val = parseFloat(action?.value || 0);
+        // Usar extraerLeadsFB para cubrir complete_registration, lead, etc.
+        const val = extraerLeadsFB(row.actions || []);
         record[m.campo] = val;
-        // Para campañas de lanzamiento/formularios, leads = resultados
         record["resultados"] = val;
         record["formularios"] = val;
       } else if (m.key === "actions_purchase") {
@@ -6188,7 +6187,14 @@ function FacebookPanel({ client, onUpdate }) {
     if (!porCuenta.length) return { ok: false, error: "Sin datos en FB para " + fecha };
 
     // Recalcular métricas derivadas del consolidado
-    if (acum.inversion && acum.leads) acum.cpa = parseFloat((acum.inversion/acum.leads).toFixed(4));
+    // leads puede estar en "leads", "resultados" o "formularios" — usar el que tenga datos
+    const leadsTotal = acum.leads || acum.resultados || acum.formularios || 0;
+    if (acum.inversion && leadsTotal) {
+      acum.cpa = parseFloat((acum.inversion/leadsTotal).toFixed(4));
+      acum.leads = leadsTotal;
+      acum.resultados = leadsTotal;
+      acum.formularios = leadsTotal;
+    }
     if (acum.inversion && acum.impresiones) acum.cpm = parseFloat((acum.inversion/acum.impresiones*1000).toFixed(4));
     if (acum.inversion && acum.clics_enlace) acum.cpc = parseFloat((acum.inversion/acum.clics_enlace).toFixed(4));
     if (acum.clics_enlace && acum.impresiones) acum.ctr = parseFloat((acum.clics_enlace/acum.impresiones*100).toFixed(4));
