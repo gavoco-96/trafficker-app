@@ -9745,9 +9745,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       if (!Object.keys(puntosPorHoraAcum).length) { setLoadingHist(false); return; }
       const puntosPorHora = Object.entries(puntosPorHoraAcum).map(([tsKey, d]) => {
         const inv = d.inv; const nl = d.nl;
-        if (inv<=0 || nl<=0) return null;
+        if (inv<=0) return null; // descartar solo si no hay inversión
         const ts = parseInt(tsKey);
-        return { ts, hora:new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
+        const cpl = nl>0 ? parseFloat((inv/nl).toFixed(4)) : 0;
+        return { ts, hora:new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl, inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
       }).filter(Boolean);
       if (puntosPorHora.length > 0) {
         setPuntosRT(prev => {
@@ -9900,12 +9901,12 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const _ultimoRaw = datosVista.length>0 ? datosVista[datosVista.length-1] : null;
   const _leadsHoy = _ultimoRaw?.leads || 0;
   const _graficaDistorsionada = _leadsHoy < 50 && cplAcumGlobal > 0 &&
-    _ultimoRaw && Math.abs(_ultimoRaw.cpl - cplAcumGlobal)/cplAcumGlobal > 0.5;
+    _ultimoRaw && _ultimoRaw.cpl > 0 && Math.abs(_ultimoRaw.cpl - cplAcumGlobal)/cplAcumGlobal > 0.5;
 
-  // Si está distorsionada, reemplazar datosVista con punto único del CPL acumulado
+  // Si está distorsionada, mostrar cplAcum pero mantener el punto para que la gráfica tenga datos
   const datosVistaFinal = _graficaDistorsionada && cplAcumGlobal > 0
     ? [{ ..._ultimoRaw, cpl: cplAcumGlobal }]
-    : datosVista;
+    : datosVista.filter(d => d.cpl > 0); // filtrar puntos con cpl=0
 
   // Combinar hoy+ayer para calcular escala Y
   const todosLosVals = [
