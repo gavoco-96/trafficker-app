@@ -4158,10 +4158,8 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
     setMetasConfig(nuevasMetas);
     const newCfg = { ...(client.metricasConfig||{}), [METAS_KEY]: nuevasMetas };
     if (onUpdate) {
-      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-        body: JSON.stringify({ metricasConfig: newCfg })
-      });
+      const r = await db.upsert({ ...client, metricasConfig: newCfg });
+      if (!r.ok) { console.error("[Metas] Error guardando:", r.error); return; }
       client.metricasConfig = newCfg;
     }
   }
@@ -4169,11 +4167,10 @@ function ApolloMetricasPanel({ client, period, from, to, onUpdate, configKey = "
   async function guardarConfigTarjetas(nuevas) {
     setTarjetasConfig(nuevas);
     if (onUpdate) {
-      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-        body: JSON.stringify({ metricasConfig: { ...(client.metricasConfig||{}), [TARJETAS_KEY]: nuevas } })
-      });
-      client.metricasConfig = { ...(client.metricasConfig||{}), [TARJETAS_KEY]: nuevas };
+      const newCfgT = { ...(client.metricasConfig||{}), [TARJETAS_KEY]: nuevas };
+      const r = await db.upsert({ ...client, metricasConfig: newCfgT });
+      if (!r.ok) { console.error("[Tarjetas] Error guardando:", r.error); return; }
+      client.metricasConfig = newCfgT;
     }
   }
 
@@ -9671,10 +9668,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       cpl: puntosRT.length ? puntosRT[puntosRT.length-1].cpl : null,
     };
     const nuevas = [...anotaciones, nueva];
-    await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-      method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-      body: JSON.stringify({cplAnotaciones: nuevas})
-    });
+    const r = await db.upsert({ ...client, cplAnotaciones: nuevas });
+    if (!r.ok) { console.error("[CPL] Error guardando anotacion:", r.error); return; }
     client.cplAnotaciones = nuevas;
     setAnotTexto(""); setShowAnotForm(false);
   }
@@ -9691,15 +9686,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     const limite = new Date(); limite.setDate(limite.getDate()-90);
     Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
     try {
-      const resp = await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-        method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-        body: JSON.stringify({cplRtData})
-      });
-      if (!resp.ok) {
-        const txt = await resp.text().catch(()=> "");
-        console.error(`[CPL] Error guardando puntos RT (${resp.status}):`, txt);
-        return;
-      }
+      // La tabla clients guarda todo dentro del jsonb "data" → usar db.upsert
+      // (ademas: aqui H esta shadowed por la altura del SVG, no usar fetch directo)
+      const r = await db.upsert({ ...client, cplRtData });
+      if (!r.ok) { console.error("[CPL] Error guardando puntos RT:", r.error); return; }
       client.cplRtData = cplRtData;
     } catch(e) { console.error("[CPL] Error guardando puntos RT:", e.message); }
   }
@@ -12664,13 +12654,10 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
               cplRtData[hoy] = Object.values(mapaP).sort((a,b)=>a.ts-b.ts).slice(-2880);
               const limite = new Date(); limite.setDate(limite.getDate()-90);
               Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
-              const resp = await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
-                method:"PATCH", headers:{...H, Prefer:"return=minimal"},
-                body: JSON.stringify({cplRtData})
-              });
-              if (!resp.ok) {
-                const txt = await resp.text().catch(()=> "");
-                console.error(`[CPL padre] Error guardando puntos RT (${resp.status}):`, txt);
+              // La tabla clients guarda todo el cliente en el jsonb "data" → db.upsert
+              const rSave = await db.upsert({ ...client, cplRtData });
+              if (!rSave.ok) {
+                console.error("[CPL padre] Error guardando puntos RT:", rSave.error);
               } else {
                 client.cplRtData = cplRtData;
                 cplPendientesRef.current = []; // vaciar buffer solo si guardo OK
