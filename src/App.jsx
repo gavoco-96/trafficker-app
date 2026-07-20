@@ -9694,57 +9694,67 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     } catch(e) { console.error("[CPL] Error guardando puntos RT:", e.message); }
   }
 
-  // ── Fetch histórico por hora ───────────────────────────────────────────────
+  // ── Fetch histórico por hora (estilo CoinMarketCap) ──────────────────────
+  // Usa el breakdown horario de FB para reconstruir la curva del dia completo
+  // con CPL ACUMULADO hora a hora, aunque la app no haya estado abierta.
   async function fetchHistoricoHoy() {
     if (!token || !adAccountId) return;
     setLoadingHist(true);
     const hoy = localDateStr();
     try {
-      // Histórico horario — sumando todas las cuentas
-      let puntosPorHoraAcum = {};
+      // Acumular inv/leads POR HORA sumando todas las cuentas
+      const porHora = {}; // hora (0-23) → { inv, nl }
       const activas = (cuentas||[]).filter(c=>c.adAccountId);
+      if (!activas.length && adAccountId) activas.push({ adAccountId, nombre:"Principal" });
       for (const cuenta of activas) {
-        // FB no acepta time_increment=hourly con date_preset
-        // Usar since/until con time_increment=1 (por día, no por hora)
         const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
         histUrl.searchParams.set("fields", "spend,actions");
-        // since/until sueltos son ignorados por /insights → date_preset=today
         histUrl.searchParams.set("date_preset", "today");
         histUrl.searchParams.set("level", "account");
+        histUrl.searchParams.set("breakdowns", "hourly_stats_aggregated_by_advertiser_time_zone");
+        histUrl.searchParams.set("limit", "48");
         histUrl.searchParams.set("access_token", token);
-        const url = histUrl.toString();
-        const res  = await fetch(url);
-        const json = await res.json();
-        if (json.error || !json.data?.length) continue;
-        json.data.forEach(d => {
+        const json = await fetch(histUrl.toString()).then(r=>r.json());
+        if (json.error) { console.warn("[CPL hist]", cuenta.nombre, json.error.message); continue; }
+        (json.data||[]).forEach(d => {
+          // d.hourly_stats_...: "13:00:00 - 13:59:59" → hora local del anunciante
+          const franja = d.hourly_stats_aggregated_by_advertiser_time_zone || "";
+          const hh = parseInt(franja.slice(0,2));
+          if (isNaN(hh)) return;
           const inv = parseFloat(d.spend)||0;
-          // Inline — evita error de scope en Vite build
           const _a = d.actions||[];
-          const _T = [
-            "offsite_complete_registration_add_meta_leads","omni_complete_registration",
-            "complete_registration","offsite_conversion.fb_pixel_complete_registration",
-            "offsite_conversion.fb_pixel_lead","lead"
-          ];
-          const _EX = ["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"];
+          const _T = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+          const _EX = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
           let nl = 0;
-          for (const t of _T) { if(_EX.includes(t)) continue; const x=_a.find(a=>a.action_type===t); if(x){const v=parseFloat(x.value)||0;if(v>nl)nl=v;} }
-          if (nl===0) _a.filter(a=>!_EX.includes(a.action_type)&&a.action_type?.includes("registration"))
-            .forEach(a=>{const v=parseFloat(a.value)||0;if(v>nl)nl=v;});
-          const ts  = new Date((d.date_start||hoy).replace(" ","T")).getTime();
-          if (!puntosPorHoraAcum[ts]) puntosPorHoraAcum[ts] = { inv:0, nl:0, date_start: d.date_start };
-          puntosPorHoraAcum[ts].inv += inv;
-          puntosPorHoraAcum[ts].nl  += nl;
+          for (const t of _T) { const x=_a.find(a=>a.action_type===t); if(x){const v=parseFloat(x.value)||0;if(v>nl)nl=v;} }
+          if (nl===0) for (const a of _a) { if(!_EX.has(a.action_type)&&a.action_type?.includes("registration")){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+          if (!porHora[hh]) porHora[hh] = { inv:0, nl:0 };
+          porHora[hh].inv += inv;
+          porHora[hh].nl  += nl;
         });
       }
-      const dummy = []; // para compatibilidad con código siguiente
-      if (!Object.keys(puntosPorHoraAcum).length) { setLoadingHist(false); return; }
-      const puntosPorHora = Object.entries(puntosPorHoraAcum).map(([tsKey, d]) => {
-        const inv = d.inv; const nl = d.nl;
-        if (inv<=0) return null; // descartar solo si no hay inversión
-        const ts = parseInt(tsKey);
-        const cpl = nl>0 ? parseFloat((inv/nl).toFixed(4)) : 0;
-        return { ts, hora:new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl, inv:parseFloat(inv.toFixed(2)), leads:nl, tipo:"hist_hora" };
-      }).filter(Boolean);
+      const horas = Object.keys(porHora).map(Number).sort((a,b)=>a-b);
+      if (!horas.length) { setLoadingHist(false); return; }
+      // Curva de CPL ACUMULADO: cada punto = totales del dia hasta esa hora
+      let accInv = 0, accNl = 0;
+      const puntosPorHora = [];
+      for (const hh of horas) {
+        accInv += porHora[hh].inv;
+        accNl  += porHora[hh].nl;
+        if (accInv <= 0 || accNl <= 0) continue;
+        // Timestamp LOCAL al cierre de la hora (nunca UTC — evita puntos fantasma)
+        const dLoc = new Date();
+        dLoc.setHours(hh, 59, 0, 0);
+        const ts = Math.min(dLoc.getTime(), Date.now());
+        puntosPorHora.push({
+          ts,
+          hora: new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}),
+          cpl: parseFloat((accInv/accNl).toFixed(4)),
+          inv: parseFloat(accInv.toFixed(2)),
+          leads: accNl,
+          tipo: "hist_hora"
+        });
+      }
       if (puntosPorHora.length > 0) {
         setPuntosRT(prev => {
           const mapa = {};
@@ -9752,8 +9762,9 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           return Object.values(mapa).sort((a,b)=>a.ts-b.ts);
         });
         await guardarPuntos(puntosPorHora);
+        console.log(`[CPL hist] ✅ ${puntosPorHora.length} puntos horarios reconstruidos (${horas[0]}h → ${horas[horas.length-1]}h)`);
       }
-    } catch {}
+    } catch(e) { console.error("[CPL hist]", e.message); }
     setLoadingHist(false);
   }
 
@@ -9836,10 +9847,12 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     // → la gráfica siempre cubre exactamente 24h y avanza con el tiempo
     const tsVentanaInicio = ahora - 24*60*60*1000; // ayer misma hora
 
-    // Datos de hoy (línea principal) — solo desde inicio de ventana
-    const ptsHoyGuardados = client.cplRtData?.[hoy]||[];
+    // Datos de hoy (línea principal) — solo puntos cuyo ts cae en HOY (hora local)
+    // Esto descarta puntos fantasma con medianoche UTC (= 7pm de ayer en UTC-5)
+    const esDeHoy = p => localDateStr(new Date(p.ts)) === hoy;
+    const ptsHoyGuardados = (client.cplRtData?.[hoy]||[]).filter(esDeHoy);
     const mapa={};
-    [...ptsHoyGuardados, ...puntosRT].forEach(p=>{mapa[p.ts]=p;});
+    [...ptsHoyGuardados, ...puntosRT.filter(esDeHoy)].forEach(p=>{mapa[p.ts]=p;});
     datosVista = Object.values(mapa)
       .sort((a,b)=>a.ts-b.ts)
       .filter(p => p.ts >= tsVentanaInicio && p.ts <= ahora)
@@ -10069,11 +10082,18 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
               </g>
             ))}
 
-            {/* Labels X */}
+            {/* Labels X — ticks de hora distribuidos uniformemente (estilo CoinMarketCap) */}
             {modoRT ? (
-              datosVistaFinal.filter((_,i,arr)=>i===0||i===Math.floor(arr.length/2)||i===arr.length-1).map((d,i)=>(
-                <text key={i} x={xPts(d.ts,allPts24h)} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
-              ))
+              (() => {
+                if (!allPts24h.length) return null;
+                const t0 = allPts24h[0].ts, t1 = allPts24h[allPts24h.length-1].ts;
+                const NT = Math.min(6, Math.max(2, Math.floor((t1-t0)/(60*60*1000)))); // ~1 tick/hora, max 6
+                return Array.from({length: NT+1}, (_,i) => t0 + (t1-t0)*i/NT).map((ts,i)=>(
+                  <text key={i} x={xPts(ts,allPts24h)} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">
+                    {new Date(ts).toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"})}
+                  </text>
+                ));
+              })()
             ) : (
               xLabels.map((d,i)=>(
                 <text key={i} x={xP(datosVistaFinal.indexOf(d))} y={PAD.top+cH+16} textAnchor="middle" fontSize="8" fill="var(--muted)">{d.fecha}</text>
@@ -12643,10 +12663,10 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
             return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
           });
           console.log(`[CPL padre] ✅ CPL=$${cpl.toFixed(2)} | ${totalNl} leads | $${totalInv.toFixed(2)}`);
-          // Persistir a Supabase: 1er fetch y luego cada 10 (~5 min) para no saturar
+          // Persistir a Supabase: 1er fetch y luego cada 5 (~2.5 min)
           cplFetchCountRef.current++;
           cplPendientesRef.current.push(punto);
-          if (cplFetchCountRef.current === 1 || cplFetchCountRef.current % 10 === 0) {
+          if (cplFetchCountRef.current === 1 || cplFetchCountRef.current % 5 === 0) {
             try {
               const cplRtData = {...(client.cplRtData||{})};
               const mapaP = {};
