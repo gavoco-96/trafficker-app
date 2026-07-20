@@ -12610,24 +12610,42 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
     async function fetchCpl() {
       try {
         const hoy = localDateStr();
-        const url = `https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend,actions&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${fbToken}`;
-        const res = await fetch(url);
-        const json = await res.json();
-        if (!json.error && json.data?.length) {
-          const d = json.data[0];
-          const inv = parseFloat(d.spend)||0;
-          const la  = (d.actions||[]).find(a=>a.action_type==="lead"||a.action_type==="onsite_conversion.lead_grouped");
-          const nl  = la ? parseFloat(la.value) : 0;
-          if (inv>0 && nl>0) {
-            const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat((inv/nl).toFixed(4)), inv:parseFloat(inv.toFixed(2)), leads:nl };
-            setCplRtPuntos(prev => {
-              const mapa={};
-              [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
-              return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
-            });
-          }
+        // URL con URLSearchParams — encoding correcto, sin problemas de 400
+        const cuentasAll = client.fbConfig?.cuentas?.filter(c=>c.adAccountId) || [];
+        if (!cuentasAll.length && accId) cuentasAll.push({ adAccountId: accId, nombre: "Principal" });
+        let totalInv = 0, totalNl = 0;
+        for (const cuenta of cuentasAll) {
+          const u = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+          u.searchParams.set("fields", "spend,actions");
+          u.searchParams.set("since", hoy);
+          u.searchParams.set("until", hoy);
+          u.searchParams.set("level", "account");
+          u.searchParams.set("access_token", fbToken);
+          const json = await fetch(u.toString()).then(r=>r.json());
+          if (json.error) { console.warn("[CPL padre]", json.error.message); continue; }
+          const d = json.data?.[0]; if (!d) continue;
+          totalInv += parseFloat(d.spend)||0;
+          // Todos los tipos de conversión — tomar el mayor
+          const acts = d.actions||[];
+          const TIPOS = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+          const EXCL  = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+          let nl = 0;
+          for (const t of TIPOS) { const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+          if (nl===0) for (const a of acts) { if(!EXCL.has(a.action_type)&&a.action_type.includes("registration")){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+          totalNl += nl;
+          console.log(`[CPL padre] ${cuenta.nombre}: inv=$${parseFloat(d.spend||0).toFixed(2)} leads=${nl} CPL=${nl>0?(parseFloat(d.spend||0)/nl).toFixed(2):"?"}`);
         }
-      } catch {}
+        if (totalInv>0 && totalNl>0) {
+          const cpl = totalInv/totalNl;
+          const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(totalInv.toFixed(2)), leads:totalNl };
+          setCplRtPuntos(prev => {
+            const mapa={};
+            [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
+            return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
+          });
+          console.log(`[CPL padre] ✅ CPL=$${cpl.toFixed(2)} | ${totalNl} leads | $${totalInv.toFixed(2)}`);
+        }
+      } catch(e) { console.error("[CPL padre]", e.message); }
     }
 
     fetchCpl();
