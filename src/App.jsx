@@ -9691,12 +9691,17 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     const limite = new Date(); limite.setDate(limite.getDate()-90);
     Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
     try {
-      await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+      const resp = await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
         method:"PATCH", headers:{...H, Prefer:"return=minimal"},
         body: JSON.stringify({cplRtData})
       });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(()=> "");
+        console.error(`[CPL] Error guardando puntos RT (${resp.status}):`, txt);
+        return;
+      }
       client.cplRtData = cplRtData;
-    } catch {}
+    } catch(e) { console.error("[CPL] Error guardando puntos RT:", e.message); }
   }
 
   // ── Fetch histórico por hora ───────────────────────────────────────────────
@@ -9713,8 +9718,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
         // Usar since/until con time_increment=1 (por día, no por hora)
         const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
         histUrl.searchParams.set("fields", "spend,actions");
-        histUrl.searchParams.set("since", hoy);
-        histUrl.searchParams.set("until", hoy);
+        // since/until sueltos son ignorados por /insights → date_preset=today
+        histUrl.searchParams.set("date_preset", "today");
         histUrl.searchParams.set("level", "account");
         histUrl.searchParams.set("access_token", token);
         const url = histUrl.toString();
@@ -9776,7 +9781,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     for (const cuenta of cuentasActivas) {
       try {
         // Construir URL manualmente — control total del formato
-        const rtUrlStr = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend%2Cactions&since=${hoy}&until=${hoy}&level=account&access_token=${encodeURIComponent(token)}`;
+        // since/until sueltos son ignorados por /insights → date_preset=today
+        const rtUrlStr = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend%2Cactions&date_preset=today&level=account&access_token=${encodeURIComponent(token)}`;
         console.log("[CPL RT] URL:", rtUrlStr.replace(token, "TOKEN..."));
         const json = await fetch(rtUrlStr).then(r=>r.json());
         if (json.error) { console.warn(`[CPL RT] ${cuenta.nombre}:`, json.error.message); continue; }
@@ -12597,6 +12603,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
   // ── CPL en tiempo real persistente — sobrevive al cambio de tabs ─────────
   const cplIntervalRef = useRef(null);
+  const cplFetchCountRef = useRef(0);
+  const cplPendientesRef = useRef([]); // puntos aun no guardados en Supabase
   const [cplRtPuntos, setCplRtPuntos] = useState(() => {
     const hoy = localDateStr();
     return client.cplRtData?.[hoy] || [];
@@ -12617,8 +12625,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         for (const cuenta of cuentasAll) {
           const u = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
           u.searchParams.set("fields", "spend,actions");
-          u.searchParams.set("since", hoy);
-          u.searchParams.set("until", hoy);
+          // IMPORTANTE: since/until sueltos son IGNORADOS por /insights (usa default 30d).
+          // date_preset=today garantiza datos SOLO del dia actual.
+          u.searchParams.set("date_preset", "today");
           u.searchParams.set("level", "account");
           u.searchParams.set("access_token", fbToken);
           const json = await fetch(u.toString()).then(r=>r.json());
@@ -12644,6 +12653,30 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
             return Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
           });
           console.log(`[CPL padre] ✅ CPL=$${cpl.toFixed(2)} | ${totalNl} leads | $${totalInv.toFixed(2)}`);
+          // Persistir a Supabase: 1er fetch y luego cada 10 (~5 min) para no saturar
+          cplFetchCountRef.current++;
+          cplPendientesRef.current.push(punto);
+          if (cplFetchCountRef.current === 1 || cplFetchCountRef.current % 10 === 0) {
+            try {
+              const cplRtData = {...(client.cplRtData||{})};
+              const mapaP = {};
+              [...(cplRtData[hoy]||[]), ...cplPendientesRef.current].forEach(p=>{mapaP[p.ts]=p;});
+              cplRtData[hoy] = Object.values(mapaP).sort((a,b)=>a.ts-b.ts).slice(-2880);
+              const limite = new Date(); limite.setDate(limite.getDate()-90);
+              Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+              const resp = await fetch(`${SUPA_URL}/rest/v1/clients?id=eq.${client.id}`, {
+                method:"PATCH", headers:{...H, Prefer:"return=minimal"},
+                body: JSON.stringify({cplRtData})
+              });
+              if (!resp.ok) {
+                const txt = await resp.text().catch(()=> "");
+                console.error(`[CPL padre] Error guardando puntos RT (${resp.status}):`, txt);
+              } else {
+                client.cplRtData = cplRtData;
+                cplPendientesRef.current = []; // vaciar buffer solo si guardo OK
+              }
+            } catch(e2) { console.error("[CPL padre] persistencia:", e2.message); }
+          }
         }
       } catch(e) { console.error("[CPL padre]", e.message); }
     }
