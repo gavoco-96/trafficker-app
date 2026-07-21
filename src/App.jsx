@@ -1749,7 +1749,7 @@ const FUNNEL_DEFAULT = [
 
 // ─── TABLA REUTILIZABLE DE MÉTRICAS FB (sirve para campañas/conjuntos/anuncios) ─
 // Ordenamiento asc/desc por cualquier columna, scroll propio, resaltado de CPL.
-function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, padreLabel, maxHeight = 440 }) {
+function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, mostrarCuenta, padreLabel, maxHeight = 440 }) {
   const [sortCol, setSortCol] = useState("inv");
   const [sortDir, setSortDir] = useState("desc");
 
@@ -1808,6 +1808,7 @@ function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, padreLabel, maxHeight
                   <div style={{ minWidth: 0 }}>
                     <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 300 }} title={c.nombre}>{c.nombre}</div>
                     {mostrarPadre && c.padre && <div style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 300 }}>↳ {c.padre}</div>}
+                    {mostrarCuenta && c.cuenta && <div style={{ fontSize: 9, color: "var(--accent)", opacity: .8 }}>🏢 {c.cuenta}</div>}
                   </div>
                 </div>
               </td>
@@ -1850,7 +1851,7 @@ function CampanasFBPanel({ client, onUpdate }) {
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("30d");
   const [busqueda, setBusqueda] = useState("");
-  const [soloActivas, setSoloActivas] = useState(false);
+  const [soloActivas, setSoloActivas] = useState(true); // por defecto solo activos = consulta más rápida
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [salud, setSalud] = useState(null);
@@ -1859,6 +1860,9 @@ function CampanasFBPanel({ client, onUpdate }) {
 
   // Cache por nivel para no re-consultar al cambiar de tab
   const [datos, setDatos] = useState({ campaign: null, adset: null, ad: null });
+
+  // Filtro por cuenta (multicuenta): "todas" = consolidado, o el id de una cuenta
+  const [cuentaFiltro, setCuentaFiltro] = useState("todas");
 
   function aplicarPreset(p) {
     setPreset(p);
@@ -1874,7 +1878,7 @@ function CampanasFBPanel({ client, onUpdate }) {
     if (!hayConfig) { setError("Configura Facebook Ads en la tab 📘 Facebook primero."); return; }
     if (!forzar && datos[n]) return; // ya en cache
     setLoading(true); setError(null);
-    const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, n);
+    const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, n, soloActivas);
     setSalud(r.salud);
     persistirSalud(r.salud);
     if (!r.ok) { setError(r.error || r.salud?.mensaje || "Error al consultar Facebook"); setLoading(false); return; }
@@ -1898,7 +1902,7 @@ function CampanasFBPanel({ client, onUpdate }) {
     setDatos({ campaign: null, adset: null, ad: null });
     setLoading(true);
     (async () => {
-      const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, nivel);
+      const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, nivel, soloActivas);
       setSalud(r.salud);
       persistirSalud(r.salud);
       if (!r.ok) { setError(r.error || r.salud?.mensaje); setLoading(false); return; }
@@ -1918,6 +1922,7 @@ function CampanasFBPanel({ client, onUpdate }) {
 
   const filasRaw = datos[nivel] || [];
   const filas = filasRaw
+    .filter(c => cuentaFiltro === "todas" || c.cuenta === cuentaFiltro)
     .filter(c => !soloActivas || c.estado === "ACTIVE")
     .filter(c => !busqueda || c.nombre.toLowerCase().includes(busqueda.toLowerCase()) || (c.padre || "").toLowerCase().includes(busqueda.toLowerCase()));
   const totalInv = filas.reduce((s, c) => s + c.inv, 0);
@@ -1944,9 +1949,9 @@ function CampanasFBPanel({ client, onUpdate }) {
   }
 
   // ── Exportar a Google Sheets (abre un Sheet nuevo con los datos vía URL) ──
-  function exportarGoogleSheets() {
-    // Estrategia: copiar TSV al portapapeles y abrir un Sheet en blanco para pegar.
-    const cab = ["Nombre", nivel === "campaign" ? "" : "Pertenece a", "Estado", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
+  async function exportarGoogleSheets() {
+    // Construir TSV (Google Sheets pega TSV directo en celdas)
+    const cab = ["Nombre", nivel === "campaign" ? null : "Pertenece a", "Estado", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
     const filasT = [cab];
     filas.forEach(c => {
       const row = [c.nombre];
@@ -1955,16 +1960,32 @@ function CampanasFBPanel({ client, onUpdate }) {
       filasT.push(row);
     });
     const tsv = filasT.map(f => f.join("\t")).join("\n");
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(tsv).then(() => {
-        setGuardadoMsg("📋 Datos copiados. Abriendo Google Sheets — pega con Ctrl+V.");
-        setTimeout(() => setGuardadoMsg(null), 6000);
-        window.open("https://sheets.new", "_blank");
-      }).catch(() => {
-        window.open("https://sheets.new", "_blank");
-      });
-    } else {
+
+    // Copiar al portapapeles ANTES de abrir la pestaña (evita perder el foco).
+    let copiado = false;
+    try {
+      await navigator.clipboard.writeText(tsv);
+      copiado = true;
+    } catch {
+      // Fallback: textarea temporal + execCommand (funciona sin permisos)
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = tsv; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        copiado = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {}
+    }
+
+    if (copiado) {
+      setGuardadoMsg("📋 Datos copiados al portapapeles. Se abrió Google Sheets: haz clic en la celda A1 y pega con Ctrl+V (o Cmd+V).");
+      setTimeout(() => setGuardadoMsg(null), 9000);
       window.open("https://sheets.new", "_blank");
+    } else {
+      // Si no se pudo copiar, descargar CSV como respaldo garantizado
+      setGuardadoMsg("No se pudo copiar automáticamente. Descargué el CSV — ábrelo en Google Sheets con Archivo → Importar.");
+      setTimeout(() => setGuardadoMsg(null), 9000);
+      exportarCSV();
     }
   }
 
@@ -2008,11 +2029,22 @@ function CampanasFBPanel({ client, onUpdate }) {
         <SaludFBBadge salud={salud} />
       </div>
 
-      {/* Sub-tabs de nivel */}
-      <div className="period-pills" style={{ marginBottom: 12 }}>
-        {NIVELES.map(([k, l]) => (
-          <button key={k} className={"pill " + (nivel === k ? "active" : "")} onClick={() => setNivel(k)}>{l}</button>
-        ))}
+      {/* Sub-tabs de nivel + selector de cuenta (multicuenta) */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12, justifyContent: "space-between" }}>
+        <div className="period-pills">
+          {NIVELES.map(([k, l]) => (
+            <button key={k} className={"pill " + (nivel === k ? "active" : "")} onClick={() => setNivel(k)}>{l}</button>
+          ))}
+        </div>
+        {cuentas.length > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Cuenta:</span>
+            <select value={cuentaFiltro} onChange={e => setCuentaFiltro(e.target.value)} style={{ width: "auto", fontSize: 12, padding: "4px 8px" }}>
+              <option value="todas">Todas ({cuentas.length}) — consolidado</option>
+              {cuentas.map(c => <option key={c.id || c.adAccountId} value={c.nombre}>{c.nombre}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Controles de rango */}
@@ -2038,7 +2070,7 @@ function CampanasFBPanel({ client, onUpdate }) {
             <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 13 }}>🔍</span>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--muted)", cursor: "pointer" }}>
-            <input type="checkbox" checked={soloActivas} onChange={e => setSoloActivas(e.target.checked)} style={{ width: "auto", margin: 0 }} />
+            <input type="checkbox" checked={soloActivas} onChange={e => { setSoloActivas(e.target.checked); setTimeout(recargarTodo, 0); }} style={{ width: "auto", margin: 0 }} />
             Solo activos
           </label>
         </div>
@@ -2063,6 +2095,7 @@ function CampanasFBPanel({ client, onUpdate }) {
         <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Sin datos en el rango seleccionado.</div>
       ) : (
         <TablaMetricasFB filas={filas} cplGlobal={cplGlobal} mostrarPadre={nivel !== "campaign"}
+          mostrarCuenta={cuentas.length > 1 && cuentaFiltro === "todas"}
           padreLabel={nivel === "adset" ? "Campaña" : "Conjunto"} />
       )}
     </div>
@@ -6799,7 +6832,7 @@ function paisBandera(code){ return PAISES_INFO[code]?.f || "🌐"; }
 // Trae datos exactos desde FB para cualquier nivel de la jerarquía. Devuelve
 // también estado (activo/pausado) y un objeto de "salud" de la conexión.
 // nivel: "campaign" | "adset" | "ad"
-async function fetchMetricasPorNivel(token, cuentas, since, until, nivel) {
+async function fetchMetricasPorNivel(token, cuentas, since, until, nivel, soloActivas = false) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas", salud:{estado:"sin_config"} };
 
@@ -6844,6 +6877,12 @@ async function fetchMetricasPorNivel(token, cuentas, since, until, nivel) {
       url.searchParams.set("fields", campos.join(","));
       url.searchParams.set("time_range", JSON.stringify({ since, until }));
       url.searchParams.set("level", nivel);
+      // Filtrar solo activos desde el origen acelera mucho la consulta
+      if (soloActivas) {
+        const statusField = nivel === "campaign" ? "campaign.effective_status"
+          : nivel === "adset" ? "adset.effective_status" : "ad.effective_status";
+        url.searchParams.set("filtering", JSON.stringify([{ field: statusField, operator: "IN", value: ["ACTIVE"] }]));
+      }
       url.searchParams.set("limit", "500");
       url.searchParams.set("access_token", token);
       let next = url.toString();
@@ -13622,7 +13661,12 @@ function ChangePasswordInline({ client, onUpdate }) {
 }
 
 function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
-  const [tab, setTab] = useState("info");
+  const [tab, setTab] = useState(() => {
+    try { return sessionStorage.getItem("tp_clientTab") || "info"; } catch { return "info"; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem("tp_clientTab", tab); } catch {}
+  }, [tab]);
   const [adding, setAdding] = useState(false);
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
@@ -15949,7 +15993,16 @@ function AdminPanel({ clients, onLogout, onUpdate, onAddClient, onDeleteClient, 
     return () => window.removeEventListener("updateClient", handler);
   }, [onUpdate]);
   const [view, setView] = useState("clientes");
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(() => {
+    try { return sessionStorage.getItem("tp_selectedClient") || null; } catch { return null; }
+  });
+  // Persistir el cliente seleccionado para que F5 no saque al panel de clientes
+  useEffect(() => {
+    try {
+      if (selectedId) sessionStorage.setItem("tp_selectedClient", selectedId);
+      else sessionStorage.removeItem("tp_selectedClient");
+    } catch {}
+  }, [selectedId]);
   const [addingClient, setAddingClient] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
