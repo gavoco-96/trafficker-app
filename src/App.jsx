@@ -1398,8 +1398,10 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <div className="period-pills">
           <button className={"pill " + (vistaTab === "diario" ? "active" : "")} onClick={() => setVistaTab("diario")}>📅 Por día</button>
           <button className={"pill " + (vistaTab === "campanas" ? "active" : "")} onClick={() => setVistaTab("campanas")}>📡 Por campaña</button>
+          <button className={"pill " + (vistaTab === "paises" ? "active" : "")} onClick={() => setVistaTab("paises")}>🌎 Países</button>
         </div>
         {/* BARRA DE BÚSQUEDA NOMENCLATURA */}
+        {vistaTab !== "paises" && (
         <div style={{ display: "flex", gap: 8, flex: 1, maxWidth: 400, minWidth: 220 }}>
           <div style={{ position: "relative", flex: 1 }}>
             <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
@@ -1409,12 +1411,15 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
           </div>
           {busqueda && <button className="btn btn-ghost btn-sm" onClick={() => setBusqueda("")}>×</button>}
         </div>
+        )}
       </div>
       {busqueda && <div style={{ fontSize: 12, color: "var(--accent2)", marginBottom: 8 }}>
         Mostrando {rowsFiltrados.length} de {rows.length} registros con "{busqueda}"
       </div>}
 
-      {vistaTab === "campanas" ? (
+      {vistaTab === "paises" ? (
+        <PaisesPanel client={client} onUpdate={onUpdate} />
+      ) : vistaTab === "campanas" ? (
         <VistaPorCampana rows={sortedRows} busqueda={busqueda} />
       ) : (<>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
@@ -1741,6 +1746,261 @@ const FUNNEL_DEFAULT = [
   { key: "resultados_f", label: "Resultados", color: "#F59E0B" },
   { key: "ventas_f", label: "Ventas", color: "#EF4444" },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANEL POR PAÍS — gasto real ejecutado + presupuesto activo programado
+// ═══════════════════════════════════════════════════════════════════════════
+function PaisesPanel({ client, onUpdate }) {
+  const { token, cuentas: _cuentas } = client.fbConfig || {};
+  const cuentas = (_cuentas || []).filter(c => c.adAccountId);
+  if (!cuentas.length && client.fbConfig?.adAccountId) {
+    cuentas.push({ adAccountId: client.fbConfig.adAccountId, nombre: "Principal" });
+  }
+  const hayConfig = token && cuentas.length > 0;
+
+  // Países principales definidos por el usuario (guardados en el perfil del cliente)
+  const paisesPrincipales = client.paisesPrincipales || [];
+
+  // Rango de fechas
+  const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); });
+  const [hasta, setHasta] = useState(localDateStr());
+  const [preset, setPreset] = useState("30d");
+
+  const [gasto, setGasto] = useState(null);       // { porPais }
+  const [presup, setPresup] = useState(null);     // { monoPais, compartidos, totalDiario }
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [showConfigPaises, setShowConfigPaises] = useState(false);
+  const [nuevoPais, setNuevoPais] = useState("");
+
+  function aplicarPreset(p) {
+    setPreset(p);
+    const hoy = new Date();
+    let d = new Date();
+    if (p === "hoy") { d = hoy; }
+    else if (p === "7d") d.setDate(d.getDate()-6);
+    else if (p === "30d") d.setDate(d.getDate()-29);
+    else if (p === "90d") d.setDate(d.getDate()-89);
+    if (p !== "custom") { setDesde(d.toISOString().slice(0,10)); setHasta(hoy.toISOString().slice(0,10)); }
+  }
+
+  async function cargar() {
+    if (!hayConfig) { setError("Configura Facebook Ads en la tab 📘 Facebook primero."); return; }
+    setLoading(true); setError(null);
+    const [g, p] = await Promise.all([
+      fetchGastoPorPais(token, cuentas, desde, hasta),
+      fetchPresupuestoPorPais(token, cuentas),
+    ]);
+    if (!g.ok && !p.ok) { setError(g.error || p.error || "Error al consultar Facebook"); setLoading(false); return; }
+    setGasto(g.ok ? g : null);
+    setPresup(p.ok ? p : null);
+    setLoading(false);
+  }
+
+  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  // Añadir/quitar país principal
+  async function togglePaisPrincipal(code) {
+    const actual = client.paisesPrincipales || [];
+    const nuevos = actual.includes(code) ? actual.filter(c=>c!==code) : [...actual, code];
+    await onUpdate({ ...client, paisesPrincipales: nuevos });
+  }
+  async function agregarPaisManual() {
+    const code = nuevoPais.trim().toUpperCase();
+    if (code.length !== 2) return;
+    const actual = client.paisesPrincipales || [];
+    if (!actual.includes(code)) await onUpdate({ ...client, paisesPrincipales: [...actual, code] });
+    setNuevoPais("");
+  }
+
+  // Procesar datos de gasto
+  const porPais = gasto?.porPais || {};
+  const codigosConGasto = Object.keys(porPais).sort((a,b) => porPais[b].inv - porPais[a].inv);
+  const totalInv = codigosConGasto.reduce((s,c)=>s+porPais[c].inv,0);
+  const totalLeads = codigosConGasto.reduce((s,c)=>s+porPais[c].leads,0);
+
+  // Separar principales vs otros
+  const conGastoPrincipales = codigosConGasto.filter(c => paisesPrincipales.includes(c));
+  const conGastoOtros = codigosConGasto.filter(c => !paisesPrincipales.includes(c));
+  const [showOtros, setShowOtros] = useState(false);
+
+  // Presupuesto
+  const monoPais = presup?.monoPais || {};
+  const compartidos = presup?.compartidos || [];
+  const totalMonoDiario = Object.values(monoPais).reduce((s,v)=>s+v,0);
+
+  const fmt = (n) => "$" + fmtNum(n, 2);
+  const pct = (n) => totalInv>0 ? ((n/totalInv)*100).toFixed(1) + "%" : "—";
+
+  // Fila de país (barra de gasto)
+  const FilaPais = ({ code, data, destacado }) => {
+    const cpl = data.leads>0 ? data.inv/data.leads : 0;
+    const ancho = totalInv>0 ? (data.inv/totalInv)*100 : 0;
+    return (
+      <div style={{padding:"10px 12px", borderRadius:10, background:destacado?"rgba(77,159,255,.06)":"var(--surface2)",
+        border:destacado?"1px solid rgba(77,159,255,.25)":"1px solid var(--border)", marginBottom:8}}>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
+          <div style={{display:"flex", alignItems:"center", gap:8}}>
+            <span style={{fontSize:20}}>{paisBandera(code)}</span>
+            <div>
+              <div style={{fontWeight:700, fontSize:14}}>{paisNombre(code)} {destacado && <span style={{fontSize:9, color:"var(--accent)", marginLeft:4}}>★ principal</span>}</div>
+              <div style={{fontSize:11, color:"var(--muted)"}}>{Math.round(data.leads)} leads · CPL {cpl>0?fmt(cpl):"—"}</div>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontWeight:800, fontSize:16, fontFamily:"var(--mono)"}}>{fmt(data.inv)}</div>
+            <div style={{fontSize:11, color:"var(--muted)"}}>{pct(data.inv)}</div>
+          </div>
+        </div>
+        <div style={{height:6, borderRadius:3, background:"var(--border)", overflow:"hidden"}}>
+          <div style={{height:"100%", width:ancho+"%", borderRadius:3, background:destacado?"var(--accent)":"var(--accent2)", transition:"width .5s ease-out"}}/>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {/* Header + configuración de países principales */}
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12}}>
+        <div>
+          <div style={{fontWeight:700, fontSize:16}}>🌎 Análisis por país</div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Gasto real ejecutado y presupuesto activo programado, desglosado por país</div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={()=>setShowConfigPaises(v=>!v)} style={{fontSize:11}}>
+          ⚙️ Países principales ({paisesPrincipales.length})
+        </button>
+      </div>
+
+      {/* Configuración de países principales */}
+      {showConfigPaises && (
+        <div className="card" style={{marginBottom:12, padding:"12px 14px"}}>
+          <div style={{fontSize:12, fontWeight:600, marginBottom:8}}>Marca los países donde principalmente llevas pauta para este cliente</div>
+          <div style={{display:"flex", flexWrap:"wrap", gap:6, marginBottom:10}}>
+            {Object.keys(PAISES_INFO).map(code => (
+              <button key={code} onClick={()=>togglePaisPrincipal(code)}
+                style={{fontSize:11, padding:"4px 10px", borderRadius:14, cursor:"pointer",
+                  border:paisesPrincipales.includes(code)?"1px solid var(--accent)":"1px solid var(--border)",
+                  background:paisesPrincipales.includes(code)?"rgba(77,159,255,.15)":"transparent",
+                  color:paisesPrincipales.includes(code)?"var(--accent)":"var(--muted)", fontWeight:paisesPrincipales.includes(code)?700:400}}>
+                {paisBandera(code)} {code}
+              </button>
+            ))}
+          </div>
+          <div style={{display:"flex", gap:6, alignItems:"center"}}>
+            <input type="text" value={nuevoPais} onChange={e=>setNuevoPais(e.target.value)} maxLength={2}
+              placeholder="Otro código ISO (ej: JP)" style={{width:160, fontSize:12, textTransform:"uppercase"}}
+              onKeyDown={e=>e.key==="Enter"&&agregarPaisManual()} />
+            <button className="btn btn-sm" onClick={agregarPaisManual}>Agregar</button>
+          </div>
+        </div>
+      )}
+
+      {/* Controles de rango + refrescar */}
+      <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:14}}>
+        <div className="period-pills">
+          {[["hoy","Hoy"],["7d","7 días"],["30d","30 días"],["90d","90 días"]].map(([k,l])=>(
+            <button key={k} className={"pill "+(preset===k?"active":"")} onClick={()=>aplicarPreset(k)}>{l}</button>
+          ))}
+        </div>
+        <input type="date" value={desde} onChange={e=>{setDesde(e.target.value);setPreset("custom");}} max={hasta} style={{width:"auto",fontSize:12}} />
+        <span style={{fontSize:12,color:"var(--muted)"}}>→</span>
+        <input type="date" value={hasta} onChange={e=>{setHasta(e.target.value);setPreset("custom");}} max={localDateStr()} style={{width:"auto",fontSize:12}} />
+        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading||!hayConfig}>
+          {loading?"⟳ Consultando...":"🔄 Actualizar"}
+        </button>
+      </div>
+
+      {error && <div className="card" style={{padding:"12px 14px", marginBottom:12, borderColor:"var(--red)", color:"var(--red)", fontSize:13}}>{error}</div>}
+
+      {!hayConfig ? (
+        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>
+          Configura Facebook Ads en la tab 📘 Facebook para activar el análisis por país.
+        </div>
+      ) : (
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, alignItems:"start"}}>
+
+          {/* ─── COLUMNA 1: GASTO REAL EJECUTADO ─── */}
+          <div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10}}>
+              <div style={{fontWeight:700, fontSize:14}}>💸 Invertido por país</div>
+              <div style={{fontSize:11, color:"var(--muted)"}}>Total: <span style={{fontFamily:"var(--mono)", fontWeight:700, color:"var(--text)"}}>{fmt(totalInv)}</span></div>
+            </div>
+            <div style={{fontSize:10, color:"var(--muted)", marginBottom:10}}>Dato real de dónde cayó el gasto (funciona aunque las campañas apunten a varios países)</div>
+
+            {loading && !gasto ? (
+              <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Consultando Facebook...</div>
+            ) : codigosConGasto.length === 0 ? (
+              <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Sin gasto en el rango seleccionado.</div>
+            ) : (<>
+              {/* Principales primero */}
+              {conGastoPrincipales.map(code => <FilaPais key={code} code={code} data={porPais[code]} destacado={true} />)}
+              {/* Otros */}
+              {conGastoOtros.length > 0 && (
+                paisesPrincipales.length > 0 ? (<>
+                  <button className="btn btn-ghost btn-sm" style={{fontSize:11, marginBottom:8}} onClick={()=>setShowOtros(v=>!v)}>
+                    {showOtros?"▼":"▶"} Otros países ({conGastoOtros.length}) · {fmt(conGastoOtros.reduce((s,c)=>s+porPais[c].inv,0))}
+                  </button>
+                  {showOtros && conGastoOtros.map(code => <FilaPais key={code} code={code} data={porPais[code]} destacado={false} />)}
+                </>) : (
+                  conGastoOtros.map(code => <FilaPais key={code} code={code} data={porPais[code]} destacado={false} />)
+                )
+              )}
+            </>)}
+          </div>
+
+          {/* ─── COLUMNA 2: PRESUPUESTO PROGRAMADO ─── */}
+          <div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10}}>
+              <div style={{fontWeight:700, fontSize:14}}>📋 Presupuesto activo</div>
+              <div style={{fontSize:11, color:"var(--muted)"}}>Diario: <span style={{fontFamily:"var(--mono)", fontWeight:700, color:"var(--text)"}}>{fmt(presup?.totalDiario||0)}</span></div>
+            </div>
+            <div style={{fontSize:10, color:"var(--muted)", marginBottom:10}}>Lo que está programado ahora en adsets activos, según a qué países apuntan</div>
+
+            {loading && !presup ? (
+              <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Consultando adsets...</div>
+            ) : (<>
+              {/* Mono-país */}
+              {Object.keys(monoPais).sort((a,b)=>monoPais[b]-monoPais[a]).map(code => (
+                <div key={code} style={{padding:"8px 12px", borderRadius:10, background:paisesPrincipales.includes(code)?"rgba(16,185,129,.06)":"var(--surface2)",
+                  border:paisesPrincipales.includes(code)?"1px solid rgba(16,185,129,.25)":"1px solid var(--border)", marginBottom:8,
+                  display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    <span style={{fontSize:18}}>{paisBandera(code)}</span>
+                    <span style={{fontWeight:600, fontSize:13}}>{paisNombre(code)}</span>
+                  </div>
+                  <span style={{fontWeight:800, fontSize:15, fontFamily:"var(--mono)", color:"var(--green)"}}>{fmt(monoPais[code])}<span style={{fontSize:10, color:"var(--muted)", fontWeight:400}}>/día</span></span>
+                </div>
+              ))}
+              {Object.keys(monoPais).length === 0 && compartidos.length === 0 && (
+                <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Sin adsets activos con presupuesto propio. (Puede que uses presupuesto a nivel campaña/CBO.)</div>
+              )}
+
+              {/* Compartidos / multi-país */}
+              {compartidos.length > 0 && (
+                <div style={{marginTop:12, padding:"10px 12px", borderRadius:10, background:"rgba(255,222,89,.05)", border:"1px solid rgba(255,222,89,.2)"}}>
+                  <div style={{fontSize:12, fontWeight:700, color:"var(--amber)", marginBottom:2}}>⚠️ Presupuesto compartido (multi-país)</div>
+                  <div style={{fontSize:10, color:"var(--muted)", marginBottom:8}}>Estos adsets apuntan a varios países a la vez (ej. remarketing). Facebook reparte el presupuesto solo, no se puede dividir por país.</div>
+                  {compartidos.map((c,i) => (
+                    <div key={i} style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderTop:i>0?"1px solid var(--border)":"none"}}>
+                      <div style={{fontSize:12, minWidth:0, flex:1}}>
+                        <div style={{fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{c.nombre}</div>
+                        <div style={{fontSize:10, color:"var(--muted)"}}>
+                          {c.paises[0]==="WW" ? "🌐 Todo el mundo" : c.paises.map(p=>paisBandera(p)+" "+p).join("  ")}
+                        </div>
+                      </div>
+                      <span style={{fontWeight:700, fontSize:13, fontFamily:"var(--mono)", color:"var(--amber)", marginLeft:8}}>{fmt(c.budget)}<span style={{fontSize:9, color:"var(--muted)", fontWeight:400}}>/{c.tipo==="diario"?"día":"total"}</span></span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Parsea el plazo del KPI a días (ej: "30 días" → 30, "2 semanas" → 14)
 function parsePlazoToDays(plazo) {
@@ -6065,6 +6325,120 @@ const FB_METRICAS_DISPONIBLES = [
   { key: "cost_per_result", label: "Costo por resultado", campo: "cpa",                 prefix: "$" },
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ANÁLISIS POR PAÍS — gasto real (breakdowns) + presupuesto programado (targeting)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Códigos ISO-3166 alpha-2 → nombre en español + bandera emoji (los mas comunes en LATAM/pauta)
+const PAISES_INFO = {
+  EC:{n:"Ecuador",f:"🇪🇨"}, MX:{n:"México",f:"🇲🇽"}, CO:{n:"Colombia",f:"🇨🇴"},
+  PE:{n:"Perú",f:"🇵🇪"}, AR:{n:"Argentina",f:"🇦🇷"}, CL:{n:"Chile",f:"🇨🇱"},
+  US:{n:"Estados Unidos",f:"🇺🇸"}, ES:{n:"España",f:"🇪🇸"}, BO:{n:"Bolivia",f:"🇧🇴"},
+  VE:{n:"Venezuela",f:"🇻🇪"}, PA:{n:"Panamá",f:"🇵🇦"}, GT:{n:"Guatemala",f:"🇬🇹"},
+  CR:{n:"Costa Rica",f:"🇨🇷"}, DO:{n:"Rep. Dominicana",f:"🇩🇴"}, HN:{n:"Honduras",f:"🇭🇳"},
+  SV:{n:"El Salvador",f:"🇸🇻"}, NI:{n:"Nicaragua",f:"🇳🇮"}, PY:{n:"Paraguay",f:"🇵🇾"},
+  UY:{n:"Uruguay",f:"🇺🇾"}, BR:{n:"Brasil",f:"🇧🇷"}, PR:{n:"Puerto Rico",f:"🇵🇷"},
+  CA:{n:"Canadá",f:"🇨🇦"}, IT:{n:"Italia",f:"🇮🇹"}, FR:{n:"Francia",f:"🇫🇷"},
+  DE:{n:"Alemania",f:"🇩🇪"}, GB:{n:"Reino Unido",f:"🇬🇧"},
+};
+function paisNombre(code){ return PAISES_INFO[code]?.n || code || "Desconocido"; }
+function paisBandera(code){ return PAISES_INFO[code]?.f || "🌐"; }
+
+// ── GASTO REAL por país: usa breakdowns=country (lo que ya se ejecutó) ──
+// Suma sobre todas las cuentas activas. Devuelve { ok, porPais:{CODE:{inv,leads,impr,reach}} }
+async function fetchGastoPorPais(token, cuentas, since, until) {
+  const activas = (cuentas||[]).filter(c => c.adAccountId);
+  if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
+  const porPais = {};
+  const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+  const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+  for (const cuenta of activas) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+      url.searchParams.set("fields", "spend,actions,impressions,reach");
+      url.searchParams.set("breakdowns", "country");
+      url.searchParams.set("time_range", JSON.stringify({ since, until }));
+      url.searchParams.set("level", "account");
+      url.searchParams.set("limit", "500");
+      url.searchParams.set("access_token", token);
+      let next = url.toString();
+      while (next) {
+        const json = await fetch(next).then(r=>r.json());
+        if (json.error) { console.warn("[Países]", cuenta.nombre, json.error.message); break; }
+        for (const d of (json.data||[])) {
+          const code = d.country || "??";
+          if (!porPais[code]) porPais[code] = { inv:0, leads:0, impr:0, reach:0 };
+          porPais[code].inv   += parseFloat(d.spend)||0;
+          porPais[code].impr  += parseFloat(d.impressions)||0;
+          porPais[code].reach += parseFloat(d.reach)||0;
+          const acts = d.actions||[];
+          let nl = 0;
+          for (const t of LEAD_TYPES) { if(LEAD_EXCLUIR.has(t))continue; const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+          if (nl===0) acts.filter(x=>!LEAD_EXCLUIR.has(x.action_type)&&x.action_type?.includes("registration")).forEach(x=>{const v=parseFloat(x.value)||0;if(v>nl)nl=v;});
+          porPais[code].leads += nl;
+        }
+        next = json.paging?.next || null;
+      }
+    } catch(e) { console.error("[Países]", cuenta.nombre, e.message); }
+  }
+  return { ok:true, porPais };
+}
+
+// ── PRESUPUESTO PROGRAMADO por país: lee adsets activos + su targeting ──
+// Clasifica cada adset por los países a los que apunta. Los que apuntan a
+// varios países (ej. remarketing mundial) NO se pueden dividir por país:
+// se reportan aparte como "compartido/multi-país".
+async function fetchPresupuestoPorPais(token, cuentas) {
+  const activas = (cuentas||[]).filter(c => c.adAccountId);
+  if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
+  const monoPais = {};   // CODE → presupuesto diario sumado (adsets de un solo país)
+  const compartidos = []; // adsets multi-país: { nombre, paises:[], budget, tipo }
+  let totalDiario = 0;
+  for (const cuenta of activas) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/adsets`);
+      url.searchParams.set("fields", "name,daily_budget,lifetime_budget,effective_status,targeting{geo_locations}");
+      url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
+      url.searchParams.set("limit", "500");
+      url.searchParams.set("access_token", token);
+      let next = url.toString();
+      while (next) {
+        const json = await fetch(next).then(r=>r.json());
+        if (json.error) { console.warn("[Presup]", cuenta.nombre, json.error.message); break; }
+        for (const a of (json.data||[])) {
+          if (a.effective_status !== "ACTIVE") continue;
+          const daily = parseFloat(a.daily_budget||0)/100;   // FB entrega en centavos
+          const life  = parseFloat(a.lifetime_budget||0)/100;
+          const budget = daily || life;
+          if (budget <= 0) continue; // presupuesto puede estar a nivel campaña (CBO) — se omite
+          const geo = a.targeting?.geo_locations || {};
+          // Países explícitos
+          let paises = (geo.countries || []).slice();
+          // Si apunta por regiones/ciudades, extraer el country de cada una
+          (geo.regions||[]).forEach(r=>{ if(r.country&&!paises.includes(r.country))paises.push(r.country); });
+          (geo.cities||[]).forEach(c=>{ if(c.country&&!paises.includes(c.country))paises.push(c.country); });
+          totalDiario += daily; // solo diarios suman al "activo por día"
+          if (paises.length === 1) {
+            const code = paises[0];
+            monoPais[code] = (monoPais[code]||0) + (daily||life);
+          } else {
+            // 0 países = mundial ; 2+ = multi-país
+            compartidos.push({
+              nombre: a.name || "(sin nombre)",
+              cuenta: cuenta.nombre,
+              paises: paises.length ? paises : ["WW"], // WW = worldwide
+              budget: daily || life,
+              tipo: daily ? "diario" : "total",
+            });
+          }
+        }
+        next = json.paging?.next || null;
+      }
+    } catch(e) { console.error("[Presup]", cuenta.nombre, e.message); }
+  }
+  return { ok:true, monoPais, compartidos, totalDiario };
+}
+
 async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   // Construir campos requeridos
   const fbFields = selectedMetrics
@@ -9987,7 +10361,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
 
   const W = Math.max(chartW || 980, 320);  // ancho real del contenedor (responsive)
   const H = 300;                            // un poco mas alto para aprovechar el espacio
-  const PAD = {top:20, right:70, bottom:60, left:60};
+  const PAD = {top:20, right:90, bottom:60, left:60};
   const cW=W-PAD.left-PAD.right, cH=H-PAD.top-PAD.bottom;
   const maxV=hasData?maxCpl*1.1:1, minV=hasData?Math.max(0,minCpl*0.9):0, rngV=maxV-minV||1;
 
@@ -10215,8 +10589,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
               <line x1={PAD.left} x2={PAD.left+cW} y1={yP(ultimo.cpl)} y2={yP(ultimo.cpl)} stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"
                 style={{transition:"y1 .8s ease-out, y2 .8s ease-out"}}/>
               <g style={{transition:"transform .8s ease-out"}} transform={`translate(0, ${yP(ultimo.cpl)})`}>
-                <rect x={PAD.left+cW+4} y={-9} width={58} height={18} rx="4" fill={color}/>
-                <text x={PAD.left+cW+33} y={4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+                <rect x={PAD.left+cW+4} y={-13} width={76} height={26} rx="6" fill={color}/>
+                <text x={PAD.left+cW+42} y={5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
               </g>
             </>}
 
