@@ -9631,6 +9631,31 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const fetchCount = useRef(0);
   const INTERVALO  = 30;
 
+  // Ancho responsive: medir el contenedor real para ocupar todo el espacio
+  const chartWrapRef = useRef(null);
+  const [chartW, setChartW] = useState(980);
+  useEffect(() => {
+    const el = chartWrapRef.current;
+    if (!el) return;
+    const medir = () => { const w = el.clientWidth; if (w > 0) setChartW(w); };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    window.addEventListener("resize", medir);
+    return () => { ro.disconnect(); window.removeEventListener("resize", medir); };
+  }, []);
+
+  // Pulso de animación: se incrementa en cada tick para disparar transiciones
+  const [pulso, setPulso] = useState(0);
+
+  // Reloj de avance: re-render cada 5s para que el borde derecho (ahora)
+  // se deslice suavemente aunque no llegue un dato nuevo (estilo CoinMarketCap)
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setClockTick(t => t + 1), 5000);
+    return () => clearInterval(id);
+  }, []);
+
   // Merge external puntos (from parent interval) with local
   useEffect(() => {
     if (!externalPuntos?.length) return;
@@ -9640,6 +9665,12 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       return Object.values(mapa).sort((a,b) => a.ts-b.ts).slice(-2880);
     });
   }, [externalPuntos]);
+
+  // Dispara el pulso de animacion cuando cambia el ultimo punto (hijo o padre)
+  const ultimoTs = puntosRT.length ? puntosRT[puntosRT.length-1].ts : 0;
+  useEffect(() => {
+    if (ultimoTs) setPulso(p => p + 1);
+  }, [ultimoTs]);
 
   // ── Historial diario ──────────────────────────────────────────────────────
   const histDiario = [
@@ -9932,7 +9963,9 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const tend=cambio<-0.1?"baja":cambio>0.1?"sube":"igual";
   const color=tend==="baja"?"#10B981":tend==="sube"?"#EF4444":"#FFDE59";
 
-  const W=700, H=240, PAD={top:20,right:70,bottom:60,left:60};
+  const W = Math.max(chartW || 980, 320);  // ancho real del contenedor (responsive)
+  const H = 300;                            // un poco mas alto para aprovechar el espacio
+  const PAD = {top:20, right:70, bottom:60, left:60};
   const cW=W-PAD.left-PAD.right, cH=H-PAD.top-PAD.bottom;
   const maxV=hasData?maxCpl*1.1:1, minV=hasData?Math.max(0,minCpl*0.9):0, rngV=maxV-minV||1;
 
@@ -9946,8 +9979,22 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   }
   function yP(v){ return PAD.top+cH-((v-minV)/rngV)*cH; }
 
-  // En modo 24h mezclar ayer y hoy para eje X compartido
-  const allPts24h = modoRT ? [...datosAyer, ...datosVistaFinal].sort((a,b)=>a.ts-b.ts) : [];
+  // En modo 24h mezclar ayer y hoy para eje X compartido.
+  // Incluimos un ancla invisible en "ahora" (pulso lo refresca) para que el
+  // eje X avance con el reloj aunque el ultimo dato tenga unos segundos —
+  // esto da la sensacion de scroll continuo estilo CoinMarketCap.
+  const nowAnchor = Date.now();
+  const allPts24h = modoRT
+    ? (() => {
+        const base = [...datosAyer, ...datosVistaFinal].sort((a,b)=>a.ts-b.ts);
+        if (!base.length) return base;
+        const maxTs = base[base.length-1].ts;
+        // Solo extendemos si "ahora" es posterior al ultimo punto real
+        return nowAnchor > maxTs
+          ? [...base, { ts: nowAnchor, _anchor: true }]
+          : base;
+      })()
+    : [];
 
   const pathHoy = modoRT && datosVistaFinal.length>0
     ? datosVistaFinal.map((d,i)=>(i===0?"M ":"L ")+xPts(d.ts, allPts24h)+" "+yP(d.cpl)).join(" ")
@@ -10065,8 +10112,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           </> : "Configura Facebook Ads para activar el monitoreo en tiempo real"}
         </div>
       ) : (
-        <div style={{overflowX:"auto"}}>
-          <svg width={W} height={H} style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
+        <div ref={chartWrapRef} style={{width:"100%"}}>
+          <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
             <defs>
               <linearGradient id={"cplG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
@@ -10105,9 +10152,9 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
               <path d={pathAyer} fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="1.2" strokeDasharray="4 2" strokeLinejoin="round"/>
             )}
 
-            {/* Área y línea de hoy */}
-            {areaHoy && <path d={areaHoy} fill={`url(#cplG_${client.id})`}/>}
-            {pathHoy && <path d={pathHoy} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/>}
+            {/* Área y línea de hoy — con transicion suave en el trazo */}
+            {areaHoy && <path d={areaHoy} fill={`url(#cplG_${client.id})`} style={{transition:"d .8s ease-out"}}/>}
+            {pathHoy && <path d={pathHoy} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" style={{transition:"d .8s ease-out"}}/>}
 
             {/* Anotaciones en la gráfica */}
             {modoRT && anotHoy.map(a=>{
@@ -10124,17 +10171,31 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
               );
             })}
 
-            {/* Punto actual */}
-            {hasData && ultimo && <>
-              <circle cx={modoRT?xPts(ultimo.ts,allPts24h):xP(n-1)} cy={yP(ultimo.cpl)} r="10" fill={color} fillOpacity="0.12"/>
-              <circle cx={modoRT?xPts(ultimo.ts,allPts24h):xP(n-1)} cy={yP(ultimo.cpl)} r="4" fill={color}/>
-            </>}
+            {/* Punto actual — con halo pulsante y desplazamiento suave */}
+            {hasData && ultimo && (() => {
+              const px = modoRT?xPts(ultimo.ts,allPts24h):xP(n-1);
+              const py = yP(ultimo.cpl);
+              return (<>
+                {/* Halo que late (respiracion en vivo) */}
+                <circle cx={px} cy={py} r="10" fill={color} fillOpacity="0.12"
+                  style={{transition:"cx .8s ease-out, cy .8s ease-out"}}>
+                  <animate attributeName="r" values="7;13;7" dur="2s" repeatCount="indefinite"/>
+                  <animate attributeName="fill-opacity" values="0.18;0.04;0.18" dur="2s" repeatCount="indefinite"/>
+                </circle>
+                {/* Punto solido que se desliza a la nueva posicion */}
+                <circle cx={px} cy={py} r="4" fill={color} stroke="var(--bg)" strokeWidth="1.5"
+                  style={{transition:"cx .8s ease-out, cy .8s ease-out"}}/>
+              </>);
+            })()}
 
-            {/* Línea de precio actual con badge */}
+            {/* Línea de precio actual con badge — se desliza vertical al cambiar el CPL */}
             {hasData && ultimo && <>
-              <line x1={PAD.left} y1={yP(ultimo.cpl)} x2={PAD.left+cW} y2={yP(ultimo.cpl)} stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"/>
-              <rect x={PAD.left+cW+4} y={yP(ultimo.cpl)-9} width={58} height={18} rx="4" fill={color}/>
-              <text x={PAD.left+cW+33} y={yP(ultimo.cpl)+4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+              <line x1={PAD.left} x2={PAD.left+cW} y1={yP(ultimo.cpl)} y2={yP(ultimo.cpl)} stroke={color} strokeWidth="0.5" strokeDasharray="4 3" strokeOpacity="0.5"
+                style={{transition:"y1 .8s ease-out, y2 .8s ease-out"}}/>
+              <g style={{transition:"transform .8s ease-out"}} transform={`translate(0, ${yP(ultimo.cpl)})`}>
+                <rect x={PAD.left+cW+4} y={-9} width={58} height={18} rx="4" fill={color}/>
+                <text x={PAD.left+cW+33} y={4} textAnchor="middle" fontSize="9" fontWeight="700" fill="#000" fontFamily="var(--mono)">${fmtNum(ultimo.cpl,2)}</text>
+              </g>
             </>}
 
             {/* Watermark */}
@@ -10186,7 +10247,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
       {sN>3 && (
         <div style={{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
           <div style={{fontSize:9,color:"var(--muted)",marginBottom:4}}>Historial CPL — últimos {sN} días</div>
-          <svg width={W} height={32} style={{display:"block",opacity:.6}}>
+          <svg width="100%" height={32} viewBox={`0 0 ${W} 32`} preserveAspectRatio="none" style={{display:"block",opacity:.6}}>
             <defs>
               <linearGradient id={"spkG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor="#4d9fff" stopOpacity="0.3"/>
