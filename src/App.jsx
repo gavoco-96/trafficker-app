@@ -1420,7 +1420,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
       {vistaTab === "paises" ? (
         <PaisesPanel client={client} onUpdate={onUpdate} />
       ) : vistaTab === "campanas" ? (
-        <CampanasFBPanel client={client} />
+        <CampanasFBPanel client={client} onUpdate={onUpdate} />
       ) : (<>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
@@ -1747,8 +1747,97 @@ const FUNNEL_DEFAULT = [
   { key: "ventas_f", label: "Ventas", color: "#EF4444" },
 ];
 
-// ─── VISTA POR CAMPAÑA (MÉTRICAS REALES DESDE FB, level=campaign) ─────────────
-function CampanasFBPanel({ client }) {
+// ─── TABLA REUTILIZABLE DE MÉTRICAS FB (sirve para campañas/conjuntos/anuncios) ─
+// Ordenamiento asc/desc por cualquier columna, scroll propio, resaltado de CPL.
+function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, padreLabel, maxHeight = 440 }) {
+  const [sortCol, setSortCol] = useState("inv");
+  const [sortDir, setSortDir] = useState("desc");
+
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+
+  const sorted = [...filas].sort((a, b) => {
+    const va = a[sortCol], vb = b[sortCol];
+    const cmp = typeof va === "number" ? va - vb : String(va || "").localeCompare(String(vb || ""));
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const fmt = (n) => "$" + fmtNum(n, 2);
+  const Th = ({ col, label, num }) => (
+    <th onClick={() => handleSort(col)}
+      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", textAlign: num ? "right" : "left",
+        position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>
+      {label} {sortCol === col ? (sortDir === "asc" ? "▲" : "▼") : <span style={{ opacity: .4 }}>⇅</span>}
+    </th>
+  );
+
+  const estadoDot = (estado) => {
+    const activo = estado === "ACTIVE";
+    const pausado = estado === "PAUSED" || estado === "ADSET_PAUSED" || estado === "CAMPAIGN_PAUSED" || estado === "AD_PAUSED";
+    const color = activo ? "var(--green)" : pausado ? "var(--amber)" : "var(--muted)";
+    const titulo = activo ? "Activo" : pausado ? "Pausado" : "Inactivo/Archivado";
+    return <span title={titulo} style={{ display: "inline-block", width: 8, height: 8, borderRadius: 4, background: color, marginRight: 7, flexShrink: 0 }} />;
+  };
+
+  const totales = sorted.reduce((a, c) => ({
+    inv: a.inv + c.inv, leads: a.leads + c.leads, impr: a.impr + c.impr, clicks: a.clicks + c.clicks
+  }), { inv: 0, leads: 0, impr: 0, clicks: 0 });
+  const cplTot = totales.leads > 0 ? totales.inv / totales.leads : 0;
+
+  return (
+    <div style={{ overflowX: "auto", overflowY: "auto", maxHeight, border: "1px solid var(--border)", borderRadius: 10 }}>
+      <table className="tbl" style={{ width: "100%", fontSize: 12, minWidth: 720 }}>
+        <thead>
+          <tr>
+            <Th col="nombre" label="Nombre" />
+            <Th col="leads" label="Registros" num />
+            <Th col="inv" label="Monto gastado" num />
+            <Th col="cpl" label="CPL" num />
+            <Th col="ctr" label="CTR" num />
+            <Th col="cpm" label="CPM" num />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((c, i) => (
+            <tr key={c.id + "_" + i}>
+              <td style={{ maxWidth: 320 }}>
+                <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+                  {estadoDot(c.estado)}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 300 }} title={c.nombre}>{c.nombre}</div>
+                    {mostrarPadre && c.padre && <div style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 300 }}>↳ {c.padre}</div>}
+                  </div>
+                </div>
+              </td>
+              <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtNum(c.leads, 0)}</td>
+              <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700 }}>{fmt(c.inv)}</td>
+              <td style={{ textAlign: "right", fontFamily: "var(--mono)", fontWeight: 700,
+                color: c.cpl > 0 && cplGlobal > 0 ? (c.cpl <= cplGlobal ? "var(--green)" : "var(--red)") : "var(--text)" }}>
+                {c.cpl > 0 ? fmt(c.cpl) : "—"}
+              </td>
+              <td style={{ textAlign: "right" }}>{fmtNum(c.ctr, 2)}%</td>
+              <td style={{ textAlign: "right" }}>{fmt(c.cpm)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ fontWeight: 700, borderTop: "2px solid var(--border)", position: "sticky", bottom: 0, background: "var(--surface)" }}>
+            <td>TOTAL ({sorted.length})</td>
+            <td style={{ textAlign: "right" }}>{fmtNum(totales.leads, 0)}</td>
+            <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmt(totales.inv)}</td>
+            <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{cplTot > 0 ? fmt(cplTot) : "—"}</td>
+            <td colSpan={2}></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+// ─── PANEL DE RENDIMIENTO FB: Campañas / Conjuntos / Anuncios ─────────────────
+function CampanasFBPanel({ client, onUpdate }) {
   const { token, cuentas: _cuentas } = client.fbConfig || {};
   const cuentas = (_cuentas || []).filter(c => c.adAccountId);
   if (!cuentas.length && client.fbConfig?.adAccountId) {
@@ -1756,183 +1845,248 @@ function CampanasFBPanel({ client }) {
   }
   const hayConfig = token && cuentas.length > 0;
 
-  const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); });
+  const [nivel, setNivel] = useState("campaign"); // campaign | adset | ad
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("30d");
-  const [campanas, setCampanas] = useState(null);
+  const [busqueda, setBusqueda] = useState("");
+  const [soloActivas, setSoloActivas] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [busqueda, setBusqueda] = useState("");
-  const [sortCol, setSortCol] = useState("inv");
-  const [sortDir, setSortDir] = useState("desc");
-  const [soloActivas, setSoloActivas] = useState(false);
+  const [salud, setSalud] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [guardadoMsg, setGuardadoMsg] = useState(null);
+
+  // Cache por nivel para no re-consultar al cambiar de tab
+  const [datos, setDatos] = useState({ campaign: null, adset: null, ad: null });
 
   function aplicarPreset(p) {
     setPreset(p);
     const hoy = new Date(); let d = new Date();
     if (p === "hoy") d = hoy;
-    else if (p === "7d") d.setDate(d.getDate()-6);
-    else if (p === "30d") d.setDate(d.getDate()-29);
-    else if (p === "90d") d.setDate(d.getDate()-89);
-    if (p !== "custom") { setDesde(d.toISOString().slice(0,10)); setHasta(hoy.toISOString().slice(0,10)); }
+    else if (p === "7d") d.setDate(d.getDate() - 6);
+    else if (p === "30d") d.setDate(d.getDate() - 29);
+    else if (p === "90d") d.setDate(d.getDate() - 89);
+    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
   }
 
-  async function cargar() {
+  async function cargar(n = nivel, forzar = false) {
     if (!hayConfig) { setError("Configura Facebook Ads en la tab 📘 Facebook primero."); return; }
+    if (!forzar && datos[n]) return; // ya en cache
     setLoading(true); setError(null);
-    const r = await fetchMetricasPorCampana(token, cuentas, desde, hasta);
-    if (!r.ok) { setError(r.error || "Error al consultar Facebook"); setLoading(false); return; }
-    setCampanas(r.campanas);
+    const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, n);
+    setSalud(r.salud);
+    persistirSalud(r.salud);
+    if (!r.ok) { setError(r.error || r.salud?.mensaje || "Error al consultar Facebook"); setLoading(false); return; }
+    setDatos(prev => ({ ...prev, [n]: r.campanas }));
     setLoading(false);
   }
-  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
 
-  const fmt = (n) => "$" + fmtNum(n, 2);
-  const lista = (campanas || [])
-    .filter(c => !soloActivas || c.estado === "ACTIVE")
-    .filter(c => !busqueda || c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
-
-  const totales = lista.reduce((a,c) => ({
-    inv:a.inv+c.inv, leads:a.leads+c.leads, impr:a.impr+c.impr, clicks:a.clicks+c.clicks
-  }), {inv:0,leads:0,impr:0,clicks:0});
-  const cplTotal = totales.leads>0 ? totales.inv/totales.leads : 0;
-
-  const sorted = [...lista].sort((a,b) => {
-    const va = a[sortCol], vb = b[sortCol];
-    const cmp = typeof va === "number" ? va-vb : String(va).localeCompare(String(vb));
-    return sortDir === "asc" ? cmp : -cmp;
-  });
-
-  function handleSort(col) {
-    if (sortCol === col) setSortDir(d => d==="asc"?"desc":"asc");
-    else { setSortCol(col); setSortDir("desc"); }
+  // Guarda el último estado de salud en el cliente (para la campana de notificaciones).
+  // Solo persiste cambios significativos para no escribir en cada consulta.
+  function persistirSalud(s) {
+    if (!s || !onUpdate) return;
+    const prev = client.fbSaludUltima?.estado;
+    if (prev === s.estado) return; // sin cambio
+    const nuevo = { estado: s.estado, mensaje: s.mensaje, ts: s.ts || Date.now() };
+    client.fbSaludUltima = nuevo;
+    onUpdate({ ...client, fbSaludUltima: nuevo });
   }
-  const Th = ({col, label, num}) => (
-    <th onClick={()=>handleSort(col)} style={{cursor:"pointer", userSelect:"none", whiteSpace:"nowrap", textAlign:num?"right":"left"}}>
-      {label} {sortCol===col ? (sortDir==="asc"?"▲":"▼") : "⇅"}
-    </th>
-  );
 
+  // Al cambiar rango, invalidar cache y recargar el nivel actual
+  function recargarTodo() {
+    setDatos({ campaign: null, adset: null, ad: null });
+    setLoading(true);
+    (async () => {
+      const r = await fetchMetricasPorNivel(token, cuentas, desde, hasta, nivel);
+      setSalud(r.salud);
+      persistirSalud(r.salud);
+      if (!r.ok) { setError(r.error || r.salud?.mensaje); setLoading(false); return; }
+      setDatos({ campaign: null, adset: null, ad: null, [nivel]: r.campanas });
+      setError(null); setLoading(false);
+    })();
+  }
+
+  useEffect(() => { if (hayConfig) cargar("campaign"); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { if (hayConfig) cargar(nivel); /* eslint-disable-next-line */ }, [nivel]);
+
+  const NIVELES = [
+    ["campaign", "📡 Campañas"],
+    ["adset", "🎯 Conjuntos"],
+    ["ad", "🖼️ Anuncios"],
+  ];
+
+  const filasRaw = datos[nivel] || [];
+  const filas = filasRaw
+    .filter(c => !soloActivas || c.estado === "ACTIVE")
+    .filter(c => !busqueda || c.nombre.toLowerCase().includes(busqueda.toLowerCase()) || (c.padre || "").toLowerCase().includes(busqueda.toLowerCase()));
+  const totalInv = filas.reduce((s, c) => s + c.inv, 0);
+  const totalLeads = filas.reduce((s, c) => s + c.leads, 0);
+  const cplGlobal = totalLeads > 0 ? totalInv / totalLeads : 0;
+
+  // ── Exportar CSV ──
   function exportarCSV() {
-    const filas = [["Campaña","Cuenta","Estado","Inversión","Leads","CPL","Impresiones","Clics","CPM","CTR"]];
-    sorted.forEach(c => filas.push([
-      c.nombre, c.cuenta, c.estado, c.inv.toFixed(2), Math.round(c.leads),
-      c.cpl>0?c.cpl.toFixed(2):"", Math.round(c.impr), Math.round(c.clicks),
-      c.cpm.toFixed(2), c.ctr.toFixed(2)+"%"
-    ]));
-    const csv = filas.map(f=>f.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-    const blob = new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8;"});
+    const cab = ["Nombre", nivel === "campaign" ? "" : "Pertenece a", "Estado", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
+    const filasCSV = [cab];
+    filas.forEach(c => {
+      const row = [c.nombre];
+      if (nivel !== "campaign") row.push(c.padre || "");
+      row.push(c.estado, Math.round(c.leads), c.inv.toFixed(2), c.cpl > 0 ? c.cpl.toFixed(2) : "", c.ctr.toFixed(2) + "%", c.cpm.toFixed(2));
+      filasCSV.push(row);
+    });
+    const csv = filasCSV.map(f => f.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `campanas_${(client.nombre||"cliente").replace(/[^a-z0-9]/gi,"_")}_${desde}_${hasta}.csv`;
+    const nivelN = { campaign: "campanas", adset: "conjuntos", ad: "anuncios" }[nivel];
+    a.href = url; a.download = `${nivelN}_${(client.nombre || "cliente").replace(/[^a-z0-9]/gi, "_")}_${desde}_${hasta}.csv`;
     a.click(); URL.revokeObjectURL(url);
   }
 
-  const estadoBadge = (estado) => {
-    const map = {
-      ACTIVE:{t:"Activa", c:"var(--green)", bg:"rgba(16,185,129,.12)"},
-      PAUSED:{t:"Pausada", c:"var(--muted)", bg:"var(--surface2)"},
-      CAMPAIGN_PAUSED:{t:"Pausada", c:"var(--muted)", bg:"var(--surface2)"},
-      ARCHIVED:{t:"Archivada", c:"var(--muted)", bg:"var(--surface2)"},
-    };
-    const s = map[estado] || {t:estado, c:"var(--muted)", bg:"var(--surface2)"};
-    return <span style={{fontSize:10, padding:"2px 8px", borderRadius:10, color:s.c, background:s.bg, fontWeight:600, whiteSpace:"nowrap"}}>{s.t}</span>;
-  };
+  // ── Exportar a Google Sheets (abre un Sheet nuevo con los datos vía URL) ──
+  function exportarGoogleSheets() {
+    // Estrategia: copiar TSV al portapapeles y abrir un Sheet en blanco para pegar.
+    const cab = ["Nombre", nivel === "campaign" ? "" : "Pertenece a", "Estado", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
+    const filasT = [cab];
+    filas.forEach(c => {
+      const row = [c.nombre];
+      if (nivel !== "campaign") row.push(c.padre || "");
+      row.push(c.estado, Math.round(c.leads), c.inv.toFixed(2), c.cpl > 0 ? c.cpl.toFixed(2) : "", c.ctr.toFixed(2) + "%", c.cpm.toFixed(2));
+      filasT.push(row);
+    });
+    const tsv = filasT.map(f => f.join("\t")).join("\n");
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(tsv).then(() => {
+        setGuardadoMsg("📋 Datos copiados. Abriendo Google Sheets — pega con Ctrl+V.");
+        setTimeout(() => setGuardadoMsg(null), 6000);
+        window.open("https://sheets.new", "_blank");
+      }).catch(() => {
+        window.open("https://sheets.new", "_blank");
+      });
+    } else {
+      window.open("https://sheets.new", "_blank");
+    }
+  }
+
+  // ── Guardar snapshot para histórico/predicción ──
+  async function guardarSnapshot() {
+    if (!onUpdate || !filasRaw.length) return;
+    setGuardando(true);
+    const hoy = localDateStr();
+    const snapshots = { ...(client.fbSnapshots || {}) };
+    // Estructura: fbSnapshots[fecha][nivel] = [filas ligeras]
+    if (!snapshots[hoy]) snapshots[hoy] = {};
+    snapshots[hoy][nivel] = filasRaw.map(c => ({
+      id: c.id, nombre: c.nombre, padre: c.padre, cuenta: c.cuenta,
+      inv: +c.inv.toFixed(2), leads: Math.round(c.leads), cpl: +c.cpl.toFixed(4),
+      ctr: +c.ctr.toFixed(3), cpm: +c.cpm.toFixed(3), impr: Math.round(c.impr),
+      clicks: Math.round(c.clicks), reach: Math.round(c.reach), frequency: +c.frequency.toFixed(2),
+      estado: c.estado,
+    }));
+    snapshots[hoy]._meta = { desde, hasta, ts: Date.now() };
+    // Retención: 180 días
+    const limite = new Date(); limite.setDate(limite.getDate() - 180);
+    const limStr = limite.toISOString().slice(0, 10);
+    Object.keys(snapshots).forEach(k => { if (k < limStr) delete snapshots[k]; });
+    const r = await onUpdate({ ...client, fbSnapshots: snapshots });
+    client.fbSnapshots = snapshots;
+    setGuardando(false);
+    setGuardadoMsg(`💾 Snapshot de ${NIVELES.find(n => n[0] === nivel)[1]} guardado (${filasRaw.length} filas)`);
+    setTimeout(() => setGuardadoMsg(null), 5000);
+  }
+
+  const nDias = Object.keys(client.fbSnapshots || {}).length;
 
   return (
     <div>
-      {/* Header */}
-      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12}}>
+      {/* Header con salud de conexión */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
         <div>
-          <div style={{fontWeight:700, fontSize:16}}>📡 Métricas por campaña</div>
-          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Datos reales desglosados por campaña, directo de Facebook Ads</div>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Rendimiento por nivel</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Datos reales de Facebook — identifica lo ganador para escalar</div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={exportarCSV} disabled={sorted.length===0} style={{fontSize:11}}>📥 Exportar CSV</button>
+        <SaludFBBadge salud={salud} />
       </div>
 
-      {/* Controles */}
-      <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:14}}>
+      {/* Sub-tabs de nivel */}
+      <div className="period-pills" style={{ marginBottom: 12 }}>
+        {NIVELES.map(([k, l]) => (
+          <button key={k} className={"pill " + (nivel === k ? "active" : "")} onClick={() => setNivel(k)}>{l}</button>
+        ))}
+      </div>
+
+      {/* Controles de rango */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <div className="period-pills">
-          {[["hoy","Hoy"],["7d","7 días"],["30d","30 días"],["90d","90 días"]].map(([k,l])=>(
-            <button key={k} className={"pill "+(preset===k?"active":"")} onClick={()=>aplicarPreset(k)}>{l}</button>
+          {[["hoy", "Hoy"], ["7d", "7 días"], ["30d", "30 días"], ["90d", "90 días"]].map(([k, l]) => (
+            <button key={k} className={"pill " + (preset === k ? "active" : "")} onClick={() => { aplicarPreset(k); setTimeout(recargarTodo, 0); }}>{l}</button>
           ))}
         </div>
-        <input type="date" value={desde} onChange={e=>{setDesde(e.target.value);setPreset("custom");}} max={hasta} style={{width:"auto",fontSize:12}} />
-        <span style={{fontSize:12,color:"var(--muted)"}}>→</span>
-        <input type="date" value={hasta} onChange={e=>{setHasta(e.target.value);setPreset("custom");}} max={localDateStr()} style={{width:"auto",fontSize:12}} />
-        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading||!hayConfig}>{loading?"⟳ Consultando...":"🔄 Actualizar"}</button>
+        <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
+        <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
+        <button className="btn btn-primary btn-sm" onClick={recargarTodo} disabled={loading || !hayConfig}>{loading ? "⟳ Consultando..." : "🔄 Actualizar"}</button>
       </div>
 
-      {/* Filtros */}
-      <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:12}}>
-        <div style={{position:"relative", flex:1, maxWidth:340, minWidth:200}}>
-          <input type="text" value={busqueda} onChange={e=>setBusqueda(e.target.value)}
-            placeholder="Buscar campaña..." style={{width:"100%", paddingLeft:30, fontSize:12}} />
-          <span style={{position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)", fontSize:13}}>🔍</span>
+      {/* Filtros + acciones */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12, justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ position: "relative", width: 260 }}>
+            <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+              placeholder={nivel === "adset" ? "Buscar conjunto o público..." : nivel === "ad" ? "Buscar anuncio..." : "Buscar campaña..."}
+              style={{ width: "100%", paddingLeft: 30, fontSize: 12 }} />
+            <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 13 }}>🔍</span>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={soloActivas} onChange={e => setSoloActivas(e.target.checked)} style={{ width: "auto", margin: 0 }} />
+            Solo activos
+          </label>
         </div>
-        <label style={{display:"flex", alignItems:"center", gap:5, fontSize:11, color:"var(--muted)", cursor:"pointer"}}>
-          <input type="checkbox" checked={soloActivas} onChange={e=>setSoloActivas(e.target.checked)} style={{width:"auto", margin:0}} />
-          Solo activas
-        </label>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-ghost btn-sm" onClick={guardarSnapshot} disabled={guardando || !filasRaw.length} style={{ fontSize: 11 }}>
+            {guardando ? "⟳" : "💾"} Guardar snapshot {nDias > 0 && <span style={{ color: "var(--muted)" }}>({nDias}d)</span>}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={exportarCSV} disabled={!filas.length} style={{ fontSize: 11 }}>📥 CSV</button>
+          <button className="btn btn-ghost btn-sm" onClick={exportarGoogleSheets} disabled={!filas.length} style={{ fontSize: 11 }}>📊 Sheets</button>
+        </div>
       </div>
 
-      {error && <div className="card" style={{padding:"12px 14px", marginBottom:12, borderColor:"var(--red)", color:"var(--red)", fontSize:13}}>{error}</div>}
+      {guardadoMsg && <div style={{ fontSize: 12, color: "var(--green)", marginBottom: 10, padding: "6px 12px", background: "rgba(16,185,129,.08)", borderRadius: 8 }}>{guardadoMsg}</div>}
+      {error && <div className="card" style={{ padding: "12px 14px", marginBottom: 12, borderColor: "var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
 
+      {/* Tabla */}
       {!hayConfig ? (
-        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Configura Facebook Ads en la tab 📘 Facebook para activar esta vista.</div>
-      ) : loading && !campanas ? (
-        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Consultando Facebook...</div>
-      ) : sorted.length === 0 ? (
-        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Sin campañas con datos en el rango seleccionado.</div>
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Configura Facebook Ads en la tab 📘 Facebook para activar esta vista.</div>
+      ) : loading && !filasRaw.length ? (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando Facebook...</div>
+      ) : filas.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Sin datos en el rango seleccionado.</div>
       ) : (
-        <div style={{overflowX:"auto"}}>
-          <table className="tbl" style={{width:"100%", fontSize:12}}>
-            <thead>
-              <tr>
-                <Th col="nombre" label="Campaña" />
-                <th style={{textAlign:"center"}}>Estado</th>
-                <Th col="inv" label="Inversión" num />
-                <Th col="leads" label="Leads" num />
-                <Th col="cpl" label="CPL" num />
-                <Th col="impr" label="Impresiones" num />
-                <Th col="clicks" label="Clics" num />
-                <Th col="cpm" label="CPM" num />
-                <Th col="ctr" label="CTR" num />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((c,i) => (
-                <tr key={c.id+"_"+i}>
-                  <td style={{maxWidth:280, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={c.nombre}>
-                    {c.nombre}
-                    {cuentas.length>1 && <span style={{fontSize:10, color:"var(--muted)", marginLeft:6}}>· {c.cuenta}</span>}
-                  </td>
-                  <td style={{textAlign:"center"}}>{estadoBadge(c.estado)}</td>
-                  <td style={{textAlign:"right", fontFamily:"var(--mono)", fontWeight:700}}>{fmt(c.inv)}</td>
-                  <td style={{textAlign:"right"}}>{Math.round(c.leads)}</td>
-                  <td style={{textAlign:"right", fontFamily:"var(--mono)", color:c.cpl>0&&cplTotal>0?(c.cpl<=cplTotal?"var(--green)":"var(--red)"):"var(--text)"}}>{c.cpl>0?fmt(c.cpl):"—"}</td>
-                  <td style={{textAlign:"right"}}>{fmtNum(c.impr,0)}</td>
-                  <td style={{textAlign:"right"}}>{fmtNum(c.clicks,0)}</td>
-                  <td style={{textAlign:"right"}}>{fmt(c.cpm)}</td>
-                  <td style={{textAlign:"right"}}>{fmtNum(c.ctr,2)}%</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{fontWeight:700, borderTop:"2px solid var(--border)"}}>
-                <td>TOTAL ({sorted.length})</td>
-                <td></td>
-                <td style={{textAlign:"right", fontFamily:"var(--mono)"}}>{fmt(totales.inv)}</td>
-                <td style={{textAlign:"right"}}>{Math.round(totales.leads)}</td>
-                <td style={{textAlign:"right", fontFamily:"var(--mono)"}}>{cplTotal>0?fmt(cplTotal):"—"}</td>
-                <td style={{textAlign:"right"}}>{fmtNum(totales.impr,0)}</td>
-                <td style={{textAlign:"right"}}>{fmtNum(totales.clicks,0)}</td>
-                <td colSpan={2}></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+        <TablaMetricasFB filas={filas} cplGlobal={cplGlobal} mostrarPadre={nivel !== "campaign"}
+          padreLabel={nivel === "adset" ? "Campaña" : "Conjunto"} />
       )}
+    </div>
+  );
+}
+
+// ─── BADGE DE SALUD DE CONEXIÓN FACEBOOK ──────────────────────────────────────
+function SaludFBBadge({ salud }) {
+  if (!salud) return null;
+  const map = {
+    ok: { c: "var(--green)", bg: "rgba(16,185,129,.12)", icon: "●", txt: "Facebook conectado" },
+    sin_datos: { c: "var(--muted)", bg: "var(--surface2)", icon: "○", txt: "Sin datos en rango" },
+    token_expirado: { c: "var(--red)", bg: "rgba(239,68,68,.12)", icon: "⚠", txt: "Token expirado" },
+    permisos: { c: "var(--red)", bg: "rgba(239,68,68,.12)", icon: "⚠", txt: "Faltan permisos" },
+    rate_limit: { c: "var(--amber)", bg: "rgba(255,222,89,.1)", icon: "⏳", txt: "Límite temporal" },
+    red: { c: "var(--red)", bg: "rgba(239,68,68,.12)", icon: "⚠", txt: "Error de red" },
+    error: { c: "var(--red)", bg: "rgba(239,68,68,.12)", icon: "⚠", txt: "Error FB" },
+    sin_config: { c: "var(--muted)", bg: "var(--surface2)", icon: "○", txt: "Sin configurar" },
+  };
+  const s = map[salud.estado] || map.error;
+  return (
+    <div title={salud.mensaje} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, padding: "4px 10px",
+      borderRadius: 12, color: s.c, background: s.bg, fontWeight: 600, cursor: "help" }}>
+      <span>{s.icon}</span> {s.txt}
     </div>
   );
 }
@@ -6641,50 +6795,78 @@ function paisBandera(code){ return PAISES_INFO[code]?.f || "🌐"; }
 // Suma sobre todas las cuentas activas. Devuelve { ok, porPais:{CODE:{inv,leads,impr,reach}} }
 // ── MÉTRICAS REALES POR CAMPAÑA: level=campaign (datos exactos de cada una) ──
 // Devuelve { ok, campanas:[{id,nombre,cuenta,inv,leads,impr,reach,clicks,cpm,ctr,cpl,estado}] }
-async function fetchMetricasPorCampana(token, cuentas, since, until) {
+// ── MÉTRICAS REALES POR NIVEL (campaign | adset | ad) — motor unificado ──────
+// Trae datos exactos desde FB para cualquier nivel de la jerarquía. Devuelve
+// también estado (activo/pausado) y un objeto de "salud" de la conexión.
+// nivel: "campaign" | "adset" | "ad"
+async function fetchMetricasPorNivel(token, cuentas, since, until, nivel) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
-  if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
+  if (!activas.length) return { ok:false, error:"Sin cuentas configuradas", salud:{estado:"sin_config"} };
+
   const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
   const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+
+  // Config por nivel: campos de id/nombre, edge de estado, y campo padre
+  const cfg = {
+    campaign: { idF:"campaign_id", nameF:"campaign_name", edge:"campaigns", parentF:null, parentName:null },
+    adset:    { idF:"adset_id",    nameF:"adset_name",    edge:"adsets",    parentF:"campaign_id", parentName:"campaign_name" },
+    ad:       { idF:"ad_id",       nameF:"ad_name",       edge:"ads",       parentF:"adset_id",    parentName:"adset_name" },
+  }[nivel];
+  if (!cfg) return { ok:false, error:"Nivel inválido", salud:{estado:"error"} };
+
   const out = [];
-  // Estado actual de cada campaña (para marcar activas/pausadas)
   const estadoPorId = {};
+  let algunError = null;
+  let algunOk = false;
+
   for (const cuenta of activas) {
     try {
-      // 1) Estado de las campañas
+      // 1) Estado (active/paused) de cada objeto del nivel
       try {
-        const eUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns`);
-        eUrl.searchParams.set("fields", "id,name,effective_status");
+        const eUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/${cfg.edge}`);
+        eUrl.searchParams.set("fields", "id,effective_status");
         eUrl.searchParams.set("limit", "500");
         eUrl.searchParams.set("access_token", token);
         let en = eUrl.toString();
         while (en) {
           const ej = await fetch(en).then(r=>r.json());
           if (ej.error) break;
-          (ej.data||[]).forEach(c => { estadoPorId[c.id] = c.effective_status; });
+          (ej.data||[]).forEach(o => { estadoPorId[o.id] = o.effective_status; });
           en = ej.paging?.next || null;
         }
       } catch {}
-      // 2) Insights por campaña
+
+      // 2) Insights al nivel pedido
+      const campos = [cfg.idF, cfg.nameF, "spend","actions","impressions","reach","inline_link_clicks","cpm","ctr","frequency"];
+      if (cfg.parentF)    campos.push(cfg.parentF);
+      if (cfg.parentName) campos.push(cfg.parentName);
       const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
-      url.searchParams.set("fields", "campaign_id,campaign_name,spend,actions,impressions,reach,inline_link_clicks,cpm,ctr");
+      url.searchParams.set("fields", campos.join(","));
       url.searchParams.set("time_range", JSON.stringify({ since, until }));
-      url.searchParams.set("level", "campaign");
+      url.searchParams.set("level", nivel);
       url.searchParams.set("limit", "500");
       url.searchParams.set("access_token", token);
       let next = url.toString();
       while (next) {
         const json = await fetch(next).then(r=>r.json());
-        if (json.error) { console.warn("[Campañas]", cuenta.nombre, json.error.message); break; }
+        if (json.error) {
+          algunError = json.error;
+          console.warn(`[${nivel}]`, cuenta.nombre, json.error.message);
+          break;
+        }
+        algunOk = true;
         for (const d of (json.data||[])) {
           const inv = parseFloat(d.spend)||0;
           const acts = d.actions||[];
           let nl = 0;
           for (const t of LEAD_TYPES) { if(LEAD_EXCLUIR.has(t))continue; const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
           if (nl===0) acts.filter(x=>!LEAD_EXCLUIR.has(x.action_type)&&x.action_type?.includes("registration")).forEach(x=>{const v=parseFloat(x.value)||0;if(v>nl)nl=v;});
+          const id = d[cfg.idF];
           out.push({
-            id: d.campaign_id,
-            nombre: d.campaign_name || "(sin nombre)",
+            id,
+            nombre: d[cfg.nameF] || "(sin nombre)",
+            padre: cfg.parentName ? (d[cfg.parentName]||"") : "",
+            padreId: cfg.parentF ? (d[cfg.parentF]||"") : "",
             cuenta: cuenta.nombre,
             inv,
             leads: nl,
@@ -6693,15 +6875,40 @@ async function fetchMetricasPorCampana(token, cuentas, since, until) {
             clicks: parseFloat(d.inline_link_clicks)||0,
             cpm: parseFloat(d.cpm)||0,
             ctr: parseFloat(d.ctr)||0,
+            frequency: parseFloat(d.frequency)||0,
             cpl: nl>0 ? inv/nl : 0,
-            estado: estadoPorId[d.campaign_id] || "UNKNOWN",
+            estado: estadoPorId[id] || "UNKNOWN",
           });
         }
         next = json.paging?.next || null;
       }
-    } catch(e) { console.error("[Campañas]", cuenta.nombre, e.message); }
+    } catch(e) {
+      algunError = { message: e.message, code: "NETWORK" };
+      console.error(`[${nivel}]`, cuenta.nombre, e.message);
+    }
   }
-  return { ok:true, campanas: out };
+
+  // Diagnóstico de salud de la conexión con FB
+  const salud = diagnosticarSaludFB(algunOk, algunError);
+  return { ok: algunOk || !algunError, campanas: out, salud, errorFB: algunError };
+}
+
+// Interpreta el resultado de FB para dar un estado de salud legible
+function diagnosticarSaludFB(algunOk, err) {
+  if (algunOk && !err) return { estado:"ok", mensaje:"Conexión con Facebook OK", ts: Date.now() };
+  if (!err) return { estado:"sin_datos", mensaje:"Sin datos en el rango (puede ser normal)", ts: Date.now() };
+  const code = err.code;
+  // Códigos típicos de token expirado / permisos
+  if (code === 190) return { estado:"token_expirado", mensaje:"El token de Facebook expiró o fue revocado. Genera uno nuevo en la tab 📘 Facebook.", ts: Date.now(), code };
+  if (code === 200 || code === 10 || code === 803) return { estado:"permisos", mensaje:"Faltan permisos en el token de Facebook (ads_read). Revisa la configuración.", ts: Date.now(), code };
+  if (code === 17 || code === 4 || code === 613) return { estado:"rate_limit", mensaje:"Facebook limitó las consultas temporalmente. Espera unos minutos.", ts: Date.now(), code };
+  if (code === "NETWORK") return { estado:"red", mensaje:"Error de red al conectar con Facebook.", ts: Date.now() };
+  return { estado:"error", mensaje: err.message || "Error desconocido de Facebook", ts: Date.now(), code };
+}
+
+// Wrapper de compatibilidad (por si algo aún llama al nombre viejo)
+async function fetchMetricasPorCampana(token, cuentas, since, until) {
+  return fetchMetricasPorNivel(token, cuentas, since, until, "campaign");
 }
 
 async function fetchGastoPorPais(token, cuentas, since, until) {
@@ -13658,6 +13865,22 @@ function getClientNotificaciones(client) {
       else if (dias <= 5) notifs.push({ id:`cuota-v-${ci}-${qi}`, tipo:"amber", icon:"⏰", texto:`Cuota de pago vence en ${dias} días ($${c.monto})` });
     });
   });
+
+  // Salud de conexión con Facebook (se actualiza al consultar los paneles FB)
+  const saludFB = client.fbSaludUltima;
+  if (saludFB && saludFB.estado && !["ok","sin_datos","sin_config"].includes(saludFB.estado)) {
+    const iconMap = { token_expirado:"🔑", permisos:"🔒", rate_limit:"⏳", red:"📡", error:"⚠️" };
+    // Solo alertar si el problema es reciente (últimas 24h) para no mostrar estados viejos
+    const reciente = !saludFB.ts || (Date.now() - saludFB.ts) < 86400000;
+    if (reciente) {
+      notifs.push({
+        id: "fb-salud",
+        tipo: saludFB.estado === "rate_limit" ? "amber" : "err",
+        icon: iconMap[saludFB.estado] || "⚠️",
+        texto: `Facebook: ${saludFB.mensaje || "problema de conexión"}`
+      });
+    }
+  }
 
   // Misión avanza
   const duracion = client.apolloData?.duracion || 21;
