@@ -1401,7 +1401,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
           <button className={"pill " + (vistaTab === "paises" ? "active" : "")} onClick={() => setVistaTab("paises")}>🌎 Países</button>
         </div>
         {/* BARRA DE BÚSQUEDA NOMENCLATURA */}
-        {vistaTab !== "paises" && (
+        {vistaTab !== "paises" && vistaTab !== "campanas" && (
         <div style={{ display: "flex", gap: 8, flex: 1, maxWidth: 400, minWidth: 220 }}>
           <div style={{ position: "relative", flex: 1 }}>
             <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
@@ -1420,7 +1420,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
       {vistaTab === "paises" ? (
         <PaisesPanel client={client} onUpdate={onUpdate} />
       ) : vistaTab === "campanas" ? (
-        <VistaPorCampana rows={sortedRows} busqueda={busqueda} />
+        <CampanasFBPanel client={client} />
       ) : (<>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
@@ -1747,6 +1747,196 @@ const FUNNEL_DEFAULT = [
   { key: "ventas_f", label: "Ventas", color: "#EF4444" },
 ];
 
+// ─── VISTA POR CAMPAÑA (MÉTRICAS REALES DESDE FB, level=campaign) ─────────────
+function CampanasFBPanel({ client }) {
+  const { token, cuentas: _cuentas } = client.fbConfig || {};
+  const cuentas = (_cuentas || []).filter(c => c.adAccountId);
+  if (!cuentas.length && client.fbConfig?.adAccountId) {
+    cuentas.push({ adAccountId: client.fbConfig.adAccountId, nombre: "Principal" });
+  }
+  const hayConfig = token && cuentas.length > 0;
+
+  const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); });
+  const [hasta, setHasta] = useState(localDateStr());
+  const [preset, setPreset] = useState("30d");
+  const [campanas, setCampanas] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [busqueda, setBusqueda] = useState("");
+  const [sortCol, setSortCol] = useState("inv");
+  const [sortDir, setSortDir] = useState("desc");
+  const [soloActivas, setSoloActivas] = useState(false);
+
+  function aplicarPreset(p) {
+    setPreset(p);
+    const hoy = new Date(); let d = new Date();
+    if (p === "hoy") d = hoy;
+    else if (p === "7d") d.setDate(d.getDate()-6);
+    else if (p === "30d") d.setDate(d.getDate()-29);
+    else if (p === "90d") d.setDate(d.getDate()-89);
+    if (p !== "custom") { setDesde(d.toISOString().slice(0,10)); setHasta(hoy.toISOString().slice(0,10)); }
+  }
+
+  async function cargar() {
+    if (!hayConfig) { setError("Configura Facebook Ads en la tab 📘 Facebook primero."); return; }
+    setLoading(true); setError(null);
+    const r = await fetchMetricasPorCampana(token, cuentas, desde, hasta);
+    if (!r.ok) { setError(r.error || "Error al consultar Facebook"); setLoading(false); return; }
+    setCampanas(r.campanas);
+    setLoading(false);
+  }
+  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  const fmt = (n) => "$" + fmtNum(n, 2);
+  const lista = (campanas || [])
+    .filter(c => !soloActivas || c.estado === "ACTIVE")
+    .filter(c => !busqueda || c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+
+  const totales = lista.reduce((a,c) => ({
+    inv:a.inv+c.inv, leads:a.leads+c.leads, impr:a.impr+c.impr, clicks:a.clicks+c.clicks
+  }), {inv:0,leads:0,impr:0,clicks:0});
+  const cplTotal = totales.leads>0 ? totales.inv/totales.leads : 0;
+
+  const sorted = [...lista].sort((a,b) => {
+    const va = a[sortCol], vb = b[sortCol];
+    const cmp = typeof va === "number" ? va-vb : String(va).localeCompare(String(vb));
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(d => d==="asc"?"desc":"asc");
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+  const Th = ({col, label, num}) => (
+    <th onClick={()=>handleSort(col)} style={{cursor:"pointer", userSelect:"none", whiteSpace:"nowrap", textAlign:num?"right":"left"}}>
+      {label} {sortCol===col ? (sortDir==="asc"?"▲":"▼") : "⇅"}
+    </th>
+  );
+
+  function exportarCSV() {
+    const filas = [["Campaña","Cuenta","Estado","Inversión","Leads","CPL","Impresiones","Clics","CPM","CTR"]];
+    sorted.forEach(c => filas.push([
+      c.nombre, c.cuenta, c.estado, c.inv.toFixed(2), Math.round(c.leads),
+      c.cpl>0?c.cpl.toFixed(2):"", Math.round(c.impr), Math.round(c.clicks),
+      c.cpm.toFixed(2), c.ctr.toFixed(2)+"%"
+    ]));
+    const csv = filas.map(f=>f.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `campanas_${(client.nombre||"cliente").replace(/[^a-z0-9]/gi,"_")}_${desde}_${hasta}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  const estadoBadge = (estado) => {
+    const map = {
+      ACTIVE:{t:"Activa", c:"var(--green)", bg:"rgba(16,185,129,.12)"},
+      PAUSED:{t:"Pausada", c:"var(--muted)", bg:"var(--surface2)"},
+      CAMPAIGN_PAUSED:{t:"Pausada", c:"var(--muted)", bg:"var(--surface2)"},
+      ARCHIVED:{t:"Archivada", c:"var(--muted)", bg:"var(--surface2)"},
+    };
+    const s = map[estado] || {t:estado, c:"var(--muted)", bg:"var(--surface2)"};
+    return <span style={{fontSize:10, padding:"2px 8px", borderRadius:10, color:s.c, background:s.bg, fontWeight:600, whiteSpace:"nowrap"}}>{s.t}</span>;
+  };
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12}}>
+        <div>
+          <div style={{fontWeight:700, fontSize:16}}>📡 Métricas por campaña</div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Datos reales desglosados por campaña, directo de Facebook Ads</div>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={exportarCSV} disabled={sorted.length===0} style={{fontSize:11}}>📥 Exportar CSV</button>
+      </div>
+
+      {/* Controles */}
+      <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:14}}>
+        <div className="period-pills">
+          {[["hoy","Hoy"],["7d","7 días"],["30d","30 días"],["90d","90 días"]].map(([k,l])=>(
+            <button key={k} className={"pill "+(preset===k?"active":"")} onClick={()=>aplicarPreset(k)}>{l}</button>
+          ))}
+        </div>
+        <input type="date" value={desde} onChange={e=>{setDesde(e.target.value);setPreset("custom");}} max={hasta} style={{width:"auto",fontSize:12}} />
+        <span style={{fontSize:12,color:"var(--muted)"}}>→</span>
+        <input type="date" value={hasta} onChange={e=>{setHasta(e.target.value);setPreset("custom");}} max={localDateStr()} style={{width:"auto",fontSize:12}} />
+        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading||!hayConfig}>{loading?"⟳ Consultando...":"🔄 Actualizar"}</button>
+      </div>
+
+      {/* Filtros */}
+      <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:12}}>
+        <div style={{position:"relative", flex:1, maxWidth:340, minWidth:200}}>
+          <input type="text" value={busqueda} onChange={e=>setBusqueda(e.target.value)}
+            placeholder="Buscar campaña..." style={{width:"100%", paddingLeft:30, fontSize:12}} />
+          <span style={{position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"var(--muted)", fontSize:13}}>🔍</span>
+        </div>
+        <label style={{display:"flex", alignItems:"center", gap:5, fontSize:11, color:"var(--muted)", cursor:"pointer"}}>
+          <input type="checkbox" checked={soloActivas} onChange={e=>setSoloActivas(e.target.checked)} style={{width:"auto", margin:0}} />
+          Solo activas
+        </label>
+      </div>
+
+      {error && <div className="card" style={{padding:"12px 14px", marginBottom:12, borderColor:"var(--red)", color:"var(--red)", fontSize:13}}>{error}</div>}
+
+      {!hayConfig ? (
+        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Configura Facebook Ads en la tab 📘 Facebook para activar esta vista.</div>
+      ) : loading && !campanas ? (
+        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Consultando Facebook...</div>
+      ) : sorted.length === 0 ? (
+        <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>Sin campañas con datos en el rango seleccionado.</div>
+      ) : (
+        <div style={{overflowX:"auto"}}>
+          <table className="tbl" style={{width:"100%", fontSize:12}}>
+            <thead>
+              <tr>
+                <Th col="nombre" label="Campaña" />
+                <th style={{textAlign:"center"}}>Estado</th>
+                <Th col="inv" label="Inversión" num />
+                <Th col="leads" label="Leads" num />
+                <Th col="cpl" label="CPL" num />
+                <Th col="impr" label="Impresiones" num />
+                <Th col="clicks" label="Clics" num />
+                <Th col="cpm" label="CPM" num />
+                <Th col="ctr" label="CTR" num />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((c,i) => (
+                <tr key={c.id+"_"+i}>
+                  <td style={{maxWidth:280, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}} title={c.nombre}>
+                    {c.nombre}
+                    {cuentas.length>1 && <span style={{fontSize:10, color:"var(--muted)", marginLeft:6}}>· {c.cuenta}</span>}
+                  </td>
+                  <td style={{textAlign:"center"}}>{estadoBadge(c.estado)}</td>
+                  <td style={{textAlign:"right", fontFamily:"var(--mono)", fontWeight:700}}>{fmt(c.inv)}</td>
+                  <td style={{textAlign:"right"}}>{Math.round(c.leads)}</td>
+                  <td style={{textAlign:"right", fontFamily:"var(--mono)", color:c.cpl>0&&cplTotal>0?(c.cpl<=cplTotal?"var(--green)":"var(--red)"):"var(--text)"}}>{c.cpl>0?fmt(c.cpl):"—"}</td>
+                  <td style={{textAlign:"right"}}>{fmtNum(c.impr,0)}</td>
+                  <td style={{textAlign:"right"}}>{fmtNum(c.clicks,0)}</td>
+                  <td style={{textAlign:"right"}}>{fmt(c.cpm)}</td>
+                  <td style={{textAlign:"right"}}>{fmtNum(c.ctr,2)}%</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{fontWeight:700, borderTop:"2px solid var(--border)"}}>
+                <td>TOTAL ({sorted.length})</td>
+                <td></td>
+                <td style={{textAlign:"right", fontFamily:"var(--mono)"}}>{fmt(totales.inv)}</td>
+                <td style={{textAlign:"right"}}>{Math.round(totales.leads)}</td>
+                <td style={{textAlign:"right", fontFamily:"var(--mono)"}}>{cplTotal>0?fmt(cplTotal):"—"}</td>
+                <td style={{textAlign:"right"}}>{fmtNum(totales.impr,0)}</td>
+                <td style={{textAlign:"right"}}>{fmtNum(totales.clicks,0)}</td>
+                <td colSpan={2}></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PANEL POR PAÍS — gasto real ejecutado + presupuesto activo programado
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1798,6 +1988,20 @@ function PaisesPanel({ client, onUpdate }) {
   }
 
   useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  // Auto-refresco del presupuesto cada 60s (solo la config, es liviano) para
+  // que apagar/encender adsets en Facebook se refleje casi en vivo.
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [ultimoRefresh, setUltimoRefresh] = useState(null);
+  useEffect(() => {
+    if (!hayConfig || !autoRefresh) return;
+    const id = setInterval(async () => {
+      const p = await fetchPresupuestoPorPais(token, cuentas);
+      if (p.ok) { setPresup(p); setUltimoRefresh(new Date()); }
+    }, 60000);
+    return () => clearInterval(id);
+    /* eslint-disable-next-line */
+  }, [autoRefresh, hayConfig]);
 
   // Añadir/quitar país principal
   async function togglePaisPrincipal(code) {
@@ -1859,6 +2063,37 @@ function PaisesPanel({ client, onUpdate }) {
     );
   };
 
+  // ── Exportar el desglose por país a CSV ──
+  function exportarCSV() {
+    const filas = [["Pais","Codigo","Inversion","Leads","CPL","% del total","Presupuesto diario"]];
+    codigosConGasto.forEach(code => {
+      const d = porPais[code];
+      const cpl = d.leads>0 ? d.inv/d.leads : 0;
+      const presDiario = monoPais[code] || 0;
+      filas.push([
+        paisNombre(code), code,
+        d.inv.toFixed(2), Math.round(d.leads),
+        cpl>0?cpl.toFixed(2):"", totalInv>0?((d.inv/totalInv)*100).toFixed(1)+"%":"",
+        presDiario>0?presDiario.toFixed(2):""
+      ]);
+    });
+    // Fila de compartidos (informativa)
+    compartidos.forEach(c => {
+      filas.push([
+        "[Compartido] "+c.nombre, c.paises[0]==="WW"?"Mundial":c.paises.join("+"),
+        "","","","", c.budget.toFixed(2)+" ("+c.tipo+")"
+      ]);
+    });
+    const csv = filas.map(f => f.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `paises_${(client.nombre||"cliente").replace(/[^a-z0-9]/gi,"_")}_${desde}_${hasta}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div>
       {/* Header + configuración de países principales */}
@@ -1867,9 +2102,18 @@ function PaisesPanel({ client, onUpdate }) {
           <div style={{fontWeight:700, fontSize:16}}>🌎 Análisis por país</div>
           <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Gasto real ejecutado y presupuesto activo programado, desglosado por país</div>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={()=>setShowConfigPaises(v=>!v)} style={{fontSize:11}}>
-          ⚙️ Países principales ({paisesPrincipales.length})
-        </button>
+        <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
+          <label style={{display:"flex", alignItems:"center", gap:5, fontSize:11, color:"var(--muted)", cursor:"pointer"}}>
+            <input type="checkbox" checked={autoRefresh} onChange={e=>setAutoRefresh(e.target.checked)} style={{width:"auto", margin:0}} />
+            Auto 60s {ultimoRefresh && <span style={{color:"var(--green)"}}>●</span>}
+          </label>
+          <button className="btn btn-ghost btn-sm" onClick={exportarCSV} disabled={codigosConGasto.length===0} style={{fontSize:11}}>
+            📥 Exportar CSV
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={()=>setShowConfigPaises(v=>!v)} style={{fontSize:11}}>
+            ⚙️ Países principales ({paisesPrincipales.length})
+          </button>
+        </div>
       </div>
 
       {/* Configuración de países principales */}
@@ -1917,7 +2161,56 @@ function PaisesPanel({ client, onUpdate }) {
         <div style={{padding:40, textAlign:"center", color:"var(--muted)", fontSize:13}}>
           Configura Facebook Ads en la tab 📘 Facebook para activar el análisis por país.
         </div>
-      ) : (
+      ) : (<>
+
+        {/* ─── CPL COMPARATIVO ENTRE PAÍSES ─── */}
+        {(() => {
+          const conLeads = codigosConGasto.filter(c => porPais[c].leads > 0);
+          if (conLeads.length < 1) return null;
+          const cplPorPais = conLeads.map(c => ({ code:c, cpl: porPais[c].inv/porPais[c].leads, leads: porPais[c].leads, inv: porPais[c].inv }))
+            .sort((a,b) => a.cpl - b.cpl);
+          const maxCpl = Math.max(...cplPorPais.map(x=>x.cpl));
+          const cplGlobal = totalLeads>0 ? totalInv/totalLeads : 0;
+          const mejor = cplPorPais[0], peor = cplPorPais[cplPorPais.length-1];
+          return (
+            <div className="card" style={{padding:"14px 16px", marginBottom:16}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:12, flexWrap:"wrap", gap:6}}>
+                <div style={{fontWeight:700, fontSize:14}}>⚖️ CPL comparativo por país</div>
+                <div style={{fontSize:11, color:"var(--muted)"}}>
+                  CPL global: <span style={{fontFamily:"var(--mono)", fontWeight:700, color:"var(--text)"}}>${fmtNum(cplGlobal,2)}</span>
+                  {cplPorPais.length>1 && <> · Mejor: {paisBandera(mejor.code)} <span style={{color:"var(--green)",fontFamily:"var(--mono)"}}>${fmtNum(mejor.cpl,2)}</span> · Más caro: {paisBandera(peor.code)} <span style={{color:"var(--red)",fontFamily:"var(--mono)"}}>${fmtNum(peor.cpl,2)}</span></>}
+                </div>
+              </div>
+              {cplPorPais.map(({code, cpl, leads}) => {
+                const ancho = maxCpl>0 ? (cpl/maxCpl)*100 : 0;
+                // Verde si está por debajo del CPL global, rojo si arriba
+                const bueno = cplGlobal>0 && cpl <= cplGlobal;
+                const barColor = bueno ? "var(--green)" : "var(--red)";
+                const vsGlobal = cplGlobal>0 ? ((cpl-cplGlobal)/cplGlobal)*100 : 0;
+                return (
+                  <div key={code} style={{marginBottom:10}}>
+                    <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:3}}>
+                      <span style={{fontSize:13, fontWeight:600}}>{paisBandera(code)} {paisNombre(code)} <span style={{fontSize:10, color:"var(--muted)", fontWeight:400}}>· {Math.round(leads)} leads</span></span>
+                      <span style={{display:"flex", alignItems:"center", gap:8}}>
+                        {cplGlobal>0 && Math.abs(vsGlobal)>=1 && (
+                          <span style={{fontSize:10, color:bueno?"var(--green)":"var(--red)"}}>
+                            {bueno?"▼":"▲"} {Math.abs(vsGlobal).toFixed(0)}% vs global
+                          </span>
+                        )}
+                        <span style={{fontWeight:800, fontSize:15, fontFamily:"var(--mono)", color:barColor}}>${fmtNum(cpl,2)}</span>
+                      </span>
+                    </div>
+                    <div style={{height:8, borderRadius:4, background:"var(--border)", overflow:"hidden"}}>
+                      <div style={{height:"100%", width:ancho+"%", borderRadius:4, background:barColor, transition:"width .5s ease-out"}}/>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{fontSize:10, color:"var(--muted)", marginTop:6}}>Barras más cortas = CPL más bajo (mejor). Verde: por debajo del CPL global · Rojo: por encima.</div>
+            </div>
+          );
+        })()}
+
         <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, alignItems:"start"}}>
 
           {/* ─── COLUMNA 1: GASTO REAL EJECUTADO ─── */}
@@ -1997,7 +2290,7 @@ function PaisesPanel({ client, onUpdate }) {
             </>)}
           </div>
         </div>
-      )}
+      </>)}
     </div>
   );
 }
@@ -6346,6 +6639,71 @@ function paisBandera(code){ return PAISES_INFO[code]?.f || "🌐"; }
 
 // ── GASTO REAL por país: usa breakdowns=country (lo que ya se ejecutó) ──
 // Suma sobre todas las cuentas activas. Devuelve { ok, porPais:{CODE:{inv,leads,impr,reach}} }
+// ── MÉTRICAS REALES POR CAMPAÑA: level=campaign (datos exactos de cada una) ──
+// Devuelve { ok, campanas:[{id,nombre,cuenta,inv,leads,impr,reach,clicks,cpm,ctr,cpl,estado}] }
+async function fetchMetricasPorCampana(token, cuentas, since, until) {
+  const activas = (cuentas||[]).filter(c => c.adAccountId);
+  if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
+  const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+  const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+  const out = [];
+  // Estado actual de cada campaña (para marcar activas/pausadas)
+  const estadoPorId = {};
+  for (const cuenta of activas) {
+    try {
+      // 1) Estado de las campañas
+      try {
+        const eUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns`);
+        eUrl.searchParams.set("fields", "id,name,effective_status");
+        eUrl.searchParams.set("limit", "500");
+        eUrl.searchParams.set("access_token", token);
+        let en = eUrl.toString();
+        while (en) {
+          const ej = await fetch(en).then(r=>r.json());
+          if (ej.error) break;
+          (ej.data||[]).forEach(c => { estadoPorId[c.id] = c.effective_status; });
+          en = ej.paging?.next || null;
+        }
+      } catch {}
+      // 2) Insights por campaña
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+      url.searchParams.set("fields", "campaign_id,campaign_name,spend,actions,impressions,reach,inline_link_clicks,cpm,ctr");
+      url.searchParams.set("time_range", JSON.stringify({ since, until }));
+      url.searchParams.set("level", "campaign");
+      url.searchParams.set("limit", "500");
+      url.searchParams.set("access_token", token);
+      let next = url.toString();
+      while (next) {
+        const json = await fetch(next).then(r=>r.json());
+        if (json.error) { console.warn("[Campañas]", cuenta.nombre, json.error.message); break; }
+        for (const d of (json.data||[])) {
+          const inv = parseFloat(d.spend)||0;
+          const acts = d.actions||[];
+          let nl = 0;
+          for (const t of LEAD_TYPES) { if(LEAD_EXCLUIR.has(t))continue; const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
+          if (nl===0) acts.filter(x=>!LEAD_EXCLUIR.has(x.action_type)&&x.action_type?.includes("registration")).forEach(x=>{const v=parseFloat(x.value)||0;if(v>nl)nl=v;});
+          out.push({
+            id: d.campaign_id,
+            nombre: d.campaign_name || "(sin nombre)",
+            cuenta: cuenta.nombre,
+            inv,
+            leads: nl,
+            impr: parseFloat(d.impressions)||0,
+            reach: parseFloat(d.reach)||0,
+            clicks: parseFloat(d.inline_link_clicks)||0,
+            cpm: parseFloat(d.cpm)||0,
+            ctr: parseFloat(d.ctr)||0,
+            cpl: nl>0 ? inv/nl : 0,
+            estado: estadoPorId[d.campaign_id] || "UNKNOWN",
+          });
+        }
+        next = json.paging?.next || null;
+      }
+    } catch(e) { console.error("[Campañas]", cuenta.nombre, e.message); }
+  }
+  return { ok:true, campanas: out };
+}
+
 async function fetchGastoPorPais(token, cuentas, since, until) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
