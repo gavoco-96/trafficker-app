@@ -4264,8 +4264,8 @@ async function fetchInsightsMultiCuenta(token, cuentas, timeRange, fields, level
       const _s=timeRange.since||timeRange.start||"",_u=timeRange.until||timeRange.end||"";
       const multiUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
       multiUrl.searchParams.set("fields", allFields);
-      multiUrl.searchParams.set("since", _s);
-      multiUrl.searchParams.set("until", _u);
+      // since/until sueltos son IGNORADOS por /insights → usar time_range JSON
+      multiUrl.searchParams.set("time_range", JSON.stringify({ since: _s, until: _u }));
       multiUrl.searchParams.set("level", level);
       multiUrl.searchParams.set("access_token", token);
       const url = multiUrl.toString();
@@ -6087,8 +6087,10 @@ async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   
   const syncUrl = new URL(`https://graph.facebook.com/v19.0/act_${adAccountId}/insights`);
   syncUrl.searchParams.set("fields", todosCampos);
-  syncUrl.searchParams.set("since", date);
-  syncUrl.searchParams.set("until", date);
+  // CRÍTICO: since/until SUELTOS son IGNORADOS por /insights (devuelve default ~30d,
+  // por eso todos los días salían idénticos). FB solo respeta el rango como el
+  // objeto JSON time_range={"since":...,"until":...}. Un solo día = since==until.
+  syncUrl.searchParams.set("time_range", JSON.stringify({ since: date, until: date }));
   syncUrl.searchParams.set("level", "account");
   syncUrl.searchParams.set("access_token", token);
   const url = syncUrl.toString();
@@ -6360,6 +6362,25 @@ function FacebookPanel({ client, onUpdate }) {
       else existingRecords.push(result.record);
       ok++;
       setSyncLog(l => l.map(x => x.fecha===fecha ? {...x, estado:"✅"} : x));
+    }
+
+    // ── Red de seguridad: si sincronizaste >=3 dias y TODOS tienen exactamente
+    // la misma inversion, es casi seguro el bug de rango (FB devolvio el mismo
+    // agregado para cada dia). Avisamos en vez de guardar datos absurdos.
+    const fechasSync = fechas.filter(f => existingRecords.find(r => r.date === f));
+    if (fechasSync.length >= 3) {
+      const invs = fechasSync.map(f => {
+        const r = existingRecords.find(x => x.date === f);
+        return r ? parseFloat(r.inversion||0).toFixed(2) : null;
+      }).filter(v => v !== null && parseFloat(v) > 0);
+      const todasIguales = invs.length >= 3 && new Set(invs).size === 1;
+      if (todasIguales) {
+        console.error(`[FB Sync] ⚠️ SOSPECHA: ${invs.length} dias con inversion identica ($${invs[0]}). Posible problema de rango de fechas en la API.`);
+        setSyncStatus("err");
+        setSyncing(false);
+        show(`⚠️ Los ${invs.length} días sincronizados tienen inversión idéntica ($${invs[0]}). Esto suele indicar que Facebook devolvió el mismo agregado para todos los días. Revisa el token/cuenta y vuelve a intentar. No se guardaron estos datos.`, "err");
+        return; // NO guardar datos sospechosos
+      }
     }
 
     existingRecords.sort((a,b) => a.date.localeCompare(b.date));
@@ -6647,7 +6668,8 @@ function FacebookPanel({ client, onUpdate }) {
               const results = [];
               for (const cuenta of activas) {
                 try {
-                  const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,impressions&time_range={'since':'${fecha}','until':'${fecha}'}&level=account&access_token=${token}`;
+                  const _tr = encodeURIComponent(JSON.stringify({ since: fecha, until: fecha }));
+                  const url = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights?fields=spend,actions,impressions&time_range=${_tr}&level=account&access_token=${token}`;
                   const d = await fetch(url).then(r=>r.json());
                   if (d.error) results.push("❌ " + cuenta.nombre + ": " + d.error.message + " (código " + d.error.code + ")");
                   else if (!d.data?.length) results.push("⚠️ " + cuenta.nombre + ": Sin datos para " + fecha + " — puede que el gasto sea $0 ese día o la cuenta no tenga campañas activas");
@@ -10177,13 +10199,13 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
               const py = yP(ultimo.cpl);
               return (<>
                 {/* Halo que late (respiracion en vivo) */}
-                <circle cx={px} cy={py} r="10" fill={color} fillOpacity="0.12"
+                <circle cx={px} cy={py} r="13" fill={color} fillOpacity="0.12"
                   style={{transition:"cx .8s ease-out, cy .8s ease-out"}}>
-                  <animate attributeName="r" values="7;13;7" dur="2s" repeatCount="indefinite"/>
-                  <animate attributeName="fill-opacity" values="0.18;0.04;0.18" dur="2s" repeatCount="indefinite"/>
+                  <animate attributeName="r" values="9;17;9" dur="2s" repeatCount="indefinite"/>
+                  <animate attributeName="fill-opacity" values="0.20;0.05;0.20" dur="2s" repeatCount="indefinite"/>
                 </circle>
                 {/* Punto solido que se desliza a la nueva posicion */}
-                <circle cx={px} cy={py} r="4" fill={color} stroke="var(--bg)" strokeWidth="1.5"
+                <circle cx={px} cy={py} r="6" fill={color} stroke="var(--bg)" strokeWidth="2"
                   style={{transition:"cx .8s ease-out, cy .8s ease-out"}}/>
               </>);
             })()}
@@ -14885,7 +14907,8 @@ function useNotificaciones(clients) {
         try {
           const accId = c.fbConfig?.cuentas?.[0]?.adAccountId || c.fbConfig?.adAccountId;
           if (accId) {
-            const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range={'since':'${hoy}','until':'${hoy}'}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
+            const _trHoy = encodeURIComponent(JSON.stringify({ since: hoy, until: hoy }));
+            const d = await fetch(`https://graph.facebook.com/v19.0/act_${accId}/insights?fields=spend&time_range=${_trHoy}&level=account&access_token=${c.fbConfig.token}`).then(r=>r.json());
             if (!d.error && d.data?.[0] && parseFloat(d.data[0].spend) > c.presupuesto_diario * 1.2)
               nuevas.push({ id:`gasto_${c.id}_${hoy}`, tipo:"gasto", cliente:nombre, msg:`🔴 Gasto disparado — ${nombre}` });
             if (d.error?.code === 190)
