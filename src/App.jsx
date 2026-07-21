@@ -475,6 +475,50 @@ const parseNum = (v) => v === "" ? "" : parseFloat(String(v).replace(/[^0-9.-]/g
 // ── Fecha local del dispositivo (no UTC) ──────────────────────────────────────
 // Usa siempre la fecha/hora local del usuario, sin importar su zona horaria
 // Soluciona el bug donde a las 7pm en Ecuador (UTC-5) se mostraba el día siguiente
+// ═══════════════════════════════════════════════════════════════════════════
+// NORMALIZADOR DE CUENTAS FB — fuente única de verdad para multicuenta
+// Devuelve SIEMPRE un array de cuentas normalizado, sin importar el formato
+// en que esté guardado el cliente (viejo singular o nuevo array). Esto evita
+// tener que reescribir código o reconfigurar cada cliente nuevo.
+// ═══════════════════════════════════════════════════════════════════════════
+function getCuentasFB(client) {
+  const fb = client?.fbConfig || {};
+  let cuentas = [];
+  // Formato nuevo: array de cuentas
+  if (Array.isArray(fb.cuentas) && fb.cuentas.length) {
+    cuentas = fb.cuentas;
+  }
+  // Formato viejo: adAccountId singular → migrar en caliente
+  else if (fb.adAccountId) {
+    cuentas = [{ id: 1, nombre: "Cuenta principal", adAccountId: fb.adAccountId }];
+  }
+  // Normalizar cada cuenta: garantizar id, nombre y adAccountId limpio
+  return cuentas
+    .filter(c => c && (c.adAccountId || c.id))
+    .map((c, i) => ({
+      id: c.id ?? (i + 1),
+      nombre: (c.nombre || "").trim() || `Cuenta ${i + 1}`,
+      // Limpiar el adAccountId: quitar "act_" si viene incluido, y espacios
+      adAccountId: String(c.adAccountId || "").replace(/^act_/, "").trim(),
+    }))
+    .filter(c => c.adAccountId); // solo cuentas con ID real
+}
+
+// Devuelve solo las cuentas con adAccountId válido (listas para consultar FB)
+function getCuentasFBActivas(client) {
+  return getCuentasFB(client).filter(c => c.adAccountId);
+}
+
+// El token de FB del cliente (formato único)
+function getTokenFB(client) {
+  return client?.fbConfig?.token || "";
+}
+
+// ¿El cliente tiene FB configurado y listo para consultar?
+function fbListo(client) {
+  return !!(getTokenFB(client) && getCuentasFBActivas(client).length);
+}
+
 function localDateStr(date = new Date()) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -1839,12 +1883,10 @@ function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, mostrarCuenta, padreL
 
 // ─── PANEL DE RENDIMIENTO FB: Campañas / Conjuntos / Anuncios ─────────────────
 function CampanasFBPanel({ client, onUpdate }) {
-  const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const cuentas = (_cuentas || []).filter(c => c.adAccountId);
-  if (!cuentas.length && client.fbConfig?.adAccountId) {
-    cuentas.push({ adAccountId: client.fbConfig.adAccountId, nombre: "Principal" });
-  }
-  const hayConfig = token && cuentas.length > 0;
+  // Fuente única de verdad para las cuentas (soporta multicuenta y formato viejo)
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  const hayConfig = fbListo(client);
 
   const [nivel, setNivel] = useState("campaign"); // campaign | adset | ad
   const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
@@ -1857,6 +1899,9 @@ function CampanasFBPanel({ client, onUpdate }) {
   const [salud, setSalud] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [guardadoMsg, setGuardadoMsg] = useState(null);
+  const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [sheetsTSV, setSheetsTSV] = useState("");
+  const [sheetsCopiado, setSheetsCopiado] = useState(false);
 
   // Cache por nivel para no re-consultar al cambiar de tab
   const [datos, setDatos] = useState({ campaign: null, adset: null, ad: null });
@@ -1949,8 +1994,8 @@ function CampanasFBPanel({ client, onUpdate }) {
   }
 
   // ── Exportar a Google Sheets (abre un Sheet nuevo con los datos vía URL) ──
-  async function exportarGoogleSheets() {
-    // Construir TSV (Google Sheets pega TSV directo en celdas)
+  // Construye el TSV de las filas actuales (para copiar a Sheets)
+  function construirTSV() {
     const cab = ["Nombre", nivel === "campaign" ? null : "Pertenece a", "Estado", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
     const filasT = [cab];
     filas.forEach(c => {
@@ -1959,34 +2004,13 @@ function CampanasFBPanel({ client, onUpdate }) {
       row.push(c.estado, Math.round(c.leads), c.inv.toFixed(2), c.cpl > 0 ? c.cpl.toFixed(2) : "", c.ctr.toFixed(2) + "%", c.cpm.toFixed(2));
       filasT.push(row);
     });
-    const tsv = filasT.map(f => f.join("\t")).join("\n");
+    return filasT.map(f => f.join("\t")).join("\n");
+  }
 
-    // Copiar al portapapeles ANTES de abrir la pestaña (evita perder el foco).
-    let copiado = false;
-    try {
-      await navigator.clipboard.writeText(tsv);
-      copiado = true;
-    } catch {
-      // Fallback: textarea temporal + execCommand (funciona sin permisos)
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = tsv; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.focus(); ta.select();
-        copiado = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch {}
-    }
-
-    if (copiado) {
-      setGuardadoMsg("📋 Datos copiados al portapapeles. Se abrió Google Sheets: haz clic en la celda A1 y pega con Ctrl+V (o Cmd+V).");
-      setTimeout(() => setGuardadoMsg(null), 9000);
-      window.open("https://sheets.new", "_blank");
-    } else {
-      // Si no se pudo copiar, descargar CSV como respaldo garantizado
-      setGuardadoMsg("No se pudo copiar automáticamente. Descargué el CSV — ábrelo en Google Sheets con Archivo → Importar.");
-      setTimeout(() => setGuardadoMsg(null), 9000);
-      exportarCSV();
-    }
+  // Abre el modal de exportación a Sheets (copia confiable con clic directo)
+  function exportarGoogleSheets() {
+    setSheetsTSV(construirTSV());
+    setShowSheetsModal(true);
   }
 
   // ── Guardar snapshot para histórico/predicción ──
@@ -2098,6 +2122,58 @@ function CampanasFBPanel({ client, onUpdate }) {
           mostrarCuenta={cuentas.length > 1 && cuentaFiltro === "todas"}
           padreLabel={nivel === "adset" ? "Campaña" : "Conjunto"} />
       )}
+
+      {/* Modal de exportación a Google Sheets — copia confiable con clic directo */}
+      {showSheetsModal && (
+        <div onClick={() => { setShowSheetsModal(false); setSheetsCopiado(false); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} className="card"
+            style={{ maxWidth: 560, width: "100%", padding: "20px 22px", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Exportar a Google Sheets</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setShowSheetsModal(false); setSheetsCopiado(false); }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 14 }}>
+              {filas.length} filas listas. Sigue estos 3 pasos:
+            </div>
+            <ol style={{ fontSize: 13, paddingLeft: 20, margin: "0 0 14px", lineHeight: 1.8 }}>
+              <li>Presiona <strong>Copiar datos</strong> abajo.</li>
+              <li>Presiona <strong>Abrir Google Sheets</strong> (se abre una hoja nueva).</li>
+              <li>Haz clic en la celda <strong>A1</strong> y pega con <strong>Ctrl+V</strong> (o Cmd+V en Mac).</li>
+            </ol>
+            <textarea readOnly value={sheetsTSV}
+              style={{ width: "100%", height: 120, fontSize: 10, fontFamily: "var(--mono)", resize: "none", marginBottom: 14, background: "var(--surface2)" }}
+              onClick={e => e.target.select()} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-primary btn-sm" style={{ flex: 1, minWidth: 130 }}
+                onClick={async () => {
+                  let ok = false;
+                  try { await navigator.clipboard.writeText(sheetsTSV); ok = true; }
+                  catch {
+                    try {
+                      const ta = document.createElement("textarea");
+                      ta.value = sheetsTSV; ta.style.position = "fixed"; ta.style.opacity = "0";
+                      document.body.appendChild(ta); ta.focus(); ta.select();
+                      ok = document.execCommand("copy"); document.body.removeChild(ta);
+                    } catch {}
+                  }
+                  setSheetsCopiado(ok);
+                }}>
+                {sheetsCopiado ? "✓ Copiado" : "📋 Copiar datos"}
+              </button>
+              <button className="btn btn-ghost btn-sm" style={{ flex: 1, minWidth: 130 }}
+                onClick={() => window.open("https://sheets.new", "_blank")}>
+                📊 Abrir Google Sheets
+              </button>
+              <button className="btn btn-ghost btn-sm" style={{ minWidth: 100 }}
+                onClick={() => { exportarCSV(); }}>
+                📥 O bajar CSV
+              </button>
+            </div>
+            {sheetsCopiado && <div style={{ fontSize: 11, color: "var(--green)", marginTop: 10 }}>✓ Datos en el portapapeles. Ahora abre Sheets y pega en A1.</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2128,12 +2204,10 @@ function SaludFBBadge({ salud }) {
 // PANEL POR PAÍS — gasto real ejecutado + presupuesto activo programado
 // ═══════════════════════════════════════════════════════════════════════════
 function PaisesPanel({ client, onUpdate }) {
-  const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const cuentas = (_cuentas || []).filter(c => c.adAccountId);
-  if (!cuentas.length && client.fbConfig?.adAccountId) {
-    cuentas.push({ adAccountId: client.fbConfig.adAccountId, nombre: "Principal" });
-  }
-  const hayConfig = token && cuentas.length > 0;
+  // Fuente única de verdad para las cuentas (soporta multicuenta y formato viejo)
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  const hayConfig = fbListo(client);
 
   // Países principales definidos por el usuario (guardados en el perfil del cliente)
   const paisesPrincipales = client.paisesPrincipales || [];
@@ -7470,8 +7544,14 @@ function FacebookPanel({ client, onUpdate }) {
 
   async function saveConfig() {
     setSaving(true);
+    // Normalizar cuentas antes de guardar: limpiar act_, espacios, nombres vacíos
+    const cuentasLimpias = (cuentas || []).map((c, i) => ({
+      id: c.id ?? (i + 1),
+      nombre: (c.nombre || "").trim() || `Cuenta ${i + 1}`,
+      adAccountId: String(c.adAccountId || "").replace(/^act_/, "").trim(),
+    }));
     const updated = { ...client, fbConfig: {
-      token, cuentas, selectedMetrics, lastSync,
+      token, cuentas: cuentasLimpias, selectedMetrics, lastSync,
       autoSync, billingAlerts,
       billingData: billingData || fbConfig.billingData,
       tokenSavedAt: fbConfig.tokenSavedAt || new Date().toISOString()
@@ -15109,7 +15189,13 @@ function OnboardingWizard({ onSave, onCancel }) {
       tgConfig: form.tgToken ? { token: form.tgToken, chatId: form.tgChatId, plantillas: plantillasBase } : { plantillas: plantillasBase },
       waConfig: form.wa_lid ? { wa_lid: form.wa_lid, bot_consultas_activo: true } : {},
       presupuesto_diario: form.presupuesto_diario ? parseFloat(form.presupuesto_diario) : null,
-      fbConfig: form.fbToken ? { token: form.fbToken, adAccountId: form.fbAdAccountId, selectedMetrics: fbMetricsApollo } : {},
+      fbConfig: form.fbToken ? {
+        token: form.fbToken,
+        cuentas: form.fbAdAccountId
+          ? [{ id: 1, nombre: "Cuenta principal", adAccountId: String(form.fbAdAccountId).replace(/^act_/, "").trim() }]
+          : [],
+        selectedMetrics: fbMetricsApollo
+      } : {},
       schedConfig: {
         enabled: false, hora: "08:00", dias: [1,2,3,4,5],
         plantillaId: isApollo ? "p1" : "p1"
