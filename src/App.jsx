@@ -2353,6 +2353,24 @@ function ComparativaCplPanel({ client }) {
     a.click(); URL.revokeObjectURL(url);
   }
 
+  // Ancho real del contenedor: se usa en el viewBox para NO deformar el texto.
+  // (preserveAspectRatio="none" estiraba los números y se veían alargados)
+  const anchoRef = useRef(null);
+  const [anchoPx, setAnchoPx] = useState(900);
+  useEffect(() => {
+    const el = anchoRef.current;
+    if (!el) return;
+    const medir = () => {
+      // clientWidth incluye el padding del card (1.25rem = 20px por lado)
+      const w = el.clientWidth - 40;
+      if (w > 0) setAnchoPx(w);
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Escala común para las gráficas
   const todosValores = fechas.flatMap(f => (datos[f]?.horas || []).map(h => h[metrica]).filter(v => v > 0));
   const maxV = todosValores.length ? Math.max(...todosValores) : 1;
@@ -2364,7 +2382,7 @@ function ComparativaCplPanel({ client }) {
     const [hov, setHov] = useState(null);
     const d = datos[fecha];
     if (!d) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin datos</div>;
-    const W = 900, H = alto, PAD = { t: 10, r: 12, b: mostrarEje ? 20 : 6, l: 44 };
+    const W = Math.max(anchoPx, 320), H = alto, PAD = { t: 10, r: 14, b: mostrarEje ? 22 : 6, l: 52 };
     const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
     const pts = d.horas.filter(h => h[metrica] > 0);
     if (!pts.length) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin gasto ese día</div>;
@@ -2385,7 +2403,7 @@ function ComparativaCplPanel({ client }) {
 
     return (
       <div style={{ position: "relative" }}>
-        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}
+        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}
           onMouseMove={onMove} onMouseLeave={() => setHov(null)}>
           <defs>
             <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
@@ -2450,7 +2468,7 @@ function ComparativaCplPanel({ client }) {
   };
 
   return (
-    <div className="card" style={{ marginBottom: "1rem", padding: "1.25rem" }}>
+    <div ref={anchoRef} className="card" style={{ marginBottom: "1rem", padding: "1.25rem" }}>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <div>
@@ -2528,12 +2546,12 @@ function ComparativaCplPanel({ client }) {
 
         {/* VISTA OVERLAY */}
         {vista === "overlay" && (() => {
-          const W = 900, H = 300, PAD = { t: 14, r: 14, b: 24, l: 46 };
+          const W = Math.max(anchoPx, 320), H = 300, PAD = { t: 14, r: 16, b: 26, l: 54 };
           const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
           const x = (h) => PAD.l + (h / 23) * cW;
           const y = (v) => PAD.t + cH - ((v - minV) / rangoV) * cH;
           return (
-            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
+            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
               {[0, .25, .5, .75, 1].map((t, i) => {
                 const v = minV + rangoV * (1 - t);
                 return (<g key={i}>
@@ -7650,6 +7668,571 @@ async function fetchPresupuestoPorPais(token, cuentas) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TIKTOK ADS — motor de métricas (espejo del de Facebook)
+// ═══════════════════════════════════════════════════════════════════════════
+// Diferencias con Meta que maneja este módulo:
+//  · El token va en el header "Access-Token", no en la URL.
+//  · Se usa advertiser_id (no act_<id>).
+//  · Los niveles son AUCTION_CAMPAIGN / AUCTION_ADGROUP / AUCTION_AD.
+//  · Las métricas se piden por nombre dentro de un array JSON.
+
+const TT_API = "https://business-api.tiktok.com/open_api/v1.3";
+
+// ── Normalizador de cuentas TikTok (misma filosofía que getCuentasFB) ──────
+function getCuentasTT(client) {
+  const tt = client?.ttConfig || {};
+  let cuentas = [];
+  if (Array.isArray(tt.cuentas) && tt.cuentas.length) cuentas = tt.cuentas;
+  else if (tt.advertiserId) cuentas = [{ id: 1, nombre: "Cuenta principal", advertiserId: tt.advertiserId }];
+  return cuentas
+    .filter(c => c && (c.advertiserId || c.id))
+    .map((c, i) => ({
+      id: c.id ?? (i + 1),
+      nombre: (c.nombre || "").trim() || `Cuenta ${i + 1}`,
+      advertiserId: String(c.advertiserId || "").trim(),
+    }))
+    .filter(c => c.advertiserId);
+}
+function getCuentasTTActivas(client) { return getCuentasTT(client).filter(c => c.advertiserId); }
+function getTokenTT(client) { return client?.ttConfig?.token || ""; }
+function ttListo(client) { return !!(getTokenTT(client) && getCuentasTTActivas(client).length); }
+
+// Métricas que pedimos a TikTok (equivalentes a las de Meta)
+const TT_METRICAS = [
+  "spend", "impressions", "reach", "clicks", "cpc", "cpm", "ctr", "frequency",
+  "conversion", "cost_per_conversion", "conversion_rate",
+  "complete_payment", "total_purchase_value",
+];
+
+// Llamada base a la API de TikTok con el token en el header
+async function ttFetch(path, params, token) {
+  const url = new URL(TT_API + path);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    url.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+  });
+  const r = await fetch(url.toString(), { headers: { "Access-Token": token, "Content-Type": "application/json" } });
+  const json = await r.json();
+  // TikTok devuelve code=0 cuando todo va bien
+  if (json.code !== 0) {
+    const err = { message: json.message || "Error de TikTok", code: json.code };
+    return { ok: false, error: err };
+  }
+  return { ok: true, data: json.data };
+}
+
+// Interpreta errores de TikTok para el badge de salud
+function diagnosticarSaludTT(algunOk, err) {
+  if (algunOk && !err) return { estado: "ok", mensaje: "Conexión con TikTok OK", ts: Date.now() };
+  if (!err) return { estado: "sin_datos", mensaje: "Sin datos en el rango (puede ser normal)", ts: Date.now() };
+  const c = err.code;
+  if (c === 40001 || c === 40100 || c === 40105) return { estado: "token_expirado", mensaje: "El token de TikTok expiró o es inválido. Genera uno nuevo en la tab 🎵 TikTok.", ts: Date.now(), code: c };
+  if (c === 40002 || c === 40101) return { estado: "permisos", mensaje: "Faltan permisos en el token de TikTok. Revisa los scopes de la app.", ts: Date.now(), code: c };
+  if (c === 50002 || c === 40016) return { estado: "rate_limit", mensaje: "TikTok limitó las consultas temporalmente. Espera unos minutos.", ts: Date.now(), code: c };
+  if (c === "NETWORK") return { estado: "red", mensaje: "Error de red al conectar con TikTok.", ts: Date.now() };
+  return { estado: "error", mensaje: err.message || "Error desconocido de TikTok", ts: Date.now(), code: c };
+}
+
+// Extrae los leads/conversiones de la respuesta de TikTok
+function ttLeads(m) {
+  // "conversion" es la métrica principal de conversiones en TikTok
+  const conv = parseFloat(m.conversion) || 0;
+  if (conv > 0) return conv;
+  // Fallback: registros completados si el objetivo es lead gen
+  const reg = parseFloat(m.total_registration) || parseFloat(m.registration) || 0;
+  return reg;
+}
+
+// ── MÉTRICAS POR NIVEL (campaign | adgroup | ad) ──────────────────────────
+async function fetchMetricasTTPorNivel(token, cuentas, since, until, nivel, soloActivas = false) {
+  const activas = (cuentas || []).filter(c => c.advertiserId);
+  if (!activas.length) return { ok: false, error: "Sin cuentas configuradas", salud: { estado: "sin_config" } };
+
+  const cfg = {
+    campaign: { dataLevel: "AUCTION_CAMPAIGN", dim: "campaign_id", nameF: "campaign_name", parentName: null },
+    adgroup:  { dataLevel: "AUCTION_ADGROUP",  dim: "adgroup_id",  nameF: "adgroup_name",  parentName: "campaign_name" },
+    ad:       { dataLevel: "AUCTION_AD",       dim: "ad_id",       nameF: "ad_name",       parentName: "adgroup_name" },
+  }[nivel];
+  if (!cfg) return { ok: false, error: "Nivel inválido", salud: { estado: "error" } };
+
+  const out = [];
+  let algunError = null, algunOk = false;
+
+  for (const cuenta of activas) {
+    try {
+      // Campos de nombre: TikTok los entrega si se piden como métricas
+      const metricas = [...TT_METRICAS, cfg.nameF];
+      if (cfg.parentName) metricas.push(cfg.parentName);
+
+      let page = 1, totalPages = 1;
+      do {
+        const params = {
+          advertiser_id: cuenta.advertiserId,
+          report_type: "BASIC",
+          data_level: cfg.dataLevel,
+          dimensions: [cfg.dim],
+          metrics: metricas,
+          start_date: since,
+          end_date: until,
+          page, page_size: 200,
+        };
+        if (soloActivas) {
+          params.filtering = [{ field_name: "campaign_status", filter_type: "IN", filter_value: JSON.stringify(["STATUS_DELIVERY_OK"]) }];
+        }
+        const r = await ttFetch("/report/integrated/get/", params, token);
+        if (!r.ok) { algunError = r.error; break; }
+        algunOk = true;
+        const lista = r.data?.list || [];
+        totalPages = r.data?.page_info?.total_page || 1;
+        for (const row of lista) {
+          const m = row.metrics || {};
+          const dims = row.dimensions || {};
+          const inv = parseFloat(m.spend) || 0;
+          const leads = ttLeads(m);
+          out.push({
+            id: String(dims[cfg.dim] || ""),
+            nombre: m[cfg.nameF] || "(sin nombre)",
+            padre: cfg.parentName ? (m[cfg.parentName] || "") : "",
+            cuenta: cuenta.nombre,
+            inv,
+            leads,
+            impr: parseFloat(m.impressions) || 0,
+            reach: parseFloat(m.reach) || 0,
+            clicks: parseFloat(m.clicks) || 0,
+            cpm: parseFloat(m.cpm) || 0,
+            ctr: parseFloat(m.ctr) || 0,
+            frequency: parseFloat(m.frequency) || 0,
+            cpl: leads > 0 ? inv / leads : 0,
+            estado: "ACTIVE", // TikTok no devuelve estado en el reporte básico
+          });
+        }
+        page++;
+      } while (page <= totalPages && page <= 20); // tope de seguridad
+    } catch (e) {
+      algunError = { message: e.message, code: "NETWORK" };
+      console.error(`[TikTok ${nivel}]`, cuenta.nombre, e.message);
+    }
+  }
+  return { ok: algunOk || !algunError, campanas: out, salud: diagnosticarSaludTT(algunOk, algunError), errorFB: algunError };
+}
+
+// ── GASTO POR PAÍS (TikTok soporta el breakdown "country_code") ───────────
+async function fetchGastoPorPaisTT(token, cuentas, since, until) {
+  const activas = (cuentas || []).filter(c => c.advertiserId);
+  if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
+  const porPais = {}, porCuenta = {};
+  for (const cuenta of activas) {
+    try {
+      const r = await ttFetch("/report/integrated/get/", {
+        advertiser_id: cuenta.advertiserId,
+        report_type: "AUDIENCE",
+        data_level: "AUCTION_ADVERTISER",
+        dimensions: ["country_code"],
+        metrics: ["spend", "impressions", "conversion"],
+        start_date: since, end_date: until,
+        page: 1, page_size: 200,
+      }, token);
+      if (!r.ok) { console.warn("[TikTok países]", cuenta.nombre, r.error.message); continue; }
+      for (const row of (r.data?.list || [])) {
+        const code = row.dimensions?.country_code || "??";
+        const m = row.metrics || {};
+        const inv = parseFloat(m.spend) || 0;
+        const leads = ttLeads(m);
+        if (!porPais[code]) porPais[code] = { inv: 0, leads: 0, impr: 0, reach: 0 };
+        porPais[code].inv += inv;
+        porPais[code].leads += leads;
+        porPais[code].impr += parseFloat(m.impressions) || 0;
+        if (!porCuenta[cuenta.nombre]) porCuenta[cuenta.nombre] = { inv: 0, leads: 0, impr: 0, adAccountId: cuenta.advertiserId };
+        porCuenta[cuenta.nombre].inv += inv;
+        porCuenta[cuenta.nombre].leads += leads;
+      }
+    } catch (e) { console.error("[TikTok países]", cuenta.nombre, e.message); }
+  }
+  return { ok: true, porPais, porCuenta };
+}
+
+// ── PRESUPUESTO ACTIVO (campañas + adgroups, como en Meta) ────────────────
+async function fetchPresupuestoTT(token, cuentas) {
+  const activas = (cuentas || []).filter(c => c.advertiserId);
+  if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
+  const monoPais = {}, compartidos = [], presupPorCuenta = {};
+  let totalDiario = 0;
+
+  for (const cuenta of activas) {
+    if (!presupPorCuenta[cuenta.nombre]) presupPorCuenta[cuenta.nombre] = { diario: 0, adsets: 0, campanasCBO: 0, adAccountId: cuenta.advertiserId };
+    try {
+      // Campañas con presupuesto propio (equivalente a CBO)
+      const cboPorCampana = {};
+      const rc = await ttFetch("/campaign/get/", {
+        advertiser_id: cuenta.advertiserId,
+        filtering: { primary_status: "STATUS_DELIVERY_OK" },
+        page: 1, page_size: 200,
+      }, token);
+      if (rc.ok) {
+        for (const c of (rc.data?.list || [])) {
+          const b = parseFloat(c.budget) || 0;
+          if (b > 0 && c.budget_mode !== "BUDGET_MODE_INFINITE") {
+            cboPorCampana[c.campaign_id] = { daily: c.budget_mode === "BUDGET_MODE_DAY" ? b : 0, life: c.budget_mode === "BUDGET_MODE_TOTAL" ? b : 0, nombre: c.campaign_name };
+          }
+        }
+      }
+      // Grupos de anuncios
+      const ra = await ttFetch("/adgroup/get/", {
+        advertiser_id: cuenta.advertiserId,
+        filtering: { primary_status: "STATUS_DELIVERY_OK" },
+        page: 1, page_size: 200,
+      }, token);
+      const paisesPorCampanaCBO = {};
+      if (ra.ok) {
+        for (const a of (ra.data?.list || [])) {
+          const paises = (a.location_ids || []).map(String); // TikTok usa IDs de ubicación
+          const esCBO = !!cboPorCampana[a.campaign_id];
+          if (esCBO) {
+            if (!paisesPorCampanaCBO[a.campaign_id]) paisesPorCampanaCBO[a.campaign_id] = new Set();
+            paises.forEach(p => paisesPorCampanaCBO[a.campaign_id].add(p));
+            continue;
+          }
+          const b = parseFloat(a.budget) || 0;
+          if (b <= 0) continue;
+          const daily = a.budget_mode === "BUDGET_MODE_DAY" ? b : 0;
+          totalDiario += daily;
+          presupPorCuenta[cuenta.nombre].diario += daily;
+          presupPorCuenta[cuenta.nombre].adsets += 1;
+          compartidos.push({ nombre: a.adgroup_name || "(sin nombre)", cuenta: cuenta.nombre, paises: ["TT"], budget: b, tipo: daily ? "diario" : "total", nivel: "grupo" });
+        }
+      }
+      // Presupuestos a nivel campaña
+      for (const [id, info] of Object.entries(cboPorCampana)) {
+        const b = info.daily || info.life;
+        totalDiario += info.daily;
+        presupPorCuenta[cuenta.nombre].diario += info.daily;
+        presupPorCuenta[cuenta.nombre].campanasCBO += 1;
+        compartidos.push({ nombre: info.nombre, cuenta: cuenta.nombre, paises: ["TT"], budget: b, tipo: info.daily ? "diario" : "total", nivel: "campaña" });
+      }
+    } catch (e) { console.error("[TikTok presup]", cuenta.nombre, e.message); }
+  }
+  return { ok: true, monoPais, compartidos, totalDiario, presupPorCuenta };
+}
+
+// ─── PANEL DE CONFIGURACIÓN DE TIKTOK ADS ─────────────────────────────────
+function TikTokConfigPanel({ client, onUpdate, show }) {
+  const ttConfig = client.ttConfig || {};
+  const [token, setToken] = useState(ttConfig.token || "");
+  const [cuentas, setCuentas] = useState(() => {
+    const c = getCuentasTT(client);
+    return c.length ? c : [{ id: 1, nombre: "", advertiserId: "" }];
+  });
+  const [saving, setSaving] = useState(false);
+  const [verify, setVerify] = useState(null);
+  const [showGuia, setShowGuia] = useState(false);
+
+  function addCuenta() { setCuentas(p => [...p, { id: Date.now(), nombre: "", advertiserId: "" }]); }
+  function removeCuenta(id) { setCuentas(p => p.filter(c => c.id !== id)); }
+  function updateCuenta(id, campo, val) { setCuentas(p => p.map(c => c.id === id ? { ...c, [campo]: val } : c)); }
+
+  async function guardar() {
+    setSaving(true);
+    const limpias = cuentas
+      .map((c, i) => ({ id: c.id ?? (i + 1), nombre: (c.nombre || "").trim() || `Cuenta ${i + 1}`, advertiserId: String(c.advertiserId || "").trim() }))
+      .filter(c => c.advertiserId);
+    await onUpdate({ ...client, ttConfig: { ...ttConfig, token: token.trim(), cuentas: limpias, savedAt: new Date().toISOString() } });
+    show?.("✓ Configuración de TikTok guardada", "ok");
+    setSaving(false);
+  }
+
+  async function verificarToken() {
+    if (!token.trim()) { show?.("Ingresa el token primero", "err"); return; }
+    const primera = cuentas.find(c => c.advertiserId);
+    if (!primera) { show?.("Agrega al menos un Advertiser ID", "err"); return; }
+    setVerify("loading");
+    const r = await ttFetch("/advertiser/info/", { advertiser_ids: [primera.advertiserId] }, token.trim());
+    if (r.ok) {
+      const info = r.data?.list?.[0];
+      setVerify({ ok: true, nombre: info?.name || "Cuenta verificada", moneda: info?.currency });
+    } else {
+      setVerify({ ok: false, error: r.error?.message || "Token inválido" });
+    }
+  }
+
+  return (
+    <>
+      {/* Token */}
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>🎵 Conexión con TikTok Ads</div>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setShowGuia(v => !v)}>
+            {showGuia ? "Ocultar guía" : "❓ ¿Cómo obtengo el acceso?"}
+          </button>
+        </div>
+
+        {showGuia && (
+          <div style={{ background: "var(--surface2)", borderRadius: 10, padding: "12px 16px", marginBottom: 12, fontSize: 12, lineHeight: 1.7 }}>
+            <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--amber)" }}>Cómo conseguir el Access Token de TikTok</div>
+            <ol style={{ paddingLeft: 18, margin: 0 }}>
+              <li>Entra a <b>business-api.tiktok.com</b> e inicia sesión con tu cuenta de TikTok Business.</li>
+              <li>Ve a <b>My Apps → Create an App</b>. Llena nombre, descripción y una URL de redirección (puede ser la de tu app).</li>
+              <li>En <b>Scope of Permission</b> marca al menos: <i>Ad Account Management</i>, <i>Reporting</i>, <i>Campaign Management (lectura)</i>.</li>
+              <li>Envía la app a revisión. TikTok suele aprobarla en 1-3 días hábiles.</li>
+              <li>Una vez aprobada, usa el flujo de autorización para generar el <b>Access Token</b> de larga duración.</li>
+              <li>El <b>Advertiser ID</b> lo encuentras en TikTok Ads Manager, arriba a la derecha junto al nombre de la cuenta.</li>
+            </ol>
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)", color: "var(--muted)" }}>
+              A diferencia de Meta, TikTok exige que la app pase revisión antes de dar acceso a datos reales. Mientras tanto puedes usar el modo sandbox para probar la integración.
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: .5 }}>Access Token de TikTok</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="text" value={token} onChange={e => setToken(e.target.value)}
+            placeholder="Pega aquí el Access Token de TikTok Business" style={{ flex: 1, fontSize: 12, fontFamily: "var(--mono)" }} />
+          <button className="btn btn-ghost btn-sm" onClick={verificarToken} disabled={verify === "loading"}>
+            {verify === "loading" ? "⟳" : "🔍"} Verificar
+          </button>
+        </div>
+        {verify && verify !== "loading" && (
+          <div style={{ marginTop: 8, fontSize: 12, color: verify.ok ? "var(--green)" : "var(--red)" }}>
+            {verify.ok ? `✓ Conectado: ${verify.nombre}${verify.moneda ? ` (${verify.moneda})` : ""}` : `✕ ${verify.error}`}
+          </div>
+        )}
+      </div>
+
+      {/* Cuentas */}
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>📊 Cuentas de anunciante TikTok</div>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={addCuenta}>+ Agregar cuenta</button>
+        </div>
+        {cuentas.map(c => (
+          <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>Nombre de la cuenta</div>
+              <input type="text" value={c.nombre} onChange={e => updateCuenta(c.id, "nombre", e.target.value)}
+                placeholder="Ej: Ecuador TikTok" style={{ width: "100%", fontSize: 12 }} />
+            </div>
+            <div style={{ flex: 1.4 }}>
+              <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>Advertiser ID</div>
+              <input type="text" value={c.advertiserId} onChange={e => updateCuenta(c.id, "advertiserId", e.target.value)}
+                placeholder="Ej: 7012345678901234567" style={{ width: "100%", fontSize: 12, fontFamily: "var(--mono)" }} />
+            </div>
+            {cuentas.length > 1 && (
+              <button className="btn btn-ghost btn-sm" style={{ color: "var(--red)" }} onClick={() => removeCuenta(c.id)}>×</button>
+            )}
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>
+          💡 Al consultar, los datos de todas las cuentas se consolidan. También puedes filtrar por cuenta en cada vista.
+        </div>
+      </div>
+
+      <button className="btn btn-green btn-sm" disabled={saving} onClick={guardar}>
+        {saving ? "Guardando..." : "💾 Guardar configuración"}
+      </button>
+    </>
+  );
+}
+
+// ─── PANEL DE MÉTRICAS TIKTOK (espejo del de Facebook) ────────────────────
+function TikTokMetricasPanel({ client, onUpdate }) {
+  const token = getTokenTT(client);
+  const cuentas = getCuentasTTActivas(client);
+  const hayConfig = ttListo(client);
+
+  const [nivel, setNivel] = useState("campaign");
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [hasta, setHasta] = useState(localDateStr());
+  const [preset, setPreset] = useState("30d");
+  const [busqueda, setBusqueda] = useState("");
+  const [soloActivas, setSoloActivas] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [salud, setSalud] = useState(null);
+  const [datos, setDatos] = useState({ campaign: null, adgroup: null, ad: null });
+  const [cuentaFiltro, setCuentaFiltro] = useState("todas");
+  const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [sheetsTSV, setSheetsTSV] = useState("");
+  const [sheetsCopiado, setSheetsCopiado] = useState(false);
+
+  const NIVELES = [["campaign", "📡 Campañas"], ["adgroup", "🎯 Grupos"], ["ad", "🖼️ Anuncios"]];
+
+  function aplicarPreset(p) {
+    setPreset(p);
+    const hoy = new Date(); let d = new Date();
+    if (p === "hoy") d = hoy;
+    else if (p === "7d") d.setDate(d.getDate() - 6);
+    else if (p === "30d") d.setDate(d.getDate() - 29);
+    else if (p === "90d") d.setDate(d.getDate() - 89);
+    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
+  }
+
+  async function cargar(n = nivel, forzar = false) {
+    if (!hayConfig) { setError("Configura TikTok Ads abajo para activar esta vista."); return; }
+    if (!forzar && datos[n]) return;
+    setLoading(true); setError(null);
+    const r = await fetchMetricasTTPorNivel(token, cuentas, desde, hasta, n, soloActivas);
+    setSalud(r.salud);
+    if (!r.ok) { setError(r.error || r.salud?.mensaje || "Error al consultar TikTok"); setLoading(false); return; }
+    setDatos(prev => ({ ...prev, [n]: r.campanas }));
+    setLoading(false);
+  }
+  function recargarTodo() {
+    setDatos({ campaign: null, adgroup: null, ad: null });
+    setLoading(true);
+    (async () => {
+      const r = await fetchMetricasTTPorNivel(token, cuentas, desde, hasta, nivel, soloActivas);
+      setSalud(r.salud);
+      if (!r.ok) { setError(r.error || r.salud?.mensaje); setLoading(false); return; }
+      setDatos({ campaign: null, adgroup: null, ad: null, [nivel]: r.campanas });
+      setError(null); setLoading(false);
+    })();
+  }
+  useEffect(() => { if (hayConfig) cargar("campaign"); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { if (hayConfig) cargar(nivel); /* eslint-disable-next-line */ }, [nivel]);
+
+  const filasRaw = datos[nivel] || [];
+  const filas = filasRaw
+    .filter(c => cuentaFiltro === "todas" || c.cuenta === cuentaFiltro)
+    .filter(c => !busqueda || c.nombre.toLowerCase().includes(busqueda.toLowerCase()) || (c.padre || "").toLowerCase().includes(busqueda.toLowerCase()));
+  const totalInv = filas.reduce((s, c) => s + c.inv, 0);
+  const totalLeads = filas.reduce((s, c) => s + c.leads, 0);
+  const cplGlobal = totalLeads > 0 ? totalInv / totalLeads : 0;
+
+  function construirTSV() {
+    const cab = ["Nombre", nivel === "campaign" ? null : "Pertenece a", "Registros", "Monto gastado", "CPL", "CTR", "CPM"].filter(Boolean);
+    const f = [cab];
+    filas.forEach(c => {
+      const row = [c.nombre];
+      if (nivel !== "campaign") row.push(c.padre || "");
+      row.push(Math.round(c.leads), c.inv.toFixed(2), c.cpl > 0 ? c.cpl.toFixed(2) : "", c.ctr.toFixed(2) + "%", c.cpm.toFixed(2));
+      f.push(row);
+    });
+    return f.map(r => r.join("\t")).join("\n");
+  }
+  function exportarCSV() {
+    const csv = construirTSV().split("\n").map(l => l.split("\t").map(v => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const nivelN = { campaign: "campanas", adgroup: "grupos", ad: "anuncios" }[nivel];
+    a.href = url; a.download = `tiktok_${nivelN}_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}_${desde}_${hasta}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>🎵 Rendimiento TikTok Ads</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>Datos reales de TikTok — identifica lo ganador para escalar</div>
+        </div>
+        <SaludFBBadge salud={salud} />
+      </div>
+
+      {/* Niveles + cuenta */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12, justifyContent: "space-between" }}>
+        <div className="period-pills">
+          {NIVELES.map(([k, l]) => (
+            <button key={k} className={"pill " + (nivel === k ? "active" : "")} onClick={() => setNivel(k)}>{l}</button>
+          ))}
+        </div>
+        {cuentas.length > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>Cuenta:</span>
+            <select value={cuentaFiltro} onChange={e => setCuentaFiltro(e.target.value)} style={{ width: "auto", fontSize: 12, padding: "4px 8px" }}>
+              <option value="todas">Todas ({cuentas.length}) — consolidado</option>
+              {cuentas.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* Rango */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <div className="period-pills">
+          {[["hoy", "Hoy"], ["7d", "7 días"], ["30d", "30 días"], ["90d", "90 días"]].map(([k, l]) => (
+            <button key={k} className={"pill " + (preset === k ? "active" : "")} onClick={() => { aplicarPreset(k); setTimeout(recargarTodo, 0); }}>{l}</button>
+          ))}
+        </div>
+        <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
+        <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
+        <button className="btn btn-primary btn-sm" onClick={recargarTodo} disabled={loading || !hayConfig}>{loading ? "⟳ Consultando..." : "🔄 Actualizar"}</button>
+      </div>
+
+      {/* Filtros + export */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12, justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ position: "relative", width: 260 }}>
+            <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar..." style={{ width: "100%", paddingLeft: 30, fontSize: 12 }} />
+            <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 13 }}>🔍</span>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={soloActivas} onChange={e => { setSoloActivas(e.target.checked); setTimeout(recargarTodo, 0); }} style={{ width: "auto", margin: 0 }} />
+            Solo activos
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="btn btn-ghost btn-sm" onClick={exportarCSV} disabled={!filas.length} style={{ fontSize: 11 }}>📥 CSV</button>
+          <button className="btn btn-ghost btn-sm" disabled={!filas.length} style={{ fontSize: 11 }}
+            onClick={() => { setSheetsTSV(construirTSV()); setShowSheetsModal(true); setSheetsCopiado(false); }}>📊 Sheets</button>
+        </div>
+      </div>
+
+      {error && <div className="card" style={{ padding: "12px 14px", marginBottom: 12, borderColor: "var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
+
+      {!hayConfig ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          Configura tu cuenta de TikTok Ads abajo para ver las métricas.
+        </div>
+      ) : loading && !filasRaw.length ? (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando TikTok...</div>
+      ) : filas.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Sin datos en el rango seleccionado.</div>
+      ) : (
+        <TablaMetricasFB filas={filas} cplGlobal={cplGlobal} mostrarPadre={nivel !== "campaign"}
+          mostrarCuenta={cuentas.length > 1 && cuentaFiltro === "todas"} />
+      )}
+
+      {/* Modal Sheets */}
+      {showSheetsModal && (
+        <div onClick={() => setShowSheetsModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth: 560, width: "100%", padding: "20px 22px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Exportar a Google Sheets</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowSheetsModal(false)}>×</button>
+            </div>
+            <ol style={{ fontSize: 13, paddingLeft: 20, margin: "0 0 14px", lineHeight: 1.8 }}>
+              <li>Presiona <strong>Copiar datos</strong>.</li>
+              <li>Presiona <strong>Abrir Google Sheets</strong>.</li>
+              <li>Clic en <strong>A1</strong> y pega con <strong>Ctrl+V</strong>.</li>
+            </ol>
+            <textarea readOnly value={sheetsTSV} onClick={e => e.target.select()}
+              style={{ width: "100%", height: 110, fontSize: 10, fontFamily: "var(--mono)", resize: "none", marginBottom: 14, background: "var(--surface2)" }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={async () => {
+                let ok = false;
+                try { await navigator.clipboard.writeText(sheetsTSV); ok = true; }
+                catch {
+                  try {
+                    const ta = document.createElement("textarea");
+                    ta.value = sheetsTSV; ta.style.position = "fixed"; ta.style.opacity = "0";
+                    document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy");
+                    document.body.removeChild(ta);
+                  } catch {}
+                }
+                setSheetsCopiado(ok);
+              }}>{sheetsCopiado ? "✓ Copiado" : "📋 Copiar datos"}</button>
+              <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => window.open("https://sheets.new", "_blank")}>📊 Abrir Sheets</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AUTO-SYNC DIARIO — sincroniza métricas de FB sin intervención manual
 // ═══════════════════════════════════════════════════════════════════════════
 // Diseño:
@@ -12072,7 +12655,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
         </div>
       ) : (
         <div ref={chartWrapRef} style={{width:"100%"}}>
-          <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
+          <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{display:"block"}} onMouseLeave={()=>setHovIdx(null)}>
             <defs>
               <linearGradient id={"cplG_"+client.id} x1="0%" y1="0%" x2="0%" y2="100%">
                 <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
@@ -14789,9 +15372,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "bot"].map(t2 => (
+          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "tiktok", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "bot"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "Metricas" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
+              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "📘 Métricas FB" : t2 === "tiktok" ? "🎵 Métricas TikTok" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
             </button>
           ))}
         </div>
@@ -14862,6 +15445,15 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
         {tab === "embudos" && <EmbudoPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
+        {tab === "tiktok" && (
+          <div>
+            <TikTokMetricasPanel key={client.id} client={client} onUpdate={handleUpdate} />
+            <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>⚙️ Configuración de TikTok Ads</div>
+              <TikTokConfigPanel client={client} onUpdate={handleUpdate} show={show} />
+            </div>
+          </div>
+        )}
         {tab === "grupos" && <GruposPanel client={client} onUpdate={handleUpdate} />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
