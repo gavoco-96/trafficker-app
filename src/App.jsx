@@ -2218,22 +2218,27 @@ async function fetchCplHorarioPorDia(token, cuentas, fecha) {
       url.searchParams.set("time_range", JSON.stringify({ since: fecha, until: fecha }));
       url.searchParams.set("breakdowns", "hourly_stats_aggregated_by_advertiser_time_zone");
       url.searchParams.set("level", "account");
-      url.searchParams.set("limit", "48");
+      url.searchParams.set("limit", "500");
       url.searchParams.set("access_token", token);
-      const json = await fetch(url.toString()).then(r => r.json());
-      if (json.error) { console.warn("[CPL horario]", cuenta.nombre, json.error.message); continue; }
-      (json.data || []).forEach(d => {
-        const franja = d.hourly_stats_aggregated_by_advertiser_time_zone || "";
-        const hh = parseInt(franja.slice(0, 2));
-        if (isNaN(hh)) return;
-        const acts = d.actions || [];
-        let nl = 0;
-        for (const t of LEAD_TYPES) { if (LEAD_EXCLUIR.has(t)) continue; const a = acts.find(x => x.action_type === t); if (a) { const v = parseFloat(a.value) || 0; if (v > nl) nl = v; } }
-        if (nl === 0) acts.filter(x => !LEAD_EXCLUIR.has(x.action_type) && x.action_type?.includes("registration")).forEach(x => { const v = parseFloat(x.value) || 0; if (v > nl) nl = v; });
-        if (!porHora[hh]) porHora[hh] = { inv: 0, leads: 0 };
-        porHora[hh].inv += parseFloat(d.spend) || 0;
-        porHora[hh].leads += nl;
-      });
+      // PAGINAR: sin esto se pierden filas y los totales salen distorsionados
+      let next = url.toString();
+      while (next) {
+        const json = await fetch(next).then(r => r.json());
+        if (json.error) { console.warn("[CPL horario]", cuenta.nombre, json.error.message); break; }
+        (json.data || []).forEach(d => {
+          const franja = d.hourly_stats_aggregated_by_advertiser_time_zone || "";
+          const hh = parseInt(franja.slice(0, 2));
+          if (isNaN(hh)) return;
+          const acts = d.actions || [];
+          let nl = 0;
+          for (const t of LEAD_TYPES) { if (LEAD_EXCLUIR.has(t)) continue; const a = acts.find(x => x.action_type === t); if (a) { const v = parseFloat(a.value) || 0; if (v > nl) nl = v; } }
+          if (nl === 0) acts.filter(x => !LEAD_EXCLUIR.has(x.action_type) && x.action_type?.includes("registration")).forEach(x => { const v = parseFloat(x.value) || 0; if (v > nl) nl = v; });
+          if (!porHora[hh]) porHora[hh] = { inv: 0, leads: 0 };
+          porHora[hh].inv += parseFloat(d.spend) || 0;
+          porHora[hh].leads += nl;
+        });
+        next = json.paging?.next || null;
+      }
     } catch (e) { console.error("[CPL horario]", cuenta.nombre, e.message); }
   }
   // Serie de 24 horas con CPL de la hora y CPL acumulado
@@ -2262,10 +2267,10 @@ function ComparativaCplPanel({ client }) {
   const cuentas = getCuentasFBActivas(client);
   const hayConfig = fbListo(client);
 
-  // Por defecto: últimos 3 días
+  // Por defecto: últimos 7 días (una semana permite decisiones sólidas)
   const [fechas, setFechas] = useState(() => {
     const out = [];
-    for (let i = 2; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); out.push(d.toISOString().slice(0, 10)); }
+    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); out.push(d.toISOString().slice(0, 10)); }
     return out;
   });
   const [datos, setDatos] = useState({});   // fecha → { horas, totalInv, ... }
@@ -2355,7 +2360,8 @@ function ComparativaCplPanel({ client }) {
   const rangoV = (maxV - minV) || 1;
 
   // Mini gráfica de un día (SVG)
-  const GraficaDia = ({ fecha, color, alto = 120, mostrarEje = true }) => {
+  const GraficaDia = ({ fecha, color, alto = 130, mostrarEje = true }) => {
+    const [hov, setHov] = useState(null);
     const d = datos[fecha];
     if (!d) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin datos</div>;
     const W = 900, H = alto, PAD = { t: 10, r: 12, b: mostrarEje ? 20 : 6, l: 44 };
@@ -2367,28 +2373,79 @@ function ComparativaCplPanel({ client }) {
     const path = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.hora).toFixed(1)},${y(p[metrica]).toFixed(1)}`).join(" ");
     const area = `${path} L${x(pts[pts.length - 1].hora).toFixed(1)},${PAD.t + cH} L${x(pts[0].hora).toFixed(1)},${PAD.t + cH} Z`;
     const gid = `gcmp_${fecha.replace(/-/g, "")}`;
+
+    // Punto más cercano al mouse (tabla de control estilo CPL en vivo)
+    function onMove(e) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const relX = ((e.clientX - rect.left) / rect.width) * W;
+      let mejor = null, dist = Infinity;
+      pts.forEach(p => { const dd = Math.abs(x(p.hora) - relX); if (dd < dist) { dist = dd; mejor = p; } });
+      setHov(mejor);
+    }
+
     return (
-      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
-        <defs>
-          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity=".25" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0, .5, 1].map((t, i) => {
-          const v = minV + rangoV * (1 - t);
-          return (<g key={i}>
-            <line x1={PAD.l} y1={PAD.t + cH * t} x2={PAD.l + cW} y2={PAD.t + cH * t} stroke="var(--border)" strokeWidth=".5" strokeDasharray="3 4" />
-            <text x={PAD.l - 6} y={PAD.t + cH * t + 3} textAnchor="end" fontSize="8" fill="var(--muted)" fontFamily="var(--mono)">${fmtNum(v, 2)}</text>
-          </g>);
-        })}
-        <path d={area} fill={`url(#${gid})`} />
-        <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        {pts.map((p, i) => <circle key={i} cx={x(p.hora)} cy={y(p[metrica])} r="2.5" fill={color} />)}
-        {mostrarEje && [0, 6, 12, 18, 23].map(h => (
-          <text key={h} x={x(h)} y={H - 6} textAnchor="middle" fontSize="8" fill="var(--muted)">{String(h).padStart(2, "0")}h</text>
-        ))}
-      </svg>
+      <div style={{ position: "relative" }}>
+        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}
+          onMouseMove={onMove} onMouseLeave={() => setHov(null)}>
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity=".25" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {[0, .5, 1].map((t, i) => {
+            const v = minV + rangoV * (1 - t);
+            return (<g key={i}>
+              <line x1={PAD.l} y1={PAD.t + cH * t} x2={PAD.l + cW} y2={PAD.t + cH * t} stroke="var(--border)" strokeWidth=".5" strokeDasharray="3 4" />
+              <text x={PAD.l - 6} y={PAD.t + cH * t + 3} textAnchor="end" fontSize="8" fill="var(--muted)" fontFamily="var(--mono)">${fmtNum(v, 2)}</text>
+            </g>);
+          })}
+          <path d={area} fill={`url(#${gid})`} />
+          <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          {pts.map((p, i) => <circle key={i} cx={x(p.hora)} cy={y(p[metrica])} r="2.5" fill={color} />)}
+          {/* Línea guía + punto resaltado del hover */}
+          {hov && <>
+            <line x1={x(hov.hora)} y1={PAD.t} x2={x(hov.hora)} y2={PAD.t + cH} stroke={color} strokeWidth=".8" strokeDasharray="3 3" strokeOpacity=".6" />
+            <circle cx={x(hov.hora)} cy={y(hov[metrica])} r="5" fill={color} stroke="var(--bg)" strokeWidth="2" />
+          </>}
+          {mostrarEje && [0, 6, 12, 18, 23].map(h => (
+            <text key={h} x={x(h)} y={H - 6} textAnchor="middle" fontSize="8" fill="var(--muted)">{String(h).padStart(2, "0")}h</text>
+          ))}
+        </svg>
+        {/* TABLA DE CONTROL (tooltip) — igual que en el CPL en vivo */}
+        {hov && (
+          <div style={{
+            position: "absolute", pointerEvents: "none",
+            left: `${Math.min(Math.max((x(hov.hora) / W) * 100, 4), 74)}%`, top: 4,
+            background: "var(--surface)", border: `1px solid ${color}66`, borderRadius: 8,
+            padding: "8px 11px", fontSize: 11, minWidth: 150, zIndex: 5,
+            boxShadow: "0 4px 18px rgba(0,0,0,.45)"
+          }}>
+            <div style={{ color: "var(--muted)", fontSize: 10, marginBottom: 3, textTransform: "capitalize" }}>
+              {hov.label} · {nombreDia(fecha)}
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 15, fontFamily: "var(--mono)", color, marginBottom: 4 }}>
+              {fmt(hov[metrica])}<span style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)" }}>/lead</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "2px 10px", fontSize: 10, color: "var(--muted)" }}>
+              <span>Leads hora:</span><span style={{ textAlign: "right", color: "var(--text)", fontFamily: "var(--mono)" }}>{hov.leads}</span>
+              <span>Gasto hora:</span><span style={{ textAlign: "right", color: "var(--text)", fontFamily: "var(--mono)" }}>{fmt(hov.inv)}</span>
+              <span>Leads acum.:</span><span style={{ textAlign: "right", color: "var(--text)", fontFamily: "var(--mono)" }}>{hov.leadsAcum}</span>
+              <span>Gasto acum.:</span><span style={{ textAlign: "right", color: "var(--text)", fontFamily: "var(--mono)" }}>{fmt(hov.invAcum)}</span>
+            </div>
+            {/* Comparación contra el CPL del día */}
+            {d.cplDia > 0 && hov[metrica] > 0 && (() => {
+              const diff = ((hov[metrica] - d.cplDia) / d.cplDia) * 100;
+              if (Math.abs(diff) < 1) return null;
+              return (
+                <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border)", fontSize: 10, color: diff > 0 ? "var(--red)" : "var(--green)" }}>
+                  {diff > 0 ? "▲" : "▼"} {Math.abs(diff).toFixed(0)}% vs CPL del día ({fmt(d.cplDia)})
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -7592,6 +7649,232 @@ async function fetchPresupuestoPorPais(token, cuentas) {
   return { ok:true, monoPais, compartidos, totalDiario, presupPorCuenta };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTO-SYNC DIARIO — sincroniza métricas de FB sin intervención manual
+// ═══════════════════════════════════════════════════════════════════════════
+// Diseño:
+//  · Corre al abrir la app y luego cada 30 min mientras esté abierta.
+//  · A partir de la HORA_CIERRE (8am por defecto) sincroniza el DÍA ANTERIOR
+//    completo ("día caído"), que es el dato definitivo.
+//  · Durante el día también refresca HOY cada cierto tiempo (dato parcial).
+//  · Registra en el cliente qué días ya cerró para no repetir trabajo.
+//  · Blindado: no corre dos veces a la vez, respeta errores de FB, no pisa
+//    datos si la respuesta viene vacía, y cada cliente lleva su propio estado.
+
+const AUTOSYNC_HORA_CIERRE = 8;        // a partir de las 8am cierra el día anterior
+const AUTOSYNC_INTERVALO_MS = 30 * 60 * 1000; // revisar cada 30 min
+const AUTOSYNC_REFRESCO_HOY_MIN = 60;  // refrescar "hoy" como máximo cada 60 min
+
+// Construye el registro diario a partir de la respuesta de FB (misma lógica
+// que la sincronización manual, para que los datos sean idénticos).
+function construirRegistroDesdeFB(data, fecha, metricas) {
+  if (!data) return null;
+  const inv = parseFloat(data.spend) || 0;
+  const acts = data.actions || [];
+  const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+  const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+  let leads = 0;
+  for (const t of LEAD_TYPES) {
+    if (LEAD_EXCLUIR.has(t)) continue;
+    const a = acts.find(x => x.action_type === t);
+    if (a) { const v = parseFloat(a.value) || 0; if (v > leads) leads = v; }
+  }
+  if (leads === 0) {
+    acts.filter(x => !LEAD_EXCLUIR.has(x.action_type) && x.action_type?.includes("registration"))
+      .forEach(x => { const v = parseFloat(x.value) || 0; if (v > leads) leads = v; });
+  }
+  let ventas = 0;
+  const compra = acts.find(a => a.action_type === "purchase" || a.action_type === "omni_purchase");
+  if (compra) ventas = parseFloat(compra.value) || 0;
+
+  return {
+    date: fecha,
+    inversion: +inv.toFixed(2),
+    alcance: Math.round(parseFloat(data.reach) || 0),
+    impresiones: Math.round(parseFloat(data.impressions) || 0),
+    cpm: +(parseFloat(data.cpm) || 0).toFixed(2),
+    cpc: +(parseFloat(data.cpc) || 0).toFixed(2),
+    ctr: +(parseFloat(data.ctr) || 0).toFixed(2),
+    clics_enlace: Math.round(parseFloat(data.inline_link_clicks) || 0),
+    leads: Math.round(leads),
+    resultados: Math.round(leads),
+    ventas: Math.round(ventas),
+    cpa: leads > 0 ? +(inv / leads).toFixed(2) : 0,
+    frecuencia: +(parseFloat(data.frequency) || 0).toFixed(2),
+  };
+}
+
+// Sincroniza UNA fecha para UN cliente sumando todas sus cuentas.
+// Devuelve { ok, registro, error }
+async function autoSyncFechaCliente(client, fecha) {
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  if (!token || !cuentas.length) return { ok: false, error: "sin_config" };
+
+  const campos = "spend,reach,impressions,cpm,cpc,ctr,inline_link_clicks,actions,frequency";
+  let acumulado = null;
+  let huboError = null;
+  let huboDatos = false;
+
+  for (const cuenta of cuentas) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+      url.searchParams.set("fields", campos);
+      // time_range como JSON: since/until sueltos son ignorados por /insights
+      url.searchParams.set("time_range", JSON.stringify({ since: fecha, until: fecha }));
+      url.searchParams.set("level", "account");
+      url.searchParams.set("access_token", token);
+      const json = await fetch(url.toString()).then(r => r.json());
+      if (json.error) { huboError = json.error; continue; }
+      const d = (json.data || [])[0];
+      if (!d) continue; // sin gasto ese día en esta cuenta
+      huboDatos = true;
+      const reg = construirRegistroDesdeFB(d, fecha);
+      if (!acumulado) { acumulado = reg; }
+      else {
+        // Sumar cuentas: aditivos se suman, promedios se recalculan
+        acumulado.inversion   = +(acumulado.inversion + reg.inversion).toFixed(2);
+        acumulado.alcance     += reg.alcance;
+        acumulado.impresiones += reg.impresiones;
+        acumulado.clics_enlace += reg.clics_enlace;
+        acumulado.leads       += reg.leads;
+        acumulado.resultados  += reg.resultados;
+        acumulado.ventas      += reg.ventas;
+        acumulado.cpm = acumulado.impresiones > 0 ? +((acumulado.inversion / acumulado.impresiones) * 1000).toFixed(2) : 0;
+        acumulado.cpc = acumulado.clics_enlace > 0 ? +(acumulado.inversion / acumulado.clics_enlace).toFixed(2) : 0;
+        acumulado.ctr = acumulado.impresiones > 0 ? +((acumulado.clics_enlace / acumulado.impresiones) * 100).toFixed(2) : 0;
+        acumulado.cpa = acumulado.leads > 0 ? +(acumulado.inversion / acumulado.leads).toFixed(2) : 0;
+      }
+    } catch (e) {
+      huboError = { message: e.message, code: "NETWORK" };
+    }
+  }
+
+  if (!huboDatos) {
+    // Sin datos: puede ser normal (no hubo pauta) o un error real
+    return { ok: !huboError, registro: null, error: huboError, vacio: true };
+  }
+  return { ok: true, registro: acumulado, error: huboError };
+}
+
+// Decide qué fechas hay que sincronizar para un cliente y las ejecuta.
+// Se apoya en client.autoSyncEstado = { ultimoCierre, ultimoRefrescoHoy, errores }
+async function ejecutarAutoSyncCliente(client, onUpdate, opts = {}) {
+  const estado = client.autoSyncEstado || {};
+  const ahora = new Date();
+  const hoy = localDateStr(ahora);
+  const ayerD = new Date(ahora); ayerD.setDate(ayerD.getDate() - 1);
+  const ayer = localDateStr(ayerD);
+
+  const tareas = [];
+
+  // 1) Cierre de días pasados (dato definitivo) — pasada la hora de cierre.
+  // Si la app estuvo cerrada varios días, recupera los faltantes (hasta 7)
+  // para no dejar huecos en la tabla de métricas diarias.
+  if (ahora.getHours() >= AUTOSYNC_HORA_CIERRE && estado.ultimoCierre !== ayer) {
+    const faltantes = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(ahora); d.setDate(d.getDate() - i);
+      const f = localDateStr(d);
+      if (estado.ultimoCierre && f <= estado.ultimoCierre) break; // ya cerrado
+      faltantes.push(f);
+    }
+    // De más antiguo a más reciente, para que ultimoCierre quede correcto
+    faltantes.reverse().forEach(f => tareas.push({ fecha: f, tipo: "cierre" }));
+  }
+
+  // 2) Refresco del día en curso (dato parcial) — con throttle
+  const ultRefresco = estado.ultimoRefrescoHoy ? new Date(estado.ultimoRefrescoHoy) : null;
+  const minsDesde = ultRefresco ? (ahora - ultRefresco) / 60000 : Infinity;
+  if (opts.forzarHoy || minsDesde >= AUTOSYNC_REFRESCO_HOY_MIN) {
+    tareas.push({ fecha: hoy, tipo: "hoy" });
+  }
+
+  if (!tareas.length) return { ok: true, sinTareas: true };
+
+  const registros = [...(client.records || [])];
+  let cambios = 0;
+  const nuevoEstado = { ...estado };
+  let ultimoError = null;
+
+  for (const t of tareas) {
+    const r = await autoSyncFechaCliente(client, t.fecha);
+    if (!r.ok) { ultimoError = r.error; continue; }
+    if (r.registro) {
+      const idx = registros.findIndex(x => x.date === t.fecha);
+      if (idx >= 0) {
+        // Preservar campos manuales (WhatsApp, notas, campañas) al actualizar
+        const previo = registros[idx];
+        registros[idx] = {
+          ...previo, ...r.registro,
+          personas_wp: previo.personas_wp, costo_wp: previo.costo_wp,
+          notas_dia: previo.notas_dia, campanas: previo.campanas,
+          conjuntos: previo.conjuntos, anuncios: previo.anuncios,
+        };
+      } else {
+        registros.push(r.registro);
+      }
+      cambios++;
+    }
+    if (t.tipo === "cierre") nuevoEstado.ultimoCierre = t.fecha;
+    if (t.tipo === "hoy") nuevoEstado.ultimoRefrescoHoy = ahora.toISOString();
+  }
+
+  nuevoEstado.ultimaEjecucion = ahora.toISOString();
+  if (ultimoError) {
+    nuevoEstado.ultimoError = { mensaje: ultimoError.message, code: ultimoError.code, ts: Date.now() };
+  } else {
+    delete nuevoEstado.ultimoError;
+  }
+
+  if (cambios > 0 || JSON.stringify(nuevoEstado) !== JSON.stringify(estado)) {
+    registros.sort((a, b) => a.date.localeCompare(b.date));
+    const actualizado = { ...client, records: registros, autoSyncEstado: nuevoEstado };
+    await onUpdate(actualizado);
+    return { ok: true, cambios, estado: nuevoEstado };
+  }
+  return { ok: true, cambios: 0, estado: nuevoEstado };
+}
+
+// Hook: corre el auto-sync para TODOS los clientes con FB configurado.
+// Se monta una sola vez en el nivel superior de la app.
+function useAutoSyncDiario(clients, onUpdateClient, habilitado = true) {
+  const corriendoRef = useRef(false);
+  const clientsRef = useRef(clients);
+  clientsRef.current = clients;
+
+  useEffect(() => {
+    if (!habilitado) return;
+
+    async function ciclo() {
+      // Blindaje: nunca dos ejecuciones simultáneas
+      if (corriendoRef.current) return;
+      corriendoRef.current = true;
+      try {
+        const lista = (clientsRef.current || []).filter(c =>
+          c && !String(c.id).startsWith("__") && fbListo(c) && c.fbConfig?.autoSync !== false
+        );
+        for (const c of lista) {
+          try {
+            const r = await ejecutarAutoSyncCliente(c, onUpdateClient);
+            if (r.cambios > 0) console.log(`[AutoSync] ${c.name}: ${r.cambios} día(s) actualizados`);
+          } catch (e) {
+            console.error(`[AutoSync] ${c?.name}:`, e.message);
+          }
+        }
+      } finally {
+        corriendoRef.current = false;
+      }
+    }
+
+    // Primera corrida poco después de abrir (deja respirar a la UI)
+    const t0 = setTimeout(ciclo, 4000);
+    const iv = setInterval(ciclo, AUTOSYNC_INTERVALO_MS);
+    return () => { clearTimeout(t0); clearInterval(iv); };
+    /* eslint-disable-next-line */
+  }, [habilitado]);
+}
+
 async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
   // Construir campos requeridos
   const fbFields = selectedMetrics
@@ -8070,14 +8353,43 @@ function FacebookPanel({ client, onUpdate }) {
         {/* Auto-sync toggle */}
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"var(--surface2)",marginTop:8}}>
           <div style={{flex:1}}>
-            <div style={{fontSize:13,fontWeight:600}}>🔄 Sincronización automática al abrir</div>
-            <div style={{fontSize:11,color:"var(--muted)"}}>Sincroniza el día de hoy automáticamente cada vez que abres este panel</div>
+            <div style={{fontSize:13,fontWeight:600}}>🔄 Sincronización automática</div>
+            <div style={{fontSize:11,color:"var(--muted)"}}>
+              Cierra el día anterior a partir de las {AUTOSYNC_HORA_CIERRE}:00 y refresca el día en curso cada hora, sin abrir esta pestaña.
+            </div>
           </div>
           <div style={{position:"relative",width:44,height:24,cursor:"pointer"}} onClick={()=>setAutoSync(v=>!v)}>
             <div style={{position:"absolute",inset:0,borderRadius:12,background:autoSync?"var(--green)":"var(--border)",transition:"background .2s"}}/>
             <div style={{position:"absolute",top:3,left:autoSync?22:3,width:18,height:18,borderRadius:9,background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.3)"}}/>
           </div>
         </div>
+
+        {/* Estado del auto-sync */}
+        {(() => {
+          const est = client.autoSyncEstado || {};
+          const fmtT = (iso) => { try { return new Date(iso).toLocaleString("es-EC",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch { return "—"; } };
+          const hayAlgo = est.ultimoCierre || est.ultimoRefrescoHoy || est.ultimoError;
+          if (!hayAlgo) return (
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:8,padding:"6px 12px"}}>
+              Aún sin ejecuciones automáticas. La primera corre a los pocos segundos de abrir la app.
+            </div>
+          );
+          return (
+            <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"var(--surface2)",fontSize:11,display:"flex",flexWrap:"wrap",gap:"4px 18px"}}>
+              {est.ultimoCierre && <span style={{color:"var(--muted)"}}>Último día cerrado: <b style={{color:"var(--green)"}}>{est.ultimoCierre}</b></span>}
+              {est.ultimoRefrescoHoy && <span style={{color:"var(--muted)"}}>Hoy actualizado: <b style={{color:"var(--text)"}}>{fmtT(est.ultimoRefrescoHoy)}</b></span>}
+              {est.ultimoError && <span style={{color:"var(--red)"}}>⚠️ {est.ultimoError.mensaje}</span>}
+              <button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px",marginLeft:"auto"}}
+                disabled={syncing}
+                onClick={async ()=>{
+                  setSyncing(true);
+                  const r = await ejecutarAutoSyncCliente(client, onUpdate, { forzarHoy: true });
+                  setSyncing(false);
+                  show(r.cambios>0 ? `✓ ${r.cambios} día(s) actualizados` : "Sin cambios pendientes", r.ok?"ok":"err");
+                }}>▶ Ejecutar ahora</button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Sección 2: Multi-cuenta ──────────────────────────────────────── */}
@@ -16956,6 +17268,14 @@ export default function App() {
   }
 
   async function updateClient(updated) { return await saveClient(updated); }
+
+  // ── AUTO-SYNC DIARIO ──────────────────────────────────────────────────────
+  // Sincroniza métricas de FB automáticamente para todos los clientes:
+  // cierra el día anterior a partir de las 8am y refresca el día en curso
+  // cada hora. Solo se activa con sesión de admin (evita duplicar trabajo
+  // si un cliente tiene la app abierta al mismo tiempo).
+  useAutoSyncDiario(clients, updateClient, session?.role === "admin");
+
   async function addClient(data) {
     const nc = { antecedentes: [], records: [], checklist: {}, cuentas: [], contratos: [], kpis: [], funnel: [], ...data, id: "c" + Date.now() };
     return await saveClient(nc);
