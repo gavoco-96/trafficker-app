@@ -1442,7 +1442,7 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
         <div className="period-pills">
           <button className={"pill " + (vistaTab === "diario" ? "active" : "")} onClick={() => setVistaTab("diario")}>📅 Por día</button>
           <button className={"pill " + (vistaTab === "campanas" ? "active" : "")} onClick={() => setVistaTab("campanas")}>📡 Por campaña</button>
-          <button className={"pill " + (vistaTab === "paises" ? "active" : "")} onClick={() => setVistaTab("paises")}>🌎 Países</button>
+          <button className={"pill " + (vistaTab === "paises" ? "active" : "")} onClick={() => setVistaTab("paises")}>💰 Presupuesto</button>
         </div>
         {/* BARRA DE BÚSQUEDA NOMENCLATURA */}
         {vistaTab !== "paises" && vistaTab !== "campanas" && (
@@ -1462,9 +1462,9 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
       </div>}
 
       {vistaTab === "paises" ? (
-        <PaisesPanel client={client} onUpdate={onUpdate} />
+        <PaisesPanel key={client.id} client={client} onUpdate={onUpdate} />
       ) : vistaTab === "campanas" ? (
-        <CampanasFBPanel client={client} onUpdate={onUpdate} />
+        <CampanasFBPanel key={client.id} client={client} onUpdate={onUpdate} />
       ) : (<>
       <div style={{ display: "flex", gap: 8, marginBottom: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
         <ColumnSelector cols={cols} onToggle={toggleCol} />
@@ -2360,8 +2360,8 @@ function PaisesPanel({ client, onUpdate }) {
       {/* Header + configuración de países principales */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12}}>
         <div>
-          <div style={{fontWeight:700, fontSize:16}}>🌎 Análisis por país</div>
-          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Gasto real ejecutado y presupuesto activo programado, desglosado por país</div>
+          <div style={{fontWeight:700, fontSize:16}}>💰 Presupuesto e inversión</div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Gasto ejecutado y presupuesto activo, por cuenta publicitaria y por país</div>
         </div>
         <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
           <label style={{display:"flex", alignItems:"center", gap:5, fontSize:11, color:"var(--muted)", cursor:"pointer"}}>
@@ -2423,6 +2423,66 @@ function PaisesPanel({ client, onUpdate }) {
           Configura Facebook Ads en la tab 📘 Facebook para activar el análisis por país.
         </div>
       ) : (<>
+
+        {/* ─── DESGLOSE POR CUENTA PUBLICITARIA ─── */}
+        {(() => {
+          const gastoCuentas = gasto?.porCuenta || {};
+          const presupCuentas = presup?.presupPorCuenta || {};
+          const nombres = Array.from(new Set([...Object.keys(gastoCuentas), ...Object.keys(presupCuentas)]));
+          if (!nombres.length) return null;
+          const totInvC = nombres.reduce((s,n)=>s+(gastoCuentas[n]?.inv||0),0);
+          const totPresC = nombres.reduce((s,n)=>s+(presupCuentas[n]?.diario||0),0);
+          return (
+            <div className="card" style={{padding:"14px 16px", marginBottom:16}}>
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:12, flexWrap:"wrap", gap:6}}>
+                <div style={{fontWeight:700, fontSize:14}}>🏢 Por cuenta publicitaria</div>
+                <div style={{fontSize:11, color:"var(--muted)"}}>
+                  Gastado: <span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--text)"}}>{fmt(totInvC)}</span>
+                  {totPresC>0 && <> · Presupuesto activo: <span style={{fontFamily:"var(--mono)",fontWeight:700,color:"var(--green)"}}>{fmt(totPresC)}/día</span></>}
+                </div>
+              </div>
+              <div style={{display:"grid", gridTemplateColumns:`repeat(auto-fit, minmax(240px, 1fr))`, gap:10}}>
+                {nombres.map(n => {
+                  const g = gastoCuentas[n] || { inv:0, leads:0 };
+                  const p = presupCuentas[n] || { diario:0, adsets:0 };
+                  const cplC = g.leads>0 ? g.inv/g.leads : 0;
+                  const pctInv = totInvC>0 ? (g.inv/totInvC)*100 : 0;
+                  // Días de runway estimados con el presupuesto diario actual
+                  return (
+                    <div key={n} style={{padding:"12px 14px", borderRadius:10, background:"var(--surface2)", border:"1px solid var(--border)"}}>
+                      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, gap:6}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontWeight:700, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>🏢 {n}</div>
+                          {(g.adAccountId || p.adAccountId) && <div style={{fontSize:9, color:"var(--muted)", fontFamily:"var(--mono)"}}>act_{g.adAccountId || p.adAccountId}</div>}
+                        </div>
+                        <span style={{fontSize:10, color:"var(--muted)", whiteSpace:"nowrap"}}>{pctInv.toFixed(0)}%</span>
+                      </div>
+                      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:11}}>
+                        <div>
+                          <div style={{color:"var(--muted)", fontSize:9, textTransform:"uppercase", letterSpacing:.4}}>Gastado</div>
+                          <div style={{fontWeight:800, fontSize:15, fontFamily:"var(--mono)"}}>{fmt(g.inv)}</div>
+                        </div>
+                        <div>
+                          <div style={{color:"var(--muted)", fontSize:9, textTransform:"uppercase", letterSpacing:.4}}>Presup./día</div>
+                          <div style={{fontWeight:800, fontSize:15, fontFamily:"var(--mono)", color: p.diario>0?"var(--green)":"var(--muted)"}}>
+                            {p.diario>0 ? fmt(p.diario) : "—"}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{marginTop:8, paddingTop:8, borderTop:"1px solid var(--border)", display:"flex", justifyContent:"space-between", fontSize:10, color:"var(--muted)"}}>
+                        <span>{Math.round(g.leads)} leads · CPL {cplC>0?fmt(cplC):"—"}</span>
+                        {p.adsets>0 && <span>{p.adsets} adset{p.adsets!==1?"s":""} activo{p.adsets!==1?"s":""}</span>}
+                      </div>
+                      <div style={{height:5, borderRadius:3, background:"var(--border)", overflow:"hidden", marginTop:8}}>
+                        <div style={{height:"100%", width:pctInv+"%", borderRadius:3, background:"var(--accent)", transition:"width .5s ease-out"}}/>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ─── CPL COMPARATIVO ENTRE PAÍSES ─── */}
         {(() => {
@@ -5439,7 +5499,7 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
   return (
     <div style={{ marginTop:"1rem" }}>
       {toastEl}
-      <CplTradingChart client={client} onUpdate={onUpdate} />
+      <CplTradingChart key={client.id} client={client} onUpdate={onUpdate} />
       {(client.waConfig?.enabled || (client.records||[]).some(r=>(r.personas_wp||0)>0)) && <CplWAChart client={client} />}
       {/* ── Resumen semanal automático ─────────────────────────────────────── */}
       {rows.length >= 3 && (() => {
@@ -7028,6 +7088,7 @@ async function fetchGastoPorPais(token, cuentas, since, until) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
   const porPais = {};
+  const porCuenta = {}; // nombre cuenta → { inv, leads, impr, adAccountId }
   const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
   const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
   for (const cuenta of activas) {
@@ -7046,20 +7107,26 @@ async function fetchGastoPorPais(token, cuentas, since, until) {
         for (const d of (json.data||[])) {
           const code = d.country || "??";
           if (!porPais[code]) porPais[code] = { inv:0, leads:0, impr:0, reach:0 };
-          porPais[code].inv   += parseFloat(d.spend)||0;
+          const _inv = parseFloat(d.spend)||0;
+          porPais[code].inv   += _inv;
           porPais[code].impr  += parseFloat(d.impressions)||0;
           porPais[code].reach += parseFloat(d.reach)||0;
+          // Acumulado por cuenta publicitaria
+          if (!porCuenta[cuenta.nombre]) porCuenta[cuenta.nombre] = { inv:0, leads:0, impr:0, adAccountId: cuenta.adAccountId };
+          porCuenta[cuenta.nombre].inv  += _inv;
+          porCuenta[cuenta.nombre].impr += parseFloat(d.impressions)||0;
           const acts = d.actions||[];
           let nl = 0;
           for (const t of LEAD_TYPES) { if(LEAD_EXCLUIR.has(t))continue; const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
           if (nl===0) acts.filter(x=>!LEAD_EXCLUIR.has(x.action_type)&&x.action_type?.includes("registration")).forEach(x=>{const v=parseFloat(x.value)||0;if(v>nl)nl=v;});
           porPais[code].leads += nl;
+          if (porCuenta[cuenta.nombre]) porCuenta[cuenta.nombre].leads += nl;
         }
         next = json.paging?.next || null;
       }
     } catch(e) { console.error("[Países]", cuenta.nombre, e.message); }
   }
-  return { ok:true, porPais };
+  return { ok:true, porPais, porCuenta };
 }
 
 // ── PRESUPUESTO PROGRAMADO por país: lee adsets activos + su targeting ──
@@ -7071,6 +7138,7 @@ async function fetchPresupuestoPorPais(token, cuentas) {
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
   const monoPais = {};   // CODE → presupuesto diario sumado (adsets de un solo país)
   const compartidos = []; // adsets multi-país: { nombre, paises:[], budget, tipo }
+  const presupPorCuenta = {}; // nombre cuenta → { diario, adsets, adAccountId }
   let totalDiario = 0;
   for (const cuenta of activas) {
     try {
@@ -7096,6 +7164,10 @@ async function fetchPresupuestoPorPais(token, cuentas) {
           (geo.regions||[]).forEach(r=>{ if(r.country&&!paises.includes(r.country))paises.push(r.country); });
           (geo.cities||[]).forEach(c=>{ if(c.country&&!paises.includes(c.country))paises.push(c.country); });
           totalDiario += daily; // solo diarios suman al "activo por día"
+          // Acumulado por cuenta publicitaria
+          if (!presupPorCuenta[cuenta.nombre]) presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, adAccountId: cuenta.adAccountId };
+          presupPorCuenta[cuenta.nombre].diario += daily;
+          presupPorCuenta[cuenta.nombre].adsets += 1;
           if (paises.length === 1) {
             const code = paises[0];
             monoPais[code] = (monoPais[code]||0) + (daily||life);
@@ -7114,7 +7186,7 @@ async function fetchPresupuestoPorPais(token, cuentas) {
       }
     } catch(e) { console.error("[Presup]", cuenta.nombre, e.message); }
   }
-  return { ok:true, monoPais, compartidos, totalDiario };
+  return { ok:true, monoPais, compartidos, totalDiario, presupPorCuenta };
 }
 
 async function fetchFbMetrics(token, adAccountId, date, selectedMetrics) {
@@ -10788,6 +10860,8 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   // ── Guardar puntos ────────────────────────────────────────────────────────
   async function guardarPuntos(nuevosPuntos) {
     if (!onUpdate || !nuevosPuntos.length) return;
+    // Guardia de aislamiento: no escribir si el componente ya es de otro cliente
+    const idAlGuardar = client.id;
     const hoy = localDateStr();
     const cplRtData = {...(client.cplRtData||{})};
     const existing = cplRtData[hoy] || [];
@@ -10797,6 +10871,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     const limite = new Date(); limite.setDate(limite.getDate()-90);
     Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
     try {
+      if (idAlGuardar !== client.id) return; // cambió de cliente: descartar
       // La tabla clients guarda todo dentro del jsonb "data" → usar db.upsert
       // (ademas: aqui H esta shadowed por la altura del SVG, no usar fetch directo)
       const r = await db.upsert({ ...client, cplRtData });
@@ -10945,8 +11020,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   // ── Construir datos según rango ────────────────────────────────────────────
   const hoy = localDateStr();
   let datosVista = [], datosAyer = [], modoRT = false;
+  // Zooms en vivo: ventanas cortas donde SÍ se aprecia el avance de cada lectura
+  const ZOOM_MIN = { "15m": 15, "30m": 30, "1h": 60 };
 
-  if (rango === "24h") {
+  if (rango === "24h" || ZOOM_MIN[rango]) {
     const ahora = Date.now();
     const ahoraDate = new Date(ahora);
     const ayer = new Date(ahora); ayer.setDate(ayer.getDate()-1);
@@ -10956,7 +11033,10 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     // Inicio de ventana = ayer a la misma hora exacta que ahora
     // Fin de ventana   = ahora (tiempo real)
     // → la gráfica siempre cubre exactamente 24h y avanza con el tiempo
-    const tsVentanaInicio = ahora - 24*60*60*1000; // ayer misma hora
+    // Ventana variable: zoom en vivo (15/30/60 min) o 24h completas.
+    // Con zoom corto cada lectura ocupa mucho espacio → SE VE avanzar el punto.
+    const minutosVentana = ZOOM_MIN[rango] || (24*60);
+    const tsVentanaInicio = ahora - minutosVentana*60*1000;
 
     // Datos de hoy (línea principal) — solo puntos cuyo ts cae en HOY (hora local)
     // Esto descarta puntos fantasma con medianoche UTC (= 7pm de ayer en UTC-5)
@@ -11106,7 +11186,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   // Anotaciones del día visible
   const anotHoy = anotaciones.filter(a => a.fecha === hoy);
 
-  const RANGOS=["24h","1W","1M","1Y","Todo"];
+  const RANGOS=["15m","30m","1h","24h","1W","1M","1Y","Todo"];
 
   return (
     <div className="card" style={{marginBottom:"1rem",padding:"1.25rem"}}>
@@ -11115,7 +11195,17 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{fontWeight:700,fontSize:16}}>Costo por Lead (CPL)</div>
-            {modoRT && puntosRT.length>0 && <span style={{fontSize:10,background:"rgba(16,185,129,.15)",color:"var(--green)",padding:"2px 8px",borderRadius:10,fontWeight:600}}>● EN VIVO</span>}
+            {modoRT && puntosRT.length>0 && (() => {
+              // Segundos desde la última lectura → cuenta regresiva a la próxima
+              const ultTs = puntosRT.length ? puntosRT[puntosRT.length-1].ts : 0;
+              const seg = Math.max(0, INTERVALO - Math.floor((Date.now()-ultTs)/1000));
+              return (
+                <span style={{fontSize:10,background:"rgba(16,185,129,.15)",color:"var(--green)",padding:"2px 8px",borderRadius:10,fontWeight:600,display:"inline-flex",alignItems:"center",gap:5}}>
+                  <span style={{display:"inline-block",width:6,height:6,borderRadius:3,background:"var(--green)",animation:"pulse 2s infinite"}}/>
+                  EN VIVO <span style={{opacity:.65,fontVariantNumeric:"tabular-nums"}}>· {seg}s</span>
+                </span>
+              );
+            })()}
             {(loading||loadingHist) && <span style={{fontSize:10,color:"var(--muted)"}}>{loadingHist?"Cargando...":"⟳"}</span>}
           </div>
           {hasData && ultimo && (() => {
@@ -11262,6 +11352,12 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
                   <animate attributeName="r" values="9;17;9" dur="2s" repeatCount="indefinite"/>
                   <animate attributeName="fill-opacity" values="0.20;0.05;0.20" dur="2s" repeatCount="indefinite"/>
                 </circle>
+                {/* FLASH: anillo que estalla en cada lectura nueva (key=pulso lo reinicia) */}
+                <circle key={`flash-${pulso}`} cx={px} cy={py} r="6" fill="none" stroke={color} strokeWidth="2.5">
+                  <animate attributeName="r" from="6" to="30" dur="1.1s" fill="freeze"/>
+                  <animate attributeName="stroke-opacity" from="0.9" to="0" dur="1.1s" fill="freeze"/>
+                  <animate attributeName="stroke-width" from="2.5" to="0.5" dur="1.1s" fill="freeze"/>
+                </circle>
                 {/* Punto solido que se desliza a la nueva posicion */}
                 <circle cx={px} cy={py} r="6" fill={color} stroke="var(--bg)" strokeWidth="2"
                   style={{transition:"cx .8s ease-out, cy .8s ease-out"}}/>
@@ -11353,6 +11449,16 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
         )}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {modoRT && datosAyer.length>0 && <span style={{color:"rgba(255,255,255,.25)"}}>— ayer</span>}
+          {client.cplRtData && Object.keys(client.cplRtData).length>0 && onUpdate && (
+            <button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px",color:"var(--red)"}}
+              title="Borra el historial de CPL en vivo de este cliente. Úsalo si los datos se ven cruzados con otro cliente."
+              onClick={async ()=>{
+                if(!window.confirm(`¿Borrar el historial de CPL en vivo de ${client.name}?\n\nEsto elimina ${Object.values(client.cplRtData).reduce((a,v)=>a+v.length,0)} puntos guardados. Úsalo solo si los datos están cruzados con otro cliente. Se empezará a registrar de nuevo desde ahora.`)) return;
+                setPuntosRT([]);
+                client.cplRtData = {};
+                await onUpdate({ ...client, cplRtData: {} });
+              }}>🗑️ Limpiar historial</button>
+          )}
           {token&&adAccountId&&<button className="btn btn-ghost btn-sm" style={{fontSize:10,padding:"1px 8px"}} onClick={()=>{fetchHistoricoHoy();fetchCplActual();}} disabled={loading||loadingHist}>🔄</button>}
         </div>
       </div>
@@ -13766,11 +13872,31 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
     return client.cplRtData?.[hoy] || [];
   });
 
+  // AISLAMIENTO POR CLIENTE: al cambiar de cliente hay que resetear TODO el
+  // estado en memoria. React reutiliza la instancia del componente cuando solo
+  // cambian las props, así que sin esto los puntos del cliente anterior
+  // persisten y se mezclan (e incluso se guardan en el cliente equivocado).
+  const clienteAnteriorRef = useRef(client.id);
+  useEffect(() => {
+    if (clienteAnteriorRef.current !== client.id) {
+      clienteAnteriorRef.current = client.id;
+      // Descartar cualquier punto pendiente del cliente anterior (NO guardarlo)
+      cplPendientesRef.current = [];
+      cplFetchCountRef.current = 0;
+      // Cargar los puntos que correspondan a ESTE cliente
+      const hoy = localDateStr();
+      setCplRtPuntos(client.cplRtData?.[hoy] || []);
+    }
+  }, [client.id, client.cplRtData]);
+
   useEffect(() => {
     const fbToken = client.fbConfig?.token;
     const accId   = client.fbConfig?.cuentas?.[0]?.adAccountId || client.fbConfig?.adAccountId;
     if (!fbToken || !accId) return;
 
+    // Capturamos el id al crear el closure: si el usuario cambia de cliente
+    // mientras una petición está en vuelo, descartamos su resultado.
+    const clienteIdDelCiclo = client.id;
     async function fetchCpl() {
       try {
         const hoy = localDateStr();
@@ -13803,6 +13929,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         if (totalInv>0 && totalNl>0) {
           const cpl = totalInv/totalNl;
           const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(totalInv.toFixed(2)), leads:totalNl };
+          // Guardia: si ya cambiamos de cliente, descartar este resultado
+          if (clienteIdDelCiclo !== client.id) return;
           setCplRtPuntos(prev => {
             const mapa={};
             [...prev, punto].forEach(p=>{mapa[p.ts]=p;});
@@ -13820,6 +13948,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
               cplRtData[hoy] = Object.values(mapaP).sort((a,b)=>a.ts-b.ts).slice(-2880);
               const limite = new Date(); limite.setDate(limite.getDate()-90);
               Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+              // Guardia final: nunca escribir puntos en el cliente equivocado
+              if (clienteIdDelCiclo !== client.id) { cplPendientesRef.current = []; return; }
               // La tabla clients guarda todo el cliente en el jsonb "data" → db.upsert
               const rSave = await db.upsert({ ...client, cplRtData });
               if (!rSave.ok) {
@@ -13919,7 +14049,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
 
         {tab === "metricas" && (
           <div>
-            {client.producto?.startsWith("APOLLO") && <CplTradingChart client={client} onUpdate={handleUpdate} externalPuntos={cplRtPuntos} />}
+            {client.producto?.startsWith("APOLLO") && <CplTradingChart key={client.id} client={client} onUpdate={handleUpdate} externalPuntos={cplRtPuntos} />}
             {client.waConfig?.enabled && <ClienteWAResumenAdmin client={client} />}
             {(client.waConfig?.enabled || (client.records||[]).some(r=>(r.personas_wp||0)>0)) && <CplWAChart client={client} />}
             <MetricasAdminPanel client={client} onUpdate={handleUpdate} period={period} setPeriod={setPeriod} from={from} setFrom={setFrom} to={to} setTo={setTo} rows={rows} t={t} isWA={isWA} isWeb={isWeb} isLaunch={isLaunch} onAdd={() => setAdding(true)} />
