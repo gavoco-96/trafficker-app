@@ -2201,6 +2201,351 @@ function SaludFBBadge({ salud }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// COMPARATIVA DE CPL POR DÍA — tablas y gráficas horarias para análisis
+// Reconstruye las 24h de cualquier fecha usando el breakdown horario de FB,
+// así funciona incluso para días en que la app estuvo cerrada.
+// ═══════════════════════════════════════════════════════════════════════════
+async function fetchCplHorarioPorDia(token, cuentas, fecha) {
+  const activas = (cuentas || []).filter(c => c.adAccountId);
+  if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
+  const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
+  const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
+  const porHora = {}; // 0..23 → { inv, leads }
+  for (const cuenta of activas) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
+      url.searchParams.set("fields", "spend,actions");
+      url.searchParams.set("time_range", JSON.stringify({ since: fecha, until: fecha }));
+      url.searchParams.set("breakdowns", "hourly_stats_aggregated_by_advertiser_time_zone");
+      url.searchParams.set("level", "account");
+      url.searchParams.set("limit", "48");
+      url.searchParams.set("access_token", token);
+      const json = await fetch(url.toString()).then(r => r.json());
+      if (json.error) { console.warn("[CPL horario]", cuenta.nombre, json.error.message); continue; }
+      (json.data || []).forEach(d => {
+        const franja = d.hourly_stats_aggregated_by_advertiser_time_zone || "";
+        const hh = parseInt(franja.slice(0, 2));
+        if (isNaN(hh)) return;
+        const acts = d.actions || [];
+        let nl = 0;
+        for (const t of LEAD_TYPES) { if (LEAD_EXCLUIR.has(t)) continue; const a = acts.find(x => x.action_type === t); if (a) { const v = parseFloat(a.value) || 0; if (v > nl) nl = v; } }
+        if (nl === 0) acts.filter(x => !LEAD_EXCLUIR.has(x.action_type) && x.action_type?.includes("registration")).forEach(x => { const v = parseFloat(x.value) || 0; if (v > nl) nl = v; });
+        if (!porHora[hh]) porHora[hh] = { inv: 0, leads: 0 };
+        porHora[hh].inv += parseFloat(d.spend) || 0;
+        porHora[hh].leads += nl;
+      });
+    } catch (e) { console.error("[CPL horario]", cuenta.nombre, e.message); }
+  }
+  // Serie de 24 horas con CPL de la hora y CPL acumulado
+  let accInv = 0, accLeads = 0;
+  const horas = [];
+  for (let h = 0; h < 24; h++) {
+    const d = porHora[h];
+    if (d) { accInv += d.inv; accLeads += d.leads; }
+    horas.push({
+      hora: h,
+      label: String(h).padStart(2, "0") + ":00",
+      inv: d ? +d.inv.toFixed(2) : 0,
+      leads: d ? Math.round(d.leads) : 0,
+      cplHora: d && d.leads > 0 ? +(d.inv / d.leads).toFixed(4) : 0,
+      invAcum: +accInv.toFixed(2),
+      leadsAcum: Math.round(accLeads),
+      cplAcum: accLeads > 0 ? +(accInv / accLeads).toFixed(4) : 0,
+      sinDatos: !d,
+    });
+  }
+  return { ok: true, horas, totalInv: +accInv.toFixed(2), totalLeads: Math.round(accLeads), cplDia: accLeads > 0 ? +(accInv / accLeads).toFixed(4) : 0 };
+}
+
+function ComparativaCplPanel({ client }) {
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  const hayConfig = fbListo(client);
+
+  // Por defecto: últimos 3 días
+  const [fechas, setFechas] = useState(() => {
+    const out = [];
+    for (let i = 2; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); out.push(d.toISOString().slice(0, 10)); }
+    return out;
+  });
+  const [datos, setDatos] = useState({});   // fecha → { horas, totalInv, ... }
+  const [loading, setLoading] = useState(false);
+  const [vista, setVista] = useState("apilada"); // apilada | overlay | tabla
+  const [metrica, setMetrica] = useState("cplAcum"); // cplAcum | cplHora
+  const [nuevaFecha, setNuevaFecha] = useState(localDateStr());
+  const [copiado, setCopiado] = useState(false);
+
+  const PALETA = ["#FFDE59", "#4D9FFF", "#10B981", "#EF4444", "#A855F7", "#F59E0B", "#EC4899"];
+
+  async function cargar(lista = fechas) {
+    if (!hayConfig) return;
+    setLoading(true);
+    const out = { ...datos };
+    for (const f of lista) {
+      if (out[f]) continue; // ya cargada
+      const r = await fetchCplHorarioPorDia(token, cuentas, f);
+      if (r.ok) out[f] = r;
+    }
+    setDatos(out);
+    setLoading(false);
+  }
+  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  function agregarFecha() {
+    if (!nuevaFecha || fechas.includes(nuevaFecha)) return;
+    if (fechas.length >= 7) return;
+    const nuevas = [...fechas, nuevaFecha].sort();
+    setFechas(nuevas);
+    cargar([nuevaFecha]);
+  }
+  function quitarFecha(f) {
+    setFechas(p => p.filter(x => x !== f));
+  }
+
+  const nombreDia = (f) => {
+    const d = new Date(f + "T12:00:00");
+    return d.toLocaleDateString("es-EC", { weekday: "long", day: "numeric", month: "short" });
+  };
+  const fmt = (n) => "$" + fmtNum(n, 2);
+
+  // ── Exportar a Sheets/CSV: filas por hora, columnas por día ──
+  function construirTSV() {
+    const cab = ["Hora", ...fechas.map(f => nombreDia(f))];
+    const filas = [cab];
+    for (let h = 0; h < 24; h++) {
+      const fila = [String(h).padStart(2, "0") + ":00"];
+      fechas.forEach(f => {
+        const d = datos[f]?.horas?.[h];
+        fila.push(d && d[metrica] > 0 ? d[metrica].toFixed(2) : "");
+      });
+      filas.push(fila);
+    }
+    // Fila de totales
+    filas.push(["TOTAL DÍA", ...fechas.map(f => datos[f]?.cplDia ? datos[f].cplDia.toFixed(2) : "")]);
+    return filas.map(r => r.join("\t")).join("\n");
+  }
+  async function copiarParaSheets() {
+    const tsv = construirTSV();
+    let ok = false;
+    try { await navigator.clipboard.writeText(tsv); ok = true; }
+    catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = tsv; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand("copy"); document.body.removeChild(ta);
+      } catch {}
+    }
+    setCopiado(ok);
+    setTimeout(() => setCopiado(false), 5000);
+  }
+  function descargarCSV() {
+    const csv = construirTSV().split("\n").map(l => l.split("\t").map(v => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `cpl_horario_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  // Escala común para las gráficas
+  const todosValores = fechas.flatMap(f => (datos[f]?.horas || []).map(h => h[metrica]).filter(v => v > 0));
+  const maxV = todosValores.length ? Math.max(...todosValores) : 1;
+  const minV = todosValores.length ? Math.min(...todosValores) : 0;
+  const rangoV = (maxV - minV) || 1;
+
+  // Mini gráfica de un día (SVG)
+  const GraficaDia = ({ fecha, color, alto = 120, mostrarEje = true }) => {
+    const d = datos[fecha];
+    if (!d) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin datos</div>;
+    const W = 900, H = alto, PAD = { t: 10, r: 12, b: mostrarEje ? 20 : 6, l: 44 };
+    const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
+    const pts = d.horas.filter(h => h[metrica] > 0);
+    if (!pts.length) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin gasto ese día</div>;
+    const x = (h) => PAD.l + (h / 23) * cW;
+    const y = (v) => PAD.t + cH - ((v - minV) / rangoV) * cH;
+    const path = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.hora).toFixed(1)},${y(p[metrica]).toFixed(1)}`).join(" ");
+    const area = `${path} L${x(pts[pts.length - 1].hora).toFixed(1)},${PAD.t + cH} L${x(pts[0].hora).toFixed(1)},${PAD.t + cH} Z`;
+    const gid = `gcmp_${fecha.replace(/-/g, "")}`;
+    return (
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity=".25" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[0, .5, 1].map((t, i) => {
+          const v = minV + rangoV * (1 - t);
+          return (<g key={i}>
+            <line x1={PAD.l} y1={PAD.t + cH * t} x2={PAD.l + cW} y2={PAD.t + cH * t} stroke="var(--border)" strokeWidth=".5" strokeDasharray="3 4" />
+            <text x={PAD.l - 6} y={PAD.t + cH * t + 3} textAnchor="end" fontSize="8" fill="var(--muted)" fontFamily="var(--mono)">${fmtNum(v, 2)}</text>
+          </g>);
+        })}
+        <path d={area} fill={`url(#${gid})`} />
+        <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {pts.map((p, i) => <circle key={i} cx={x(p.hora)} cy={y(p[metrica])} r="2.5" fill={color} />)}
+        {mostrarEje && [0, 6, 12, 18, 23].map(h => (
+          <text key={h} x={x(h)} y={H - 6} textAnchor="middle" fontSize="8" fill="var(--muted)">{String(h).padStart(2, "0")}h</text>
+        ))}
+      </svg>
+    );
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: "1rem", padding: "1.25rem" }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Comparativa de CPL por día</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            Evolución horaria del costo por lead — compara hasta 7 días para detectar patrones
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={copiarParaSheets} disabled={!fechas.length}>
+            {copiado ? "✓ Copiado" : "📊 Copiar para Sheets"}
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={descargarCSV} disabled={!fechas.length}>📥 CSV</button>
+        </div>
+      </div>
+
+      {!hayConfig ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          Configura Facebook Ads en la tab 📘 Facebook para usar la comparativa.
+        </div>
+      ) : (<>
+        {/* Controles */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          <div className="period-pills">
+            {[["apilada", "▤ Apiladas"], ["overlay", "◈ Superpuestas"], ["tabla", "▦ Tabla"]].map(([k, l]) => (
+              <button key={k} className={"pill " + (vista === k ? "active" : "")} onClick={() => setVista(k)}>{l}</button>
+            ))}
+          </div>
+          <div className="period-pills">
+            {[["cplAcum", "CPL acumulado"], ["cplHora", "CPL de la hora"]].map(([k, l]) => (
+              <button key={k} className={"pill " + (metrica === k ? "active" : "")} onClick={() => setMetrica(k)}>{l}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 5, alignItems: "center", marginLeft: "auto" }}>
+            <input type="date" value={nuevaFecha} onChange={e => setNuevaFecha(e.target.value)} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
+            <button className="btn btn-sm" onClick={agregarFecha} disabled={fechas.length >= 7 || fechas.includes(nuevaFecha)}>+ Añadir día</button>
+          </div>
+        </div>
+
+        {/* Chips de fechas activas */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          {fechas.map((f, i) => (
+            <span key={f} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, padding: "4px 10px", borderRadius: 14, background: "var(--surface2)", border: `1px solid ${PALETA[i % PALETA.length]}55` }}>
+              <span style={{ width: 8, height: 8, borderRadius: 4, background: PALETA[i % PALETA.length] }} />
+              {nombreDia(f)}
+              {datos[f] && <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>{fmt(datos[f].cplDia)}</span>}
+              <button onClick={() => quitarFecha(f)} style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
+            </span>
+          ))}
+          {loading && <span style={{ fontSize: 11, color: "var(--muted)" }}>⟳ Consultando Facebook...</span>}
+        </div>
+
+        {/* VISTA APILADA */}
+        {vista === "apilada" && (
+          <div>
+            {fechas.map((f, i) => (
+              <div key={f} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, textTransform: "capitalize" }}>
+                    <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: 5, background: PALETA[i % PALETA.length], marginRight: 7 }} />
+                    {nombreDia(f)}
+                  </div>
+                  {datos[f] && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      CPL día: <span style={{ fontFamily: "var(--mono)", fontWeight: 700, color: "var(--text)" }}>{fmt(datos[f].cplDia)}</span>
+                      {" · "}{datos[f].totalLeads} leads · {fmt(datos[f].totalInv)}
+                    </div>
+                  )}
+                </div>
+                <GraficaDia fecha={f} color={PALETA[i % PALETA.length]} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* VISTA OVERLAY */}
+        {vista === "overlay" && (() => {
+          const W = 900, H = 300, PAD = { t: 14, r: 14, b: 24, l: 46 };
+          const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
+          const x = (h) => PAD.l + (h / 23) * cW;
+          const y = (v) => PAD.t + cH - ((v - minV) / rangoV) * cH;
+          return (
+            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block" }}>
+              {[0, .25, .5, .75, 1].map((t, i) => {
+                const v = minV + rangoV * (1 - t);
+                return (<g key={i}>
+                  <line x1={PAD.l} y1={PAD.t + cH * t} x2={PAD.l + cW} y2={PAD.t + cH * t} stroke="var(--border)" strokeWidth=".5" strokeDasharray="3 4" />
+                  <text x={PAD.l - 6} y={PAD.t + cH * t + 3} textAnchor="end" fontSize="9" fill="var(--muted)" fontFamily="var(--mono)">${fmtNum(v, 2)}</text>
+                </g>);
+              })}
+              {[0, 3, 6, 9, 12, 15, 18, 21, 23].map(h => (
+                <text key={h} x={x(h)} y={H - 8} textAnchor="middle" fontSize="9" fill="var(--muted)">{String(h).padStart(2, "0")}h</text>
+              ))}
+              {fechas.map((f, i) => {
+                const d = datos[f];
+                if (!d) return null;
+                const pts = d.horas.filter(h => h[metrica] > 0);
+                if (!pts.length) return null;
+                const path = pts.map((p, j) => `${j === 0 ? "M" : "L"}${x(p.hora).toFixed(1)},${y(p[metrica]).toFixed(1)}`).join(" ");
+                return <path key={f} d={path} fill="none" stroke={PALETA[i % PALETA.length]} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" opacity=".9" />;
+              })}
+            </svg>
+          );
+        })()}
+
+        {/* VISTA TABLA */}
+        {vista === "tabla" && (
+          <div style={{ overflowX: "auto", maxHeight: 460, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+            <table className="tbl" style={{ width: "100%", fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={{ position: "sticky", top: 0, background: "var(--surface)", zIndex: 1 }}>Hora</th>
+                  {fechas.map((f, i) => (
+                    <th key={f} style={{ textAlign: "right", position: "sticky", top: 0, background: "var(--surface)", zIndex: 1, textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                      <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 4, background: PALETA[i % PALETA.length], marginRight: 5 }} />
+                      {nombreDia(f)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <tr key={h}>
+                    <td style={{ fontFamily: "var(--mono)", color: "var(--muted)" }}>{String(h).padStart(2, "0")}:00</td>
+                    {fechas.map(f => {
+                      const d = datos[f]?.horas?.[h];
+                      const v = d ? d[metrica] : 0;
+                      return <td key={f} style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{v > 0 ? fmt(v) : <span style={{ color: "var(--border)" }}>—</span>}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ fontWeight: 700, borderTop: "2px solid var(--border)", position: "sticky", bottom: 0, background: "var(--surface)" }}>
+                  <td>CPL DÍA</td>
+                  {fechas.map(f => <td key={f} style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{datos[f]?.cplDia ? fmt(datos[f].cplDia) : "—"}</td>)}
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
+          <strong>CPL acumulado</strong>: cómo iba el costo por lead del día hasta esa hora (así lo ves en el panel en vivo).{" "}
+          <strong>CPL de la hora</strong>: el costo solo de los leads de esa hora (útil para detectar franjas caras o baratas).
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PANEL POR PAÍS — gasto real ejecutado + presupuesto activo programado
 // ═══════════════════════════════════════════════════════════════════════════
 function PaisesPanel({ client, onUpdate }) {
@@ -2469,9 +2814,13 @@ function PaisesPanel({ client, onUpdate }) {
                           </div>
                         </div>
                       </div>
-                      <div style={{marginTop:8, paddingTop:8, borderTop:"1px solid var(--border)", display:"flex", justifyContent:"space-between", fontSize:10, color:"var(--muted)"}}>
+                      <div style={{marginTop:8, paddingTop:8, borderTop:"1px solid var(--border)", display:"flex", justifyContent:"space-between", fontSize:10, color:"var(--muted)", gap:6, flexWrap:"wrap"}}>
                         <span>{Math.round(g.leads)} leads · CPL {cplC>0?fmt(cplC):"—"}</span>
-                        {p.adsets>0 && <span>{p.adsets} adset{p.adsets!==1?"s":""} activo{p.adsets!==1?"s":""}</span>}
+                        <span>
+                          {p.adsets>0 && `${p.adsets} adset${p.adsets!==1?"s":""}`}
+                          {p.adsets>0 && p.campanasCBO>0 && " · "}
+                          {p.campanasCBO>0 && `${p.campanasCBO} CBO`}
+                        </span>
                       </div>
                       <div style={{height:5, borderRadius:3, background:"var(--border)", overflow:"hidden", marginTop:8}}>
                         <div style={{height:"100%", width:pctInv+"%", borderRadius:3, background:"var(--accent)", transition:"width .5s ease-out"}}/>
@@ -2601,6 +2950,7 @@ function PaisesPanel({ client, onUpdate }) {
                         <div style={{fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{c.nombre}</div>
                         <div style={{fontSize:10, color:"var(--muted)"}}>
                           {c.paises[0]==="WW" ? "🌐 Todo el mundo" : c.paises.map(p=>paisBandera(p)+" "+p).join("  ")}
+                          {c.nivel && <span style={{marginLeft:6, opacity:.7}}>· {c.nivel}</span>}
                         </div>
                       </div>
                       <span style={{fontWeight:700, fontSize:13, fontFamily:"var(--mono)", color:"var(--amber)", marginLeft:8}}>{fmt(c.budget)}<span style={{fontSize:9, color:"var(--muted)", fontWeight:400}}>/{c.tipo==="diario"?"día":"total"}</span></span>
@@ -7136,53 +7486,106 @@ async function fetchGastoPorPais(token, cuentas, since, until) {
 async function fetchPresupuestoPorPais(token, cuentas) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
-  const monoPais = {};   // CODE → presupuesto diario sumado (adsets de un solo país)
-  const compartidos = []; // adsets multi-país: { nombre, paises:[], budget, tipo }
-  const presupPorCuenta = {}; // nombre cuenta → { diario, adsets, adAccountId }
+
+  const monoPais = {};        // CODE → presupuesto diario (solo de un país)
+  const compartidos = [];     // multi-país / mundial (no divisible por país)
+  const presupPorCuenta = {}; // nombre cuenta → { diario, adsets, campanasCBO, adAccountId }
   let totalDiario = 0;
+
   for (const cuenta of activas) {
+    if (!presupPorCuenta[cuenta.nombre]) {
+      presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, campanasCBO:0, adAccountId: cuenta.adAccountId };
+    }
     try {
+      // ── PASO 1: Campañas activas con presupuesto a nivel campaña (CBO) ──
+      // Algunas cuentas usan CBO/Advantage: el presupuesto vive en la campaña,
+      // no en los adsets. Sin esto el presupuesto aparecía vacío.
+      const cboPorCampana = {}; // campaignId → { daily, life, nombre }
+      const cUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns`);
+      cUrl.searchParams.set("fields", "id,name,daily_budget,lifetime_budget,effective_status");
+      cUrl.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
+      cUrl.searchParams.set("limit", "500");
+      cUrl.searchParams.set("access_token", token);
+      let cNext = cUrl.toString();
+      while (cNext) {
+        const cj = await fetch(cNext).then(r=>r.json());
+        if (cj.error) { console.warn("[Presup campañas]", cuenta.nombre, cj.error.message); break; }
+        for (const c of (cj.data||[])) {
+          if (c.effective_status !== "ACTIVE") continue;
+          const d = parseFloat(c.daily_budget||0)/100;
+          const l = parseFloat(c.lifetime_budget||0)/100;
+          if (d > 0 || l > 0) cboPorCampana[c.id] = { daily:d, life:l, nombre: c.name || "(sin nombre)" };
+        }
+        cNext = cj.paging?.next || null;
+      }
+
+      // ── PASO 2: Adsets activos (con su campaign_id para saber si hay CBO) ──
       const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/adsets`);
-      url.searchParams.set("fields", "name,daily_budget,lifetime_budget,effective_status,targeting{geo_locations}");
+      url.searchParams.set("fields", "name,campaign_id,daily_budget,lifetime_budget,effective_status,targeting{geo_locations}");
       url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
       url.searchParams.set("limit", "500");
       url.searchParams.set("access_token", token);
+      // Países que toca cada campaña CBO (para poder asignar su presupuesto)
+      const paisesPorCampanaCBO = {}; // campaignId → Set(paises)
       let next = url.toString();
       while (next) {
         const json = await fetch(next).then(r=>r.json());
-        if (json.error) { console.warn("[Presup]", cuenta.nombre, json.error.message); break; }
+        if (json.error) { console.warn("[Presup adsets]", cuenta.nombre, json.error.message); break; }
         for (const a of (json.data||[])) {
           if (a.effective_status !== "ACTIVE") continue;
-          const daily = parseFloat(a.daily_budget||0)/100;   // FB entrega en centavos
-          const life  = parseFloat(a.lifetime_budget||0)/100;
-          const budget = daily || life;
-          if (budget <= 0) continue; // presupuesto puede estar a nivel campaña (CBO) — se omite
           const geo = a.targeting?.geo_locations || {};
-          // Países explícitos
           let paises = (geo.countries || []).slice();
-          // Si apunta por regiones/ciudades, extraer el country de cada una
           (geo.regions||[]).forEach(r=>{ if(r.country&&!paises.includes(r.country))paises.push(r.country); });
           (geo.cities||[]).forEach(c=>{ if(c.country&&!paises.includes(c.country))paises.push(c.country); });
-          totalDiario += daily; // solo diarios suman al "activo por día"
-          // Acumulado por cuenta publicitaria
-          if (!presupPorCuenta[cuenta.nombre]) presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, adAccountId: cuenta.adAccountId };
+
+          const esCBO = !!cboPorCampana[a.campaign_id];
+          if (esCBO) {
+            // El presupuesto lo maneja la campaña: registramos los países que cubre
+            if (!paisesPorCampanaCBO[a.campaign_id]) paisesPorCampanaCBO[a.campaign_id] = new Set();
+            paises.forEach(p => paisesPorCampanaCBO[a.campaign_id].add(p));
+            continue; // no sumar el adset (evita duplicar)
+          }
+
+          const daily = parseFloat(a.daily_budget||0)/100;
+          const life  = parseFloat(a.lifetime_budget||0)/100;
+          const budget = daily || life;
+          if (budget <= 0) continue;
+
+          totalDiario += daily;
           presupPorCuenta[cuenta.nombre].diario += daily;
           presupPorCuenta[cuenta.nombre].adsets += 1;
+
           if (paises.length === 1) {
-            const code = paises[0];
-            monoPais[code] = (monoPais[code]||0) + (daily||life);
+            monoPais[paises[0]] = (monoPais[paises[0]]||0) + budget;
           } else {
-            // 0 países = mundial ; 2+ = multi-país
             compartidos.push({
               nombre: a.name || "(sin nombre)",
               cuenta: cuenta.nombre,
-              paises: paises.length ? paises : ["WW"], // WW = worldwide
-              budget: daily || life,
-              tipo: daily ? "diario" : "total",
+              paises: paises.length ? paises : ["WW"],
+              budget, tipo: daily ? "diario" : "total", nivel: "adset",
             });
           }
         }
         next = json.paging?.next || null;
+      }
+
+      // ── PASO 3: Asignar el presupuesto de las campañas CBO ──
+      for (const [campId, info] of Object.entries(cboPorCampana)) {
+        const paises = Array.from(paisesPorCampanaCBO[campId] || []);
+        const budget = info.daily || info.life;
+        totalDiario += info.daily;
+        presupPorCuenta[cuenta.nombre].diario += info.daily;
+        presupPorCuenta[cuenta.nombre].campanasCBO += 1;
+        if (paises.length === 1) {
+          monoPais[paises[0]] = (monoPais[paises[0]]||0) + budget;
+        } else {
+          compartidos.push({
+            nombre: info.nombre,
+            cuenta: cuenta.nombre,
+            paises: paises.length ? paises : ["WW"],
+            budget, tipo: info.daily ? "diario" : "total", nivel: "campaña (CBO)",
+          });
+        }
       }
     } catch(e) { console.error("[Presup]", cuenta.nombre, e.message); }
   }
@@ -7337,8 +7740,6 @@ function FacebookPanel({ client, onUpdate }) {
   const [syncStatus, setSyncStatus] = useState(null);     // null | loading | ok | err
   const [syncLog, setSyncLog]       = useState([]);
   const [verifyStatus, setVerify]   = useState(null);     // null | loading | {name, accounts} | err
-  const [campaigns, setCampaigns]   = useState(null);
-  const [loadingCamp, setLoadingCamp] = useState(false);
   const [autoSync, setAutoSync]     = useState(fbConfig.autoSync || false);
   const { show, el: toastEl }       = useToast();
 
@@ -7379,8 +7780,6 @@ function FacebookPanel({ client, onUpdate }) {
     }
     // Facturación — siempre cargar al abrir (datos críticos)
     setTimeout(() => fetchBillingData(), 600);
-    // Campañas activas — cargar al abrir
-    setTimeout(() => cargarCampanas(), 900);
   }, []);
 
   // ── Verificar token ───────────────────────────────────────────────────────
@@ -7397,28 +7796,6 @@ function FacebookPanel({ client, onUpdate }) {
       setVerify({ name: d.name, accounts: accD.data || [] });
       show("✅ Token válido — " + d.name, "ok");
     } catch(e) { setVerify("err"); show("Error: " + e.message, "err"); }
-  }
-
-  // ── Campañas activas ──────────────────────────────────────────────────────
-  async function cargarCampanas() {
-    const activas = cuentas.filter(c => c.adAccountId);
-    if (!token || !activas.length) return show("Configura token y al menos una cuenta", "err");
-    setLoadingCamp(true); setCampaigns(null);
-    const todas = [];
-    for (const cuenta of activas) {
-      try {
-        // Paginar campañas — FB limita a 50 por página
-        let campUrl = `https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns?fields=name,status,daily_budget,lifetime_budget,objective&filtering=[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]&limit=100&access_token=${token}`;
-        while (campUrl) {
-          const res = await fetch(campUrl);
-          const d = await res.json();
-          if (d.data) todas.push(...d.data.map(c => ({...c, _cuenta: cuenta.nombre, _cuentaId: cuenta.id})));
-          campUrl = d.paging?.next || null; // seguir paginando si hay más
-        }
-      } catch {}
-    }
-    setCampaigns(todas);
-    setLoadingCamp(false);
   }
 
   // ── Core sync — suma datos de todas las cuentas para una fecha ───────────
@@ -7962,72 +8339,6 @@ function FacebookPanel({ client, onUpdate }) {
             Presiona "🔄 Consultar" para ver el estado de facturación de tus cuentas en tiempo real.
           </div>
         )}
-      </div>
-
-      {/* ── Sección 6: Campañas activas ──────────────────────────────────── */}
-      <div className="card" style={{marginBottom:"1rem"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontWeight:700,fontSize:13}}>📡 Campañas activas ahora</div>
-          <button className="btn btn-ghost btn-sm" style={{fontSize:11}} onClick={cargarCampanas} disabled={loadingCamp}>
-            {loadingCamp?"⟳ Cargando...":"🔄 Cargar"}
-          </button>
-        </div>
-        {!campaigns && !loadingCamp && (
-          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>
-            Presiona "Cargar" para ver las campañas activas y pausadas ahora mismo.
-          </div>
-        )}
-        {loadingCamp && <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>⟳ Consultando Facebook Ads...</div>}
-        {campaigns && campaigns.length === 0 && (
-          <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",padding:"1rem"}}>Sin campañas activas en este momento.</div>
-        )}
-        {campaigns && campaigns.length > 0 && (() => {
-          // Agrupar por cuenta
-          const grupos = cuentas
-            .map(c => ({ cuenta: c, items: campaigns.filter(x => x._cuentaId === c.id) }))
-            .filter(g => g.items.length > 0);
-          return (
-            <div className="scroll-x">
-              {grupos.map((g, gi) => (
-                <div key={gi} style={{marginBottom: gi < grupos.length-1 ? 16 : 0}}>
-                  {/* Encabezado de cuenta — solo si hay más de una */}
-                  {cuentas.filter(c=>c.adAccountId).length > 1 && (
-                    <div style={{fontSize:11,fontWeight:700,color:"var(--accent2)",textTransform:"uppercase",
-                      letterSpacing:".06em",padding:"4px 0 8px",borderBottom:"1px solid var(--border)",marginBottom:8}}>
-                      📊 {g.cuenta.nombre} · {g.items.length} campaña{g.items.length!==1?"s":""} activa{g.items.length!==1?"s":""}
-                    </div>
-                  )}
-                  <table className="tbl">
-                    <thead><tr>
-                      <th>Campaña</th>
-                      <th>Objetivo</th>
-                      <th style={{textAlign:"right"}}>Presupuesto</th>
-                    </tr></thead>
-                    <tbody>
-                      {g.items.map((c,i) => (
-                        <tr key={i}>
-                          <td style={{fontWeight:500,fontSize:12,maxWidth:400,wordBreak:"break-word"}}>
-                            <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:"var(--green)",marginRight:8,flexShrink:0}}/>
-                            {c.name}
-                          </td>
-                          <td style={{fontSize:11,color:"var(--muted)"}}>{(c.objective||"").replace(/_/g," ").toLowerCase()}</td>
-                          <td style={{fontFamily:"var(--mono)",textAlign:"right",fontSize:12}}>
-                            {c.daily_budget ? "$"+fmtNum(parseFloat(c.daily_budget)/100,2)+"/día"
-                              : c.lifetime_budget ? "$"+fmtNum(parseFloat(c.lifetime_budget)/100,2)+" total"
-                              : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-              <div style={{fontSize:11,color:"var(--muted)",marginTop:10,textAlign:"right"}}>
-                {campaigns.length} campaña{campaigns.length!==1?"s":""} activa{campaigns.length!==1?"s":""} en total
-              </div>
-            </div>
-          );
-        })()}
       </div>
 
       {/* Guardar + nota token */}
@@ -10766,9 +11077,24 @@ function CplWAChart({ client }) {
 
 
 function CplTradingChart({ client, onUpdate, externalPuntos }) {
-  const { token, cuentas: _cuentas } = client.fbConfig || {};
-  const cuentas = _cuentas || [];
-  const adAccountId = (cuentas[0]?.adAccountId) || client.fbConfig?.adAccountId || "";
+  // Fuente única de verdad para las cuentas (multicuenta)
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  const adAccountId = cuentas[0]?.adAccountId || "";
+
+  // Filtro de cuenta para el CPL en vivo: "todas" = consolidado
+  const [cuentaCPL, setCuentaCPL] = useState("todas");
+  // Cuentas que realmente se consultan según el filtro
+  const cuentasConsulta = cuentaCPL === "todas" ? cuentas : cuentas.filter(c => c.nombre === cuentaCPL);
+
+  // ── ALERTAS DE CPL ────────────────────────────────────────────────────────
+  // Config guardada en el cliente: { activo, umbral, modo, minutos }
+  // modo: "porcentaje" (X% sobre la meta) | "absoluto" (CPL > $X)
+  const alertaCfg = client.cplAlerta || { activo: false, umbral: 20, modo: "porcentaje", minutos: 10 };
+  const [showAlertaForm, setShowAlertaForm] = useState(false);
+  const [alertaLocal, setAlertaLocal] = useState(alertaCfg);
+  const [alertaActiva, setAlertaActiva] = useState(null); // { desde, cpl, meta }
+  const alertaNotificadaRef = useRef(false);
 
   const [rango, setRango]           = useState("24h");
   const [loading, setLoading]       = useState(false);
@@ -10890,8 +11216,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     try {
       // Acumular inv/leads POR HORA sumando todas las cuentas
       const porHora = {}; // hora (0-23) → { inv, nl }
-      const activas = (cuentas||[]).filter(c=>c.adAccountId);
-      if (!activas.length && adAccountId) activas.push({ adAccountId, nombre:"Principal" });
+      const activas = cuentasConsulta; // respeta el filtro de cuenta seleccionado
       for (const cuenta of activas) {
         const histUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
         histUrl.searchParams.set("fields", "spend,actions");
@@ -10957,8 +11282,7 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   // ── Fetch CPL en tiempo real cada 30s ────────────────────────────────────
   async function fetchCplActual() {
     if (!token) return;
-    const cuentasActivas = (cuentas||[]).filter(c => c.adAccountId);
-    if (!cuentasActivas.length && adAccountId) cuentasActivas.push({ adAccountId, nombre:"Principal" });
+    const cuentasActivas = cuentasConsulta; // respeta el filtro de cuenta
     if (!cuentasActivas.length) return;
 
     setLoading(true);
@@ -11041,9 +11365,19 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
     // Datos de hoy (línea principal) — solo puntos cuyo ts cae en HOY (hora local)
     // Esto descarta puntos fantasma con medianoche UTC (= 7pm de ayer en UTC-5)
     const esDeHoy = p => localDateStr(new Date(p.ts)) === hoy;
+    // Si hay filtro de cuenta activo, recalcular el CPL solo con esa cuenta
+    // (usa el desglose porCuenta que guarda el padre en cada punto)
+    const aplicarFiltroCuenta = (p) => {
+      if (cuentaCPL === "todas" || !p.porCuenta) return p;
+      const d = p.porCuenta[cuentaCPL];
+      if (!d || !d.leads) return null; // sin datos de esa cuenta en ese punto
+      return { ...p, inv: d.inv, leads: d.leads, cpl: +(d.inv / d.leads).toFixed(4) };
+    };
     const ptsHoyGuardados = (client.cplRtData?.[hoy]||[]).filter(esDeHoy);
     const mapa={};
-    [...ptsHoyGuardados, ...puntosRT.filter(esDeHoy)].forEach(p=>{mapa[p.ts]=p;});
+    [...ptsHoyGuardados, ...puntosRT.filter(esDeHoy)]
+      .map(aplicarFiltroCuenta).filter(Boolean)
+      .forEach(p=>{mapa[p.ts]=p;});
     datosVista = Object.values(mapa)
       .sort((a,b)=>a.ts-b.ts)
       .filter(p => p.ts >= tsVentanaInicio && p.ts <= ahora)
@@ -11096,6 +11430,57 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
   const _totalInv = _allRecs.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
   const _totalRes = _allRecs.reduce((a,r)=>a+(parseFloat(r.resultados||r.formularios||r.leads)||0),0);
   const cplAcumGlobal = _totalInv>0&&_totalRes>0 ? _totalInv/_totalRes : 0;
+
+  // ── DETECCIÓN DE ALERTA DE CPL ────────────────────────────────────────────
+  // Vigila el CPL en vivo y avisa si supera el umbral configurado de forma
+  // sostenida (evita falsas alarmas por un pico momentáneo).
+  const _ultPunto = datosVista.length>0 ? datosVista[datosVista.length-1] : null;
+  useEffect(() => {
+    if (!alertaCfg.activo || !_ultPunto || !_ultPunto.cpl) { setAlertaActiva(null); return; }
+    const meta = alertaCfg.modo === "absoluto" ? parseFloat(alertaCfg.umbral)
+      : cplAcumGlobal > 0 ? cplAcumGlobal * (1 + parseFloat(alertaCfg.umbral)/100) : 0;
+    if (!meta || meta <= 0) return;
+    const excedido = _ultPunto.cpl > meta;
+    if (!excedido) {
+      // Volvió a la normalidad → limpiar
+      if (alertaActiva) { setAlertaActiva(null); alertaNotificadaRef.current = false; }
+      return;
+    }
+    // Excedido: iniciar o mantener el conteo
+    if (!alertaActiva) {
+      setAlertaActiva({ desde: Date.now(), cpl: _ultPunto.cpl, meta });
+    } else {
+      const minutosExcedido = (Date.now() - alertaActiva.desde) / 60000;
+      const sostenido = minutosExcedido >= (parseFloat(alertaCfg.minutos) || 0);
+      // Persistir la alerta en el cliente para que la campana la muestre
+      if (sostenido && !alertaNotificadaRef.current && onUpdate) {
+        alertaNotificadaRef.current = true;
+        const alertaData = {
+          ts: Date.now(),
+          cpl: +_ultPunto.cpl.toFixed(2),
+          meta: +meta.toFixed(2),
+          minutos: Math.round(minutosExcedido),
+          cuenta: cuentaCPL === "todas" ? null : cuentaCPL,
+        };
+        client.cplAlertaActiva = alertaData;
+        onUpdate({ ...client, cplAlertaActiva: alertaData });
+      }
+      // Mantener actualizado el CPL mostrado en la alerta
+      if (Math.abs(alertaActiva.cpl - _ultPunto.cpl) > 0.001) {
+        setAlertaActiva(a => a ? { ...a, cpl: _ultPunto.cpl } : a);
+      }
+    }
+    /* eslint-disable-next-line */
+  }, [_ultPunto?.cpl, _ultPunto?.ts, alertaCfg.activo, alertaCfg.umbral, alertaCfg.modo, alertaCfg.minutos, cplAcumGlobal]);
+
+  // Limpiar la alerta persistida cuando el CPL vuelve a la normalidad
+  useEffect(() => {
+    if (!alertaActiva && client.cplAlertaActiva && onUpdate) {
+      client.cplAlertaActiva = null;
+      onUpdate({ ...client, cplAlertaActiva: null });
+    }
+    /* eslint-disable-next-line */
+  }, [alertaActiva]);
 
   // Detectar distorsión ANTES de construir la gráfica
   const _ultimoRaw = datosVista.length>0 ? datosVista[datosVista.length-1] : null;
@@ -11239,10 +11624,24 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           })()}
         </div>
         <div style={{display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+          {cuentas.length > 1 && (
+            <select value={cuentaCPL} onChange={e=>setCuentaCPL(e.target.value)}
+              title="Filtrar el CPL en vivo por cuenta publicitaria"
+              style={{width:"auto",fontSize:11,padding:"3px 8px",marginRight:4}}>
+              <option value="todas">🏢 Todas ({cuentas.length})</option>
+              {cuentas.map(c => <option key={c.id||c.adAccountId} value={c.nombre}>{c.nombre}</option>)}
+            </select>
+          )}
           {modoRT && (
             <button className="btn btn-ghost btn-sm" style={{fontSize:11,padding:"3px 10px",color:"var(--amber)"}}
               onClick={()=>setShowAnotForm(v=>!v)}>📌 Anotar</button>
           )}
+          <button className="btn btn-ghost btn-sm"
+            title={alertaCfg.activo ? "Alerta de CPL activa — clic para configurar" : "Configurar alerta de CPL"}
+            style={{fontSize:11,padding:"3px 10px",color: alertaCfg.activo ? "var(--green)" : "var(--muted)"}}
+            onClick={()=>{ setAlertaLocal(client.cplAlerta || alertaCfg); setShowAlertaForm(v=>!v); }}>
+            {alertaCfg.activo ? "🔔" : "🔕"} Alerta
+          </button>
           {RANGOS.map(r=>(
             <button key={r} className="btn btn-ghost btn-sm"
               style={{fontSize:11,padding:"3px 10px",background:rango===r?"var(--accent)":"transparent",color:rango===r?"#fff":"var(--muted)",borderRadius:6,fontWeight:rango===r?700:400}}
@@ -11250,6 +11649,84 @@ function CplTradingChart({ client, onUpdate, externalPuntos }) {
           ))}
         </div>
       </div>
+
+      {/* ── BANNER DE ALERTA DE CPL ── */}
+      {alertaActiva && (() => {
+        const mins = Math.round((Date.now() - alertaActiva.desde)/60000);
+        const sostenido = mins >= (parseFloat(alertaCfg.minutos)||0);
+        const exceso = alertaActiva.meta>0 ? ((alertaActiva.cpl-alertaActiva.meta)/alertaActiva.meta)*100 : 0;
+        return (
+          <div style={{marginBottom:12,padding:"10px 14px",borderRadius:10,
+            background: sostenido ? "rgba(239,68,68,.1)" : "rgba(255,222,89,.08)",
+            border: `1px solid ${sostenido ? "rgba(239,68,68,.35)" : "rgba(255,222,89,.3)"}`,
+            display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:18}}>{sostenido ? "🚨" : "⚠️"}</span>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontWeight:700,fontSize:13,color: sostenido ? "var(--red)" : "var(--amber)"}}>
+                {sostenido ? "CPL sobre el umbral" : "CPL subiendo"} — ${fmtNum(alertaActiva.cpl,2)}
+                <span style={{fontWeight:400,fontSize:11,color:"var(--muted)",marginLeft:6}}>
+                  (umbral ${fmtNum(alertaActiva.meta,2)} · +{exceso.toFixed(0)}%)
+                </span>
+              </div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                {sostenido
+                  ? `Sostenido ${mins} min. Revisa campañas o pausa las de peor rendimiento.`
+                  : `Excedido hace ${mins} min — se avisará si supera ${alertaCfg.minutos} min.`}
+                {cuentaCPL !== "todas" && ` · Cuenta: ${cuentaCPL}`}
+              </div>
+            </div>
+            <button className="btn btn-ghost btn-sm" style={{fontSize:11}}
+              onClick={()=>{ setAlertaActiva(null); alertaNotificadaRef.current=false; }}>Descartar</button>
+          </div>
+        );
+      })()}
+
+      {/* ── CONFIGURACIÓN DE ALERTA ── */}
+      {showAlertaForm && (
+        <div style={{marginBottom:12,padding:"12px 14px",borderRadius:10,background:"var(--surface2)",border:"1px solid var(--border)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:13}}>🔔 Alerta de CPL</div>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setShowAlertaForm(false)}>×</button>
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}}>
+              <input type="checkbox" checked={alertaLocal.activo}
+                onChange={e=>setAlertaLocal(a=>({...a,activo:e.target.checked}))} style={{width:"auto",margin:0}} />
+              Activar alerta
+            </label>
+            <div>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:3}}>Avisar cuando el CPL</div>
+              <select value={alertaLocal.modo} onChange={e=>setAlertaLocal(a=>({...a,modo:e.target.value}))}
+                style={{width:"auto",fontSize:12}}>
+                <option value="porcentaje">supere la misión en %</option>
+                <option value="absoluto">supere un valor fijo</option>
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:3}}>{alertaLocal.modo==="absoluto"?"CPL máximo ($)":"Exceso (%)"}</div>
+              <input type="number" min="0" step={alertaLocal.modo==="absoluto"?"0.05":"1"} value={alertaLocal.umbral}
+                onChange={e=>setAlertaLocal(a=>({...a,umbral:e.target.value}))} style={{width:100,fontSize:12}} />
+            </div>
+            <div>
+              <div style={{fontSize:10,color:"var(--muted)",marginBottom:3}}>Sostenido (min)</div>
+              <input type="number" min="0" step="1" value={alertaLocal.minutos}
+                onChange={e=>setAlertaLocal(a=>({...a,minutos:e.target.value}))} style={{width:80,fontSize:12}} />
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={async ()=>{
+              const cfg = { ...alertaLocal, umbral: parseFloat(alertaLocal.umbral)||0, minutos: parseFloat(alertaLocal.minutos)||0 };
+              client.cplAlerta = cfg;
+              if (onUpdate) await onUpdate({ ...client, cplAlerta: cfg });
+              setShowAlertaForm(false);
+            }}>Guardar</button>
+          </div>
+          <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>
+            {alertaLocal.modo==="porcentaje"
+              ? `Avisará si el CPL supera ${cplAcumGlobal>0?"$"+fmtNum(cplAcumGlobal*(1+(parseFloat(alertaLocal.umbral)||0)/100),2):"la misión + "+alertaLocal.umbral+"%"} durante ${alertaLocal.minutos} min seguidos.`
+              : `Avisará si el CPL supera $${fmtNum(parseFloat(alertaLocal.umbral)||0,2)} durante ${alertaLocal.minutos} min seguidos.`}
+            {" "}La alerta aparece aquí y en la campana 🔔.
+          </div>
+        </div>
+      )}
 
       {/* Panel de anotación */}
       {showAnotForm && (
@@ -13901,9 +14378,9 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       try {
         const hoy = localDateStr();
         // URL con URLSearchParams — encoding correcto, sin problemas de 400
-        const cuentasAll = client.fbConfig?.cuentas?.filter(c=>c.adAccountId) || [];
-        if (!cuentasAll.length && accId) cuentasAll.push({ adAccountId: accId, nombre: "Principal" });
+        const cuentasAll = getCuentasFBActivas(client);
         let totalInv = 0, totalNl = 0;
+        const detallePorCuenta = {}; // nombre → { inv, leads } para filtrar sin re-consultar
         for (const cuenta of cuentasAll) {
           const u = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/insights`);
           u.searchParams.set("fields", "spend,actions");
@@ -13924,11 +14401,17 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
           for (const t of TIPOS) { const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
           if (nl===0) for (const a of acts) { if(!EXCL.has(a.action_type)&&a.action_type.includes("registration")){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
           totalNl += nl;
+          // Desglose por cuenta: permite filtrar el CPL en vivo sin re-consultar
+          detallePorCuenta[cuenta.nombre] = {
+            inv: parseFloat(parseFloat(d.spend||0).toFixed(2)),
+            leads: nl,
+          };
           console.log(`[CPL padre] ${cuenta.nombre}: inv=$${parseFloat(d.spend||0).toFixed(2)} leads=${nl} CPL=${nl>0?(parseFloat(d.spend||0)/nl).toFixed(2):"?"}`);
         }
         if (totalInv>0 && totalNl>0) {
           const cpl = totalInv/totalNl;
-          const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(totalInv.toFixed(2)), leads:totalNl };
+          const punto = { ts:Date.now(), hora:new Date().toLocaleTimeString("es-EC",{hour:"2-digit",minute:"2-digit"}), cpl:parseFloat(cpl.toFixed(4)), inv:parseFloat(totalInv.toFixed(2)), leads:totalNl,
+            porCuenta: Object.keys(detallePorCuenta).length > 1 ? detallePorCuenta : undefined };
           // Guardia: si ya cambiamos de cliente, descartar este resultado
           if (clienteIdDelCiclo !== client.id) return;
           setCplRtPuntos(prev => {
@@ -14058,6 +14541,11 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                 <GraficasMetricas client={client} period={period} from={from} to={to} />
               </div>
             )}
+            {client.producto?.startsWith("APOLLO") && (
+              <div style={{ marginTop:"1.5rem" }}>
+                <ComparativaCplPanel key={client.id} client={client} />
+              </div>
+            )}
           </div>
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
@@ -14119,6 +14607,17 @@ function getClientNotificaciones(client) {
       else if (dias <= 5) notifs.push({ id:`cuota-v-${ci}-${qi}`, tipo:"amber", icon:"⏰", texto:`Cuota de pago vence en ${dias} días ($${c.monto})` });
     });
   });
+
+  // Alerta de CPL sobre el umbral (la genera la gráfica en vivo)
+  const alertaCPL = client.cplAlertaActiva;
+  if (alertaCPL && alertaCPL.ts && (Date.now() - alertaCPL.ts) < 3600000) { // vigente 1h
+    notifs.push({
+      id: "cpl-alerta",
+      tipo: "err",
+      icon: "🚨",
+      texto: `CPL en $${(alertaCPL.cpl||0).toFixed(2)} — sobre el umbral de $${(alertaCPL.meta||0).toFixed(2)}${alertaCPL.cuenta ? ` (${alertaCPL.cuenta})` : ""}`
+    });
+  }
 
   // Salud de conexión con Facebook (se actualiza al consultar los paneles FB)
   const saludFB = client.fbSaludUltima;
