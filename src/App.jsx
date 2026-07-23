@@ -2329,20 +2329,13 @@ function ComparativaCplPanel({ client }) {
     filas.push(["TOTAL DÍA", ...fechas.map(f => datos[f]?.cplDia ? datos[f].cplDia.toFixed(2) : "")]);
     return filas.map(r => r.join("\t")).join("\n");
   }
-  async function copiarParaSheets() {
-    const tsv = construirTSV();
-    let ok = false;
-    try { await navigator.clipboard.writeText(tsv); ok = true; }
-    catch {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = tsv; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.focus(); ta.select();
-        ok = document.execCommand("copy"); document.body.removeChild(ta);
-      } catch {}
-    }
-    setCopiado(ok);
-    setTimeout(() => setCopiado(false), 5000);
+  // Abre el modal de exportación (copia confiable con clic directo del usuario)
+  const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [sheetsTSV, setSheetsTSV] = useState("");
+  function copiarParaSheets() {
+    setSheetsTSV(construirTSV());
+    setShowSheetsModal(true);
+    setCopiado(false);
   }
   function descargarCSV() {
     const csv = construirTSV().split("\n").map(l => l.split("\t").map(v => `"${v}"`).join(",")).join("\n");
@@ -2616,6 +2609,48 @@ function ComparativaCplPanel({ client }) {
           <strong>CPL por hora (volátil)</strong>: gasto de esa hora ÷ leads de esa hora. Sirve para detectar franjas caras o baratas, pero da picos extremos porque los leads no siempre llegan en la misma hora en que se gastó — no lo uses como referencia de costo real.
         </div>
       </>)}
+
+      {/* Modal de exportación a Google Sheets */}
+      {showSheetsModal && (
+        <div onClick={() => setShowSheetsModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth: 560, width: "100%", padding: "20px 22px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Exportar CPL por hora a Sheets</div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowSheetsModal(false)}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 12 }}>
+              {fechas.length} día(s) · 24 horas · métrica: {metrica === "cplAcum" ? "CPL acumulado" : "CPL por hora"}
+            </div>
+            <ol style={{ fontSize: 13, paddingLeft: 20, margin: "0 0 14px", lineHeight: 1.8 }}>
+              <li>Presiona <strong>Copiar datos</strong>.</li>
+              <li>Presiona <strong>Abrir Google Sheets</strong>.</li>
+              <li>Clic en la celda <strong>A1</strong> y pega con <strong>Ctrl+V</strong>.</li>
+            </ol>
+            <textarea readOnly value={sheetsTSV} onClick={e => e.target.select()}
+              style={{ width: "100%", height: 110, fontSize: 10, fontFamily: "var(--mono)", resize: "none", marginBottom: 14, background: "var(--surface2)" }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-primary btn-sm" style={{ flex: 1, minWidth: 130 }} onClick={async () => {
+                let ok = false;
+                try { await navigator.clipboard.writeText(sheetsTSV); ok = true; }
+                catch {
+                  try {
+                    const ta = document.createElement("textarea");
+                    ta.value = sheetsTSV; ta.style.position = "fixed"; ta.style.opacity = "0";
+                    document.body.appendChild(ta); ta.focus(); ta.select();
+                    ok = document.execCommand("copy"); document.body.removeChild(ta);
+                  } catch {}
+                }
+                setCopiado(ok);
+              }}>{copiado ? "✓ Copiado" : "📋 Copiar datos"}</button>
+              <button className="btn btn-ghost btn-sm" style={{ flex: 1, minWidth: 130 }}
+                onClick={() => window.open("https://sheets.new", "_blank")}>📊 Abrir Google Sheets</button>
+              <button className="btn btn-ghost btn-sm" style={{ minWidth: 100 }} onClick={descargarCSV}>📥 O bajar CSV</button>
+            </div>
+            {copiado && <div style={{ fontSize: 11, color: "var(--green)", marginTop: 10 }}>✓ Datos copiados. Abre Sheets y pega en A1.</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4412,7 +4447,28 @@ function exportarTabla(headers, rows, nombreArchivo, tipo) {
 // Botones de exportación reutilizables
 function BotonesExportar({ headers, rows, nombreArchivo, size }) {
   const sz = size || "btn-sm";
+  const [showSheets, setShowSheets] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  // TSV: formato que Google Sheets pega directo en celdas
+  const tsv = [headers, ...rows].map(f => f.map(v => String(v ?? "")).join("\t")).join("\n");
+
+  async function copiar() {
+    let ok = false;
+    try { await navigator.clipboard.writeText(tsv); ok = true; }
+    catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = tsv; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand("copy"); document.body.removeChild(ta);
+      } catch {}
+    }
+    setCopiado(ok);
+  }
+
   return (
+    <>
     <div style={{ display:"flex", gap:4 }}>
       <button className={"btn btn-ghost " + sz} title="Descargar CSV"
         onClick={() => exportarTabla(headers, rows, nombreArchivo, "csv")}>
@@ -4424,7 +4480,40 @@ function BotonesExportar({ headers, rows, nombreArchivo, size }) {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight:4}}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         XLS
       </button>
+      <button className={"btn btn-ghost " + sz} title="Exportar a Google Sheets"
+        onClick={() => { setShowSheets(true); setCopiado(false); }}>
+        📊 Sheets
+      </button>
     </div>
+
+    {showSheets && (
+      <div onClick={() => setShowSheets(false)}
+        style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+        <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth:560, width:"100%", padding:"20px 22px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+            <div style={{ fontWeight:700, fontSize:16 }}>📊 Exportar a Google Sheets</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowSheets(false)}>×</button>
+          </div>
+          <div style={{ fontSize:12, color:"var(--muted)", marginBottom:12 }}>{rows.length} fila(s) listas para pegar</div>
+          <ol style={{ fontSize:13, paddingLeft:20, margin:"0 0 14px", lineHeight:1.8 }}>
+            <li>Presiona <strong>Copiar datos</strong>.</li>
+            <li>Presiona <strong>Abrir Google Sheets</strong>.</li>
+            <li>Clic en la celda <strong>A1</strong> y pega con <strong>Ctrl+V</strong>.</li>
+          </ol>
+          <textarea readOnly value={tsv} onClick={e => e.target.select()}
+            style={{ width:"100%", height:110, fontSize:10, fontFamily:"var(--mono)", resize:"none", marginBottom:14, background:"var(--surface2)" }} />
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button className="btn btn-primary btn-sm" style={{ flex:1, minWidth:130 }} onClick={copiar}>
+              {copiado ? "✓ Copiado" : "📋 Copiar datos"}
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ flex:1, minWidth:130 }}
+              onClick={() => window.open("https://sheets.new", "_blank")}>📊 Abrir Google Sheets</button>
+          </div>
+          {copiado && <div style={{ fontSize:11, color:"var(--green)", marginTop:10 }}>✓ Datos copiados. Abre Sheets y pega en A1.</div>}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
