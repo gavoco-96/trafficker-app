@@ -808,6 +808,23 @@ function useColPrefs(client, isWA, isWeb, onUpdate) {
   return { cols, toggle };
 }
 
+// Oculta automaticamente las columnas que no tienen ningun dato en las filas
+// visibles. Evita mostrar columnas llenas de "—" (ej. Personas WP cuando el
+// cliente no usa WhatsApp). Las columnas de fecha y acciones nunca se ocultan.
+function filtrarColumnasConDatos(columnas, filas) {
+  if (!filas || !filas.length) return columnas;
+  const SIEMPRE = new Set(["date", "acciones"]);
+  return columnas.filter(c => {
+    if (SIEMPRE.has(c.key)) return true;
+    return filas.some(f => {
+      const v = f[c.key];
+      if (v === null || v === undefined || v === "") return false;
+      const n = Number(v);
+      return isNaN(n) ? String(v).trim() !== "" : n !== 0;
+    });
+  });
+}
+
 function ColumnSelector({ cols, onToggle }) {
   const [open, setOpen] = useState(false);
   return (
@@ -876,10 +893,13 @@ function MetricasAdminPanel({ client, onUpdate, period, setPeriod, from, setFrom
   const [vistaTab, setVistaTab] = useState("diario"); // diario | campanas
   const [adminHovRow, setAdminHovRow] = useState(null);
   const { cols, toggle: toggleCol } = useColPrefs(client, isWA, isWeb);
-  const visibleCols = ALL_COLUMNS.filter(c => cols.includes(c.key));
 
   // Aplicar filtro de nomenclatura
   const rowsFiltrados = filterByNomenclatura(rows, busqueda);
+  // Ocultar columnas sin datos (evita columnas llenas de guiones)
+  const visibleCols = filtrarColumnasConDatos(
+    ALL_COLUMNS.filter(c => cols.includes(c.key)), rowsFiltrados
+  );
 
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -4118,7 +4138,8 @@ function ClientMetricasTable({ client, period, from, to, onUpdate }) {
     ? [...new Set([...rawCols, "personas_wp", "costo_wp", "pct_captura_wp"])]
     : rawCols;
   const rows = filterByPeriod(client.records || [], period, from, to).sort((a,b) => a.date.localeCompare(b.date));
-  const vis = ALL_COLUMNS.filter(c => cols.includes(c.key));
+  // Ocultar columnas sin datos para no mostrar filas de guiones
+  const vis = filtrarColumnasConDatos(ALL_COLUMNS.filter(c => cols.includes(c.key)), rows);
   const [hovRow, setHovRow] = useState(null);
   const [syncingWA, setSyncingWA] = useState(false);
   const { show, el: toastEl } = useToast();
@@ -11142,9 +11163,63 @@ function ChangePasswordInline({ client, onUpdate }) {
   );
 }
 
+// ─── PERFIL DEL CLIENTE (fusionado en la tab APOLLO/HERMES) ───────────────────
+function PerfilClienteBloque({ client, nicheLabel, onUpdate }) {
+  return (
+          <div>
+            <HermesProgressBar client={client} onUpdate={onUpdate} readOnly={false} />
+            <div className="card">
+              <div className="card-title">Información del cliente</div>
+              <div className="grid2">
+                <div>
+                  {[["Negocio", client.name], ["Representante", client.representante], ["Producto/Servicio", client.producto], ["Teléfono", client.telefono], ["Email", client.email], ["Dirección", client.direccion]].map(([l, v]) => (
+                    <div key={l} className="info-row">
+                      <span className="info-label">{l}</span>
+                      <span>{v || <span style={{ color: "var(--muted)" }}>—</span>}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  {[["Usuario", client.username], ["Nicho", nicheLabel]].map(([l, v]) => (
+                    <div key={l} className="info-row">
+                      <span className="info-label">{l}</span>
+                      <span>{v}</span>
+                    </div>
+                  ))}
+                  <ChangePasswordInline client={client} onUpdate={onUpdate} />
+                </div>
+              </div>
+            </div>
+            {/* Cuentas y Contratos consolidados */}
+            <div className="grid2" style={{ alignItems:"start", marginTop:"1rem" }}>
+              <div>
+                <div className="sec-title" style={{ marginBottom:".75rem" }}>💳 Cuentas</div>
+                <CuentasPanel client={client} onUpdate={onUpdate} readOnly={false} />
+              </div>
+              <div>
+                <div className="sec-title" style={{ marginBottom:".75rem" }}>📄 Contratos</div>
+                <ContratosPanel client={client} onUpdate={onUpdate} />
+              </div>
+            </div>
+            {/* Historial: misiones + antecedentes — fusionado en Perfil */}
+            <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+              <MisionesPanel client={client} onUpdate={onUpdate} />
+              <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+                <AntecedentesPanel client={client} onUpdate={onUpdate} readOnly={false} />
+              </div>
+            </div>
+          </div>
+  );
+}
+
 function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
   const [tab, setTab] = useState(() => {
-    try { return sessionStorage.getItem("tp_clientTab") || "info"; } catch { return "info"; }
+    // "info" y "facebook" ya no existen (fusionadas en hermes y metricas)
+    const OBSOLETAS = ["info", "facebook"];
+    try {
+      const t = sessionStorage.getItem("tp_clientTab");
+      return (!t || OBSOLETAS.includes(t)) ? "hermes" : t;
+    } catch { return "hermes"; }
   });
   useEffect(() => {
     try { sessionStorage.setItem("tp_clientTab", tab); } catch {}
@@ -11296,55 +11371,18 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["info", "hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "tiktok", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "facebook", "telegram", "bot"].map(t2 => (
+          {["hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "tiktok", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "telegram", "bot"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "info" ? "👤 Perfil" : t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "📘 Métricas FB" : t2 === "tiktok" ? "🎵 Métricas TikTok" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "facebook" ? "📘 Facebook" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
+              {t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "📘 Métricas FB" : t2 === "tiktok" ? "🎵 Métricas TikTok" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
             </button>
           ))}
         </div>
-        {tab === "hermes" && <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />}
-        {tab === "info" && (
+        {tab === "hermes" && (
           <div>
-            <HermesProgressBar client={client} onUpdate={handleUpdate} readOnly={false} />
-            <div className="card">
-              <div className="card-title">Información del cliente</div>
-              <div className="grid2">
-                <div>
-                  {[["Negocio", client.name], ["Representante", client.representante], ["Producto/Servicio", client.producto], ["Teléfono", client.telefono], ["Email", client.email], ["Dirección", client.direccion]].map(([l, v]) => (
-                    <div key={l} className="info-row">
-                      <span className="info-label">{l}</span>
-                      <span>{v || <span style={{ color: "var(--muted)" }}>—</span>}</span>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  {[["Usuario", client.username], ["Nicho", nicheLabel]].map(([l, v]) => (
-                    <div key={l} className="info-row">
-                      <span className="info-label">{l}</span>
-                      <span>{v}</span>
-                    </div>
-                  ))}
-                  <ChangePasswordInline client={client} onUpdate={handleUpdate} />
-                </div>
-              </div>
-            </div>
-            {/* Cuentas y Contratos consolidados */}
-            <div className="grid2" style={{ alignItems:"start", marginTop:"1rem" }}>
-              <div>
-                <div className="sec-title" style={{ marginBottom:".75rem" }}>💳 Cuentas</div>
-                <CuentasPanel client={client} onUpdate={handleUpdate} readOnly={false} />
-              </div>
-              <div>
-                <div className="sec-title" style={{ marginBottom:".75rem" }}>📄 Contratos</div>
-                <ContratosPanel client={client} onUpdate={handleUpdate} />
-              </div>
-            </div>
-            {/* Historial: misiones + antecedentes — fusionado en Perfil */}
-            <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
-              <MisionesPanel client={client} onUpdate={handleUpdate} />
-              <div style={{ borderTop:"1px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
-                <AntecedentesPanel client={client} onUpdate={handleUpdate} readOnly={false} />
-              </div>
+            {/* Perfil del cliente — fusionado aqui para reducir tabs */}
+            <PerfilClienteBloque client={client} nicheLabel={nicheLabel} onUpdate={handleUpdate} />
+            <div style={{ borderTop:"2px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
+              <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />
             </div>
           </div>
         )}
@@ -11365,6 +11403,11 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                 <ComparativaCplPanel key={client.id} client={client} />
               </div>
             )}
+            {/* Configuracion de Facebook Ads — fusionada aqui para reducir tabs */}
+            <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>⚙️ Configuración de Facebook Ads</div>
+              <FacebookPanel client={client} onUpdate={handleUpdate} />
+            </div>
           </div>
         )}
         {tab === "estudio" && <EstudioPanel client={client} onUpdate={handleUpdate} role="admin" />}
@@ -11381,9 +11424,6 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
         {tab === "grupos" && <GruposPanel client={client} onUpdate={handleUpdate} />}
         {tab === "captura" && <CapturaWPPanel client={client} onUpdate={handleUpdate} />}
         {tab === "calidad" && <CalidadLeadPanel client={client} onUpdate={handleUpdate} readOnly={false} />}
-        {tab === "facebook" && (
-          <FacebookPanel client={client} onUpdate={handleUpdate} />
-        )}
         {tab === "telegram" && (
           <TelegramPanel
             client={client}
