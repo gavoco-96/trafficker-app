@@ -10,6 +10,10 @@
     }
   ],
   "rewrites": [
-    { "source": "/r/:slug", "destination": "/api/r/[slug]" }
+    { "source": "/r/:slug", "destination": "/api/r/[slug]" },
+    { "source": "/privacidad", "destination": "/index.html" },
+    { "source": "/privacy", "destination": "/index.html" },
+    { "source": "/terminos", "destination": "/index.html" },
+    { "source": "/terms", "destination": "/index.html" }
   ]
 }
