@@ -79,3 +79,23 @@ export function localDateTimeStr(date = new Date()) {
 
 // Input numérico - solución definitiva con input type=number
 // Maneja su propio string interno para no perder el cursor ni el punto decimal
+
+// Filtra registros diarios por periodo (hoy, 7d, 30d, mtd, custom, etc.)
+export function filterByPeriod(records, period, from, to) {
+  const now = new Date();
+  const ago = (days) => { const d = new Date(now); d.setDate(d.getDate() - days); return d; };
+  return (records || []).filter(r => {
+    const d = new Date(r.date + "T12:00:00");
+    if (period === "custom") return (!from || d >= new Date(from + "T00:00:00")) && (!to || d <= new Date(to + "T23:59:59"));
+    if (period === "hoy")   { const h = new Date(now.toISOString().slice(0,10) + "T00:00:00"); return d >= h; }
+    if (period === "ayer")  { const a = ago(1); a.setHours(0,0,0,0); const b = new Date(a); b.setHours(23,59,59,999); return d >= a && d <= b; }
+    if (period === "2d")    return d >= ago(2);
+    if (period === "7d")    return d >= ago(7);
+    if (period === "15d")   return d >= ago(15);
+    if (period === "30d")   return d >= ago(30);
+    if (period === "mtd")   return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    if (period === "mes_ant") { const mp = new Date(now.getFullYear(), now.getMonth()-1, 1); const mf = new Date(now.getFullYear(), now.getMonth(), 0); return d >= mp && d <= mf; }
+    if (period === "90d")   return d >= ago(90);
+    return true; // "all"
+  });
+}
