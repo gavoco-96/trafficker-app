@@ -336,3 +336,114 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
   }
   return { ok:true, monoPais, monoPaisCuenta, compartidos, totalDiario, presupPorCuenta };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BITÁCORA DE CAMBIOS — endpoint /activities de la cuenta publicitaria
+// ═══════════════════════════════════════════════════════════════════════════
+// Permite responder "¿que cambio a las 3pm que hizo caer el CPL?".
+// Meta registra cada modificacion: presupuestos, pausas, creacion de anuncios,
+// cambios de puja, etc. Guarda ~180 dias de historial.
+
+// Traduce los event_type de Meta a algo legible en español.
+// La lista no es exhaustiva: lo desconocido se muestra tal cual, formateado.
+const EVENTOS_FB = {
+  update_campaign_budget: { txt: "Presupuesto de campaña modificado", icon: "💰", tipo: "presupuesto" },
+  update_ad_set_budget: { txt: "Presupuesto de conjunto modificado", icon: "💰", tipo: "presupuesto" },
+  update_campaign_run_status: { txt: "Estado de campaña", icon: "⏯️", tipo: "estado" },
+  update_ad_set_run_status: { txt: "Estado de conjunto", icon: "⏯️", tipo: "estado" },
+  update_ad_run_status: { txt: "Estado de anuncio", icon: "⏯️", tipo: "estado" },
+  create_campaign_group: { txt: "Campaña creada", icon: "➕", tipo: "creacion" },
+  create_campaign: { txt: "Conjunto creado", icon: "➕", tipo: "creacion" },
+  create_ad: { txt: "Anuncio creado", icon: "➕", tipo: "creacion" },
+  update_ad_set_bid: { txt: "Puja modificada", icon: "🎯", tipo: "puja" },
+  update_ad_set_bidding: { txt: "Estrategia de puja modificada", icon: "🎯", tipo: "puja" },
+  update_ad_set_target_spec: { txt: "Segmentación modificada", icon: "👥", tipo: "segmentacion" },
+  update_ad_set_optimization_goal: { txt: "Objetivo de optimización modificado", icon: "🎯", tipo: "puja" },
+  update_ad_creative: { txt: "Creativo modificado", icon: "🖼️", tipo: "creativo" },
+  update_ad_set_duration: { txt: "Duración modificada", icon: "📅", tipo: "programacion" },
+  update_campaign_schedule: { txt: "Programación modificada", icon: "📅", tipo: "programacion" },
+  ad_account_billing_charge: { txt: "Cargo de facturación", icon: "💳", tipo: "facturacion" },
+  ad_account_reset_spend_limit: { txt: "Límite de gasto reiniciado", icon: "💳", tipo: "facturacion" },
+  update_campaign_name: { txt: "Campaña renombrada", icon: "✏️", tipo: "otro" },
+  update_ad_set_name: { txt: "Conjunto renombrado", icon: "✏️", tipo: "otro" },
+  update_ad_name: { txt: "Anuncio renombrado", icon: "✏️", tipo: "otro" },
+};
+
+export function describirEventoFB(eventType) {
+  if (!eventType) return { txt: "Cambio", icon: "•", tipo: "otro" };
+  if (EVENTOS_FB[eventType]) return EVENTOS_FB[eventType];
+  // Desconocido: formatear el snake_case para que al menos sea legible
+  const legible = String(eventType).replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+  return { txt: legible, icon: "•", tipo: "otro" };
+}
+
+// Consulta el registro de actividad de todas las cuentas del cliente.
+// since/until en formato YYYY-MM-DD. Devuelve eventos ordenados del mas
+// reciente al mas antiguo, con la respuesta cruda del primer lote para
+// diagnostico (los campos que expone Meta varian entre versiones).
+export async function fetchBitacoraFB(token, cuentas, since, until) {
+  const activas = (cuentas || []).filter(c => c.adAccountId);
+  if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
+
+  const eventos = [];
+  let algunError = null, algunOk = false, muestraCruda = null;
+
+  for (const cuenta of activas) {
+    try {
+      const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/activities`);
+      // Pedimos los campos documentados; si alguno no existe, Meta lo omite
+      url.searchParams.set("fields", [
+        "event_type", "event_time", "actor_name", "actor_id",
+        "object_id", "object_name", "object_type",
+        "extra_data", "translated_event_type",
+      ].join(","));
+      url.searchParams.set("since", since);
+      url.searchParams.set("until", until);
+      url.searchParams.set("limit", "200");
+      url.searchParams.set("access_token", token);
+
+      let next = url.toString(), lote = 0;
+      while (next && lote < 15) { // tope de seguridad
+        const json = await fetch(next).then(r => r.json());
+        if (json.error) { algunError = json.error; break; }
+        algunOk = true;
+        if (!muestraCruda && (json.data || []).length) muestraCruda = json.data[0];
+        for (const a of (json.data || [])) {
+          const desc = describirEventoFB(a.event_type);
+          // extra_data viene como string JSON con el antes/despues
+          let extra = null;
+          try { extra = a.extra_data ? JSON.parse(a.extra_data) : null; } catch { extra = null; }
+          eventos.push({
+            ts: a.event_time ? new Date(a.event_time).getTime() : 0,
+            fecha: a.event_time || "",
+            eventType: a.event_type || "",
+            // Meta a veces manda su propia traduccion; si existe, la preferimos
+            texto: a.translated_event_type || desc.txt,
+            icon: desc.icon,
+            tipo: desc.tipo,
+            actor: a.actor_name || "",
+            objeto: a.object_name || "",
+            objetoTipo: a.object_type || "",
+            objetoId: a.object_id || "",
+            cuenta: cuenta.nombre,
+            extra,
+          });
+        }
+        next = json.paging?.next || null;
+        lote++;
+      }
+    } catch (e) {
+      algunError = { message: e.message, code: "NETWORK" };
+      console.error("[Bitácora]", cuenta.nombre, e.message);
+    }
+  }
+
+  eventos.sort((a, b) => b.ts - a.ts);
+  return {
+    ok: algunOk || !algunError,
+    eventos,
+    salud: diagnosticarSaludFB(algunOk, algunError),
+    errorFB: algunError,
+    muestraCruda, // para el modo diagnostico
+  };
+}
