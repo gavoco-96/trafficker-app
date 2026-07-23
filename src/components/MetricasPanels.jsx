@@ -8,6 +8,7 @@ import { fmtNum, localDateStr, getCuentasFBActivas, getTokenFB, fbListo } from "
 import {
   PAISES_INFO, paisNombre, paisBandera, fetchMetricasPorNivel,
   fetchGastoPorPais, fetchPresupuestoPorPais,
+  fetchBitacoraFB, describirEventoFB,
 } from "../lib/api-facebook.js";
 
 // ─── TABLA REUTILIZABLE DE MÉTRICAS FB (sirve para campañas/conjuntos/anuncios) ─
@@ -1346,6 +1347,313 @@ export function PaisesPanel({ client, onUpdate }) {
           </div>
         </div>
       </>)}
+    </div>
+  );
+}
+
+// ─── BITÁCORA DE CAMBIOS (registro de actividad de Meta) ──────────────────────
+// Responde: "vi una caida del CPL a las 3pm, que cambio a esa hora?"
+export function BitacoraPanel({ client }) {
+  const token = getTokenFB(client);
+  const cuentas = getCuentasFBActivas(client);
+  const hayConfig = fbListo(client);
+
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); });
+  const [hasta, setHasta] = useState(localDateStr());
+  const [preset, setPreset] = useState("7d");
+  const [eventos, setEventos] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [busqueda, setBusqueda] = useState("");
+  const [cuentaFiltro, setCuentaFiltro] = useState("todas");
+  const [agrupado, setAgrupado] = useState(true);
+  const [crudo, setCrudo] = useState(null);
+  const [verCrudo, setVerCrudo] = useState(false);
+
+  function aplicarPreset(p) {
+    setPreset(p);
+    const hoy = new Date(); let d = new Date();
+    if (p === "hoy") d = hoy;
+    else if (p === "ayer") { d.setDate(d.getDate() - 1); setDesde(d.toISOString().slice(0, 10)); setHasta(d.toISOString().slice(0, 10)); return; }
+    else if (p === "7d") d.setDate(d.getDate() - 6);
+    else if (p === "30d") d.setDate(d.getDate() - 29);
+    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
+  }
+
+  async function cargar() {
+    if (!hayConfig) { setError("Configura Facebook Ads en Métricas FB para usar la bitácora."); return; }
+    setLoading(true); setError(null);
+    const r = await fetchBitacoraFB(token, cuentas, desde, hasta);
+    if (!r.ok) { setError(r.error || r.salud?.mensaje || "Error al consultar Facebook"); setLoading(false); return; }
+    setEventos(r.eventos);
+    setCrudo(r.muestraCruda);
+    setLoading(false);
+  }
+  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  // Tipos presentes en los datos, para armar los filtros
+  const TIPOS = [
+    ["todos", "Todos"], ["presupuesto", "💰 Presupuesto"], ["estado", "⏯️ Pausas/activaciones"],
+    ["creacion", "➕ Creaciones"], ["puja", "🎯 Pujas y objetivos"],
+    ["segmentacion", "👥 Segmentación"], ["creativo", "🖼️ Creativos"],
+    ["programacion", "📅 Programación"], ["facturacion", "💳 Facturación"], ["otro", "• Otros"],
+  ];
+
+  const lista = (eventos || [])
+    .filter(e => cuentaFiltro === "todas" || e.cuenta === cuentaFiltro)
+    .filter(e => filtroTipo === "todos" || e.tipo === filtroTipo)
+    .filter(e => {
+      if (!busqueda) return true;
+      const q = busqueda.toLowerCase();
+      return (e.objeto || "").toLowerCase().includes(q)
+        || (e.texto || "").toLowerCase().includes(q)
+        || (e.actor || "").toLowerCase().includes(q);
+    });
+
+  // Conteo por tipo (para mostrar en los chips)
+  const conteo = {};
+  (eventos || []).forEach(e => { conteo[e.tipo] = (conteo[e.tipo] || 0) + 1; });
+
+  // Agrupar por día y hora para lectura cronológica
+  const grupos = {};
+  lista.forEach(e => {
+    const d = new Date(e.ts);
+    const dia = localDateStr(d);
+    const hora = String(d.getHours()).padStart(2, "0") + ":00";
+    const k = `${dia}|${hora}`;
+    if (!grupos[k]) grupos[k] = [];
+    grupos[k].push(e);
+  });
+  const clavesOrdenadas = Object.keys(grupos).sort().reverse();
+
+  const nombreDia = (f) => {
+    const d = new Date(f + "T12:00:00");
+    const hoy = localDateStr();
+    const ayerD = new Date(); ayerD.setDate(ayerD.getDate() - 1);
+    if (f === hoy) return "Hoy";
+    if (f === localDateStr(ayerD)) return "Ayer";
+    return d.toLocaleDateString("es-EC", { weekday: "long", day: "numeric", month: "short" });
+  };
+
+  const colorTipo = (t) => ({
+    presupuesto: "var(--green)", estado: "var(--amber)", creacion: "var(--accent)",
+    puja: "#A855F7", segmentacion: "#EC4899", creativo: "#F59E0B",
+    programacion: "var(--accent2)", facturacion: "var(--red)",
+  }[t] || "var(--muted)");
+
+  // Muestra el antes → despues cuando extra_data lo trae
+  const CambioValor = ({ extra }) => {
+    if (!extra || typeof extra !== "object") return null;
+    const antes = extra.old_value ?? extra.old_budget ?? extra.old_status ?? extra.old;
+    const despues = extra.new_value ?? extra.new_budget ?? extra.new_status ?? extra.new;
+    if (antes === undefined && despues === undefined) return null;
+    const fmt = (v) => {
+      if (v === undefined || v === null || v === "") return "—";
+      const n = Number(v);
+      // Los presupuestos vienen en centavos
+      if (!isNaN(n) && n > 1000) return "$" + fmtNum(n / 100, 2);
+      return String(v);
+    };
+    return (
+      <span style={{ fontSize: 11, fontFamily: "var(--mono)", marginLeft: 6 }}>
+        <span style={{ color: "var(--muted)", textDecoration: "line-through" }}>{fmt(antes)}</span>
+        <span style={{ color: "var(--muted)", margin: "0 4px" }}>→</span>
+        <span style={{ color: "var(--text)", fontWeight: 700 }}>{fmt(despues)}</span>
+      </span>
+    );
+  };
+
+  function exportarCSV() {
+    const filas = [["Fecha y hora", "Tipo", "Cambio", "Objeto", "Tipo de objeto", "Autor", "Cuenta"]];
+    lista.forEach(e => filas.push([
+      new Date(e.ts).toLocaleString("es-EC"), e.tipo, e.texto,
+      e.objeto || "", e.objetoTipo || "", e.actor || "", e.cuenta || "",
+    ]));
+    const csv = filas.map(f => f.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `bitacora_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}_${desde}_${hasta}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: "1rem", padding: "1.25rem" }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>📋 Bitácora de cambios</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            Qué se modificó y cuándo — cruza con la gráfica de CPL para entender subidas o caídas
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {cuentas.length > 1 && (
+            <select value={cuentaFiltro} onChange={e => setCuentaFiltro(e.target.value)} style={{ width: "auto", fontSize: 11, padding: "3px 8px" }}>
+              <option value="todas">🏢 Todas ({cuentas.length})</option>
+              {cuentas.map(c => <option key={c.id || c.adAccountId} value={c.nombre}>{c.nombre}</option>)}
+            </select>
+          )}
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setAgrupado(v => !v)}>
+            {agrupado ? "☰ Lista simple" : "🕐 Agrupar por hora"}
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={exportarCSV} disabled={!lista.length}>📥 CSV</button>
+        </div>
+      </div>
+
+      {/* Rango */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <div className="period-pills">
+          {[["hoy", "Hoy"], ["ayer", "Ayer"], ["7d", "7 días"], ["30d", "30 días"]].map(([k, l]) => (
+            <button key={k} className={"pill " + (preset === k ? "active" : "")} onClick={() => { aplicarPreset(k); setTimeout(cargar, 0); }}>{l}</button>
+          ))}
+        </div>
+        <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
+        <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
+        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading || !hayConfig}>
+          {loading ? "⟳ Consultando..." : "🔄 Actualizar"}
+        </button>
+      </div>
+
+      {/* Filtros por tipo */}
+      {eventos && eventos.length > 0 && (
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
+          {TIPOS.filter(([k]) => k === "todos" || conteo[k]).map(([k, l]) => (
+            <button key={k} onClick={() => setFiltroTipo(k)}
+              style={{
+                fontSize: 10, padding: "3px 9px", borderRadius: 12, cursor: "pointer",
+                border: filtroTipo === k ? "1px solid var(--accent)" : "1px solid var(--border)",
+                background: filtroTipo === k ? "rgba(77,159,255,.12)" : "transparent",
+                color: filtroTipo === k ? "var(--accent)" : "var(--muted)",
+                fontWeight: filtroTipo === k ? 700 : 400,
+              }}>
+              {l} {k === "todos" ? `(${eventos.length})` : `(${conteo[k]})`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Búsqueda */}
+      {eventos && eventos.length > 0 && (
+        <div style={{ position: "relative", maxWidth: 320, marginBottom: 12 }}>
+          <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            placeholder="Buscar campaña, anuncio o autor..." style={{ width: "100%", paddingLeft: 30, fontSize: 12 }} />
+          <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 13 }}>🔍</span>
+        </div>
+      )}
+
+      {error && <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, border: "1px solid var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
+
+      {/* Contenido */}
+      {!hayConfig ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          Configura Facebook Ads en Métricas FB para usar la bitácora.
+        </div>
+      ) : loading && !eventos ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando el registro de actividad...</div>
+      ) : !lista.length ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          {eventos && eventos.length ? "Sin cambios que coincidan con los filtros." : "Sin cambios registrados en este rango."}
+        </div>
+      ) : agrupado ? (
+        // ── Vista agrupada por día y hora ──
+        <div style={{ maxHeight: 520, overflowY: "auto" }}>
+          {clavesOrdenadas.map(k => {
+            const [dia, hora] = k.split("|");
+            const evs = grupos[k];
+            return (
+              <div key={k} style={{ marginBottom: 14 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 6,
+                  position: "sticky", top: 0, background: "var(--surface)", paddingBottom: 4, zIndex: 1,
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, textTransform: "capitalize" }}>{nombreDia(dia)}</span>
+                  <span style={{ fontSize: 13, fontFamily: "var(--mono)", fontWeight: 700, color: "var(--accent)" }}>{hora}</span>
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}>· {evs.length} cambio{evs.length !== 1 ? "s" : ""}</span>
+                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                </div>
+                {evs.map((e, i) => (
+                  <div key={i} style={{
+                    display: "flex", gap: 8, padding: "6px 10px", borderRadius: 8,
+                    background: i % 2 ? "transparent" : "var(--surface2)", marginBottom: 2, alignItems: "flex-start",
+                  }}>
+                    <span style={{ fontSize: 13, flexShrink: 0 }}>{e.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 4 }}>
+                        <span style={{ color: colorTipo(e.tipo), fontWeight: 600 }}>{e.texto}</span>
+                        <CambioValor extra={e.extra} />
+                      </div>
+                      {e.objeto && (
+                        <div style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {e.objetoTipo && <span style={{ opacity: .7 }}>{e.objetoTipo}: </span>}{e.objeto}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0, fontSize: 10, color: "var(--muted)" }}>
+                      <div style={{ fontFamily: "var(--mono)" }}>{new Date(e.ts).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}</div>
+                      {e.actor && <div style={{ opacity: .7 }}>{e.actor}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        // ── Vista de lista simple (tabla) ──
+        <div style={{ maxHeight: 520, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+          <table className="tbl" style={{ width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Fecha y hora</th>
+                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Cambio</th>
+                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Objeto</th>
+                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Autor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map((e, i) => (
+                <tr key={i}>
+                  <td style={{ whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 11 }}>
+                    {new Date(e.ts).toLocaleString("es-EC", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </td>
+                  <td>
+                    <span style={{ marginRight: 5 }}>{e.icon}</span>
+                    <span style={{ color: colorTipo(e.tipo) }}>{e.texto}</span>
+                    <CambioValor extra={e.extra} />
+                  </td>
+                  <td style={{ maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={e.objeto}>
+                    {e.objeto || <span style={{ color: "var(--border)" }}>—</span>}
+                  </td>
+                  <td style={{ fontSize: 11, color: "var(--muted)" }}>{e.actor || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Diagnóstico: respuesta cruda de la API */}
+      {crudo && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, color: "var(--muted)" }} onClick={() => setVerCrudo(v => !v)}>
+            {verCrudo ? "▼" : "▶"} Ver respuesta cruda de la API (diagnóstico)
+          </button>
+          {verCrudo && (
+            <pre style={{
+              marginTop: 8, padding: 10, background: "var(--surface2)", borderRadius: 8,
+              fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 200,
+            }}>{JSON.stringify(crudo, null, 2)}</pre>
+          )}
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
+        Meta conserva el registro de actividad aproximadamente 180 días. Los cambios aparecen
+        con la hora de la cuenta publicitaria.
+      </div>
     </div>
   );
 }
