@@ -1352,52 +1352,78 @@ export function PaisesPanel({ client, onUpdate }) {
 }
 
 // ─── BITÁCORA DE CAMBIOS (registro de actividad de Meta) ──────────────────────
-// Responde: "vi una caida del CPL a las 3pm, que cambio a esa hora?"
+// Responde: "vi una caida del CPL a las 3pm, que cambio a esa hora?".
+// Optimizada para no pesar: no carga sola, trae maximo 300 eventos y solo
+// pinta 50 a la vez (el resto con "ver mas").
 export function BitacoraPanel({ client }) {
   const token = getTokenFB(client);
   const cuentas = getCuentasFBActivas(client);
   const hayConfig = fbListo(client);
 
+  const [abierto, setAbierto] = useState(false);   // colapsado por defecto
   const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("7d");
   const [eventos, setEventos] = useState(null);
+  const [truncado, setTruncado] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [filtroTipo, setFiltroTipo] = useState("todos");
   const [busqueda, setBusqueda] = useState("");
   const [cuentaFiltro, setCuentaFiltro] = useState("todas");
-  const [agrupado, setAgrupado] = useState(true);
+  const [vista, setVista] = useState("compacta"); // compacta | horas | tabla
+  const [limite, setLimite] = useState(50);       // cuantos pintar
   const [crudo, setCrudo] = useState(null);
   const [verCrudo, setVerCrudo] = useState(false);
 
   function aplicarPreset(p) {
     setPreset(p);
-    const hoy = new Date(); let d = new Date();
+    const hoy = new Date();
+    if (p === "ayer") {
+      const d = new Date(); d.setDate(d.getDate() - 1);
+      const s = d.toISOString().slice(0, 10);
+      setDesde(s); setHasta(s);
+      return;
+    }
+    let d = new Date();
     if (p === "hoy") d = hoy;
-    else if (p === "ayer") { d.setDate(d.getDate() - 1); setDesde(d.toISOString().slice(0, 10)); setHasta(d.toISOString().slice(0, 10)); return; }
     else if (p === "7d") d.setDate(d.getDate() - 6);
     else if (p === "30d") d.setDate(d.getDate() - 29);
-    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
+    setDesde(d.toISOString().slice(0, 10));
+    setHasta(hoy.toISOString().slice(0, 10));
   }
 
-  async function cargar() {
+  async function cargar(rangoDesde = desde, rangoHasta = hasta) {
     if (!hayConfig) { setError("Configura Facebook Ads en Métricas FB para usar la bitácora."); return; }
-    setLoading(true); setError(null);
-    const r = await fetchBitacoraFB(token, cuentas, desde, hasta);
+    setLoading(true); setError(null); setLimite(50);
+    const r = await fetchBitacoraFB(token, cuentas, rangoDesde, rangoHasta);
     if (!r.ok) { setError(r.error || r.salud?.mensaje || "Error al consultar Facebook"); setLoading(false); return; }
     setEventos(r.eventos);
+    setTruncado(!!r.truncado);
     setCrudo(r.muestraCruda);
     setLoading(false);
   }
-  useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
 
-  // Tipos presentes en los datos, para armar los filtros
+  // Al aplicar un preset queremos consultar con las fechas nuevas, no las viejas
+  function presetYCargar(p) {
+    const hoy = new Date();
+    let s, h;
+    if (p === "ayer") { const d = new Date(); d.setDate(d.getDate() - 1); s = h = d.toISOString().slice(0, 10); }
+    else if (p === "hoy") { s = h = hoy.toISOString().slice(0, 10); }
+    else {
+      const d = new Date();
+      d.setDate(d.getDate() - (p === "7d" ? 6 : 29));
+      s = d.toISOString().slice(0, 10); h = hoy.toISOString().slice(0, 10);
+    }
+    setPreset(p); setDesde(s); setHasta(h);
+    cargar(s, h);
+  }
+
   const TIPOS = [
-    ["todos", "Todos"], ["presupuesto", "💰 Presupuesto"], ["estado", "⏯️ Pausas/activaciones"],
-    ["creacion", "➕ Creaciones"], ["puja", "🎯 Pujas y objetivos"],
-    ["segmentacion", "👥 Segmentación"], ["creativo", "🖼️ Creativos"],
-    ["programacion", "📅 Programación"], ["facturacion", "💳 Facturación"], ["otro", "• Otros"],
+    ["todos", "Todos"], ["presupuesto", "💰 Presupuesto"], ["estado", "⏯️ Pausas"],
+    ["creacion", "➕ Creaciones"], ["puja", "🎯 Pujas"],
+    ["segmentacion", "👥 Público"], ["creativo", "🖼️ Creativos"],
+    ["programacion", "📅 Fechas"], ["facturacion", "💳 Pagos"], ["otro", "• Otros"],
   ];
 
   const lista = (eventos || [])
@@ -1411,29 +1437,17 @@ export function BitacoraPanel({ client }) {
         || (e.actor || "").toLowerCase().includes(q);
     });
 
-  // Conteo por tipo (para mostrar en los chips)
+  const visibles = lista.slice(0, limite);
+
   const conteo = {};
   (eventos || []).forEach(e => { conteo[e.tipo] = (conteo[e.tipo] || 0) + 1; });
 
-  // Agrupar por día y hora para lectura cronológica
-  const grupos = {};
-  lista.forEach(e => {
-    const d = new Date(e.ts);
-    const dia = localDateStr(d);
-    const hora = String(d.getHours()).padStart(2, "0") + ":00";
-    const k = `${dia}|${hora}`;
-    if (!grupos[k]) grupos[k] = [];
-    grupos[k].push(e);
-  });
-  const clavesOrdenadas = Object.keys(grupos).sort().reverse();
-
   const nombreDia = (f) => {
-    const d = new Date(f + "T12:00:00");
     const hoy = localDateStr();
     const ayerD = new Date(); ayerD.setDate(ayerD.getDate() - 1);
     if (f === hoy) return "Hoy";
     if (f === localDateStr(ayerD)) return "Ayer";
-    return d.toLocaleDateString("es-EC", { weekday: "long", day: "numeric", month: "short" });
+    return new Date(f + "T12:00:00").toLocaleDateString("es-EC", { weekday: "short", day: "numeric", month: "short" });
   };
 
   const colorTipo = (t) => ({
@@ -1442,8 +1456,8 @@ export function BitacoraPanel({ client }) {
     programacion: "var(--accent2)", facturacion: "var(--red)",
   }[t] || "var(--muted)");
 
-  // Muestra el antes → despues cuando extra_data lo trae
-  const CambioValor = ({ extra }) => {
+  // Antes → despues, cuando extra_data lo trae
+  function textoCambio(extra) {
     if (!extra || typeof extra !== "object") return null;
     const antes = extra.old_value ?? extra.old_budget ?? extra.old_status ?? extra.old;
     const despues = extra.new_value ?? extra.new_budget ?? extra.new_status ?? extra.new;
@@ -1451,24 +1465,17 @@ export function BitacoraPanel({ client }) {
     const fmt = (v) => {
       if (v === undefined || v === null || v === "") return "—";
       const n = Number(v);
-      // Los presupuestos vienen en centavos
       if (!isNaN(n) && n > 1000) return "$" + fmtNum(n / 100, 2);
       return String(v);
     };
-    return (
-      <span style={{ fontSize: 11, fontFamily: "var(--mono)", marginLeft: 6 }}>
-        <span style={{ color: "var(--muted)", textDecoration: "line-through" }}>{fmt(antes)}</span>
-        <span style={{ color: "var(--muted)", margin: "0 4px" }}>→</span>
-        <span style={{ color: "var(--text)", fontWeight: 700 }}>{fmt(despues)}</span>
-      </span>
-    );
-  };
+    return `${fmt(antes)} → ${fmt(despues)}`;
+  }
 
   function exportarCSV() {
-    const filas = [["Fecha y hora", "Tipo", "Cambio", "Objeto", "Tipo de objeto", "Autor", "Cuenta"]];
+    const filas = [["Fecha y hora", "Tipo", "Cambio", "Detalle", "Objeto", "Autor", "Cuenta"]];
     lista.forEach(e => filas.push([
       new Date(e.ts).toLocaleString("es-EC"), e.tipo, e.texto,
-      e.objeto || "", e.objetoTipo || "", e.actor || "", e.cuenta || "",
+      textoCambio(e.extra) || "", e.objeto || "", e.actor || "", e.cuenta || "",
     ]));
     const csv = filas.map(f => f.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
@@ -1478,6 +1485,25 @@ export function BitacoraPanel({ client }) {
     a.click(); URL.revokeObjectURL(url);
   }
 
+  // ── Cabecera colapsable: sin cargar nada hasta que el usuario abra ──
+  if (!abierto) {
+    return (
+      <div className="card" style={{ marginBottom: "1rem", padding: "14px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>📋 Bitácora de cambios</div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+              Qué se modificó y cuándo — cruza con la gráfica de CPL para entender subidas o caídas
+            </div>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={() => { setAbierto(true); cargar(); }} disabled={!hayConfig}>
+            Abrir bitácora
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="card" style={{ marginBottom: "1rem", padding: "1.25rem" }}>
       {/* Header */}
@@ -1485,7 +1511,7 @@ export function BitacoraPanel({ client }) {
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>📋 Bitácora de cambios</div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-            Qué se modificó y cuándo — cruza con la gráfica de CPL para entender subidas o caídas
+            {eventos ? `${lista.length} cambio${lista.length !== 1 ? "s" : ""}${truncado ? " (tope alcanzado)" : ""}` : "Cargando..."}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -1495,164 +1521,203 @@ export function BitacoraPanel({ client }) {
               {cuentas.map(c => <option key={c.id || c.adAccountId} value={c.nombre}>{c.nombre}</option>)}
             </select>
           )}
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setAgrupado(v => !v)}>
-            {agrupado ? "☰ Lista simple" : "🕐 Agrupar por hora"}
-          </button>
           <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={exportarCSV} disabled={!lista.length}>📥 CSV</button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setAbierto(false)}>✕ Cerrar</button>
         </div>
       </div>
 
       {/* Rango */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         <div className="period-pills">
           {[["hoy", "Hoy"], ["ayer", "Ayer"], ["7d", "7 días"], ["30d", "30 días"]].map(([k, l]) => (
-            <button key={k} className={"pill " + (preset === k ? "active" : "")} onClick={() => { aplicarPreset(k); setTimeout(cargar, 0); }}>{l}</button>
+            <button key={k} className={"pill " + (preset === k ? "active" : "")} onClick={() => presetYCargar(k)}>{l}</button>
           ))}
         </div>
         <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
         <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
         <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
-        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading || !hayConfig}>
-          {loading ? "⟳ Consultando..." : "🔄 Actualizar"}
+        <button className="btn btn-primary btn-sm" onClick={() => cargar()} disabled={loading}>
+          {loading ? "⟳" : "🔄"} Actualizar
         </button>
       </div>
 
-      {/* Filtros por tipo */}
-      {eventos && eventos.length > 0 && (
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}>
+      {/* Vista + filtros */}
+      {eventos && eventos.length > 0 && (<>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+          <div className="period-pills">
+            {[["compacta", "☰ Compacta"], ["horas", "🕐 Por hora"], ["tabla", "▦ Tabla"]].map(([k, l]) => (
+              <button key={k} className={"pill " + (vista === k ? "active" : "")} onClick={() => setVista(k)}>{l}</button>
+            ))}
+          </div>
+          <div style={{ position: "relative", width: 220 }}>
+            <input type="text" value={busqueda} onChange={e => { setBusqueda(e.target.value); setLimite(50); }}
+              placeholder="Buscar..." style={{ width: "100%", paddingLeft: 28, fontSize: 12 }} />
+            <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 12 }}>🔍</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
           {TIPOS.filter(([k]) => k === "todos" || conteo[k]).map(([k, l]) => (
-            <button key={k} onClick={() => setFiltroTipo(k)}
+            <button key={k} onClick={() => { setFiltroTipo(k); setLimite(50); }}
               style={{
-                fontSize: 10, padding: "3px 9px", borderRadius: 12, cursor: "pointer",
+                fontSize: 10, padding: "2px 8px", borderRadius: 11, cursor: "pointer",
                 border: filtroTipo === k ? "1px solid var(--accent)" : "1px solid var(--border)",
                 background: filtroTipo === k ? "rgba(77,159,255,.12)" : "transparent",
                 color: filtroTipo === k ? "var(--accent)" : "var(--muted)",
                 fontWeight: filtroTipo === k ? 700 : 400,
               }}>
-              {l} {k === "todos" ? `(${eventos.length})` : `(${conteo[k]})`}
+              {l} {k === "todos" ? eventos.length : conteo[k]}
             </button>
           ))}
         </div>
-      )}
-
-      {/* Búsqueda */}
-      {eventos && eventos.length > 0 && (
-        <div style={{ position: "relative", maxWidth: 320, marginBottom: 12 }}>
-          <input type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
-            placeholder="Buscar campaña, anuncio o autor..." style={{ width: "100%", paddingLeft: 30, fontSize: 12 }} />
-          <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 13 }}>🔍</span>
-        </div>
-      )}
+      </>)}
 
       {error && <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, border: "1px solid var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
 
       {/* Contenido */}
-      {!hayConfig ? (
-        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-          Configura Facebook Ads en Métricas FB para usar la bitácora.
-        </div>
-      ) : loading && !eventos ? (
-        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando el registro de actividad...</div>
+      {loading && !eventos ? (
+        <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando el registro de actividad...</div>
       ) : !lista.length ? (
-        <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+        <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
           {eventos && eventos.length ? "Sin cambios que coincidan con los filtros." : "Sin cambios registrados en este rango."}
         </div>
-      ) : agrupado ? (
-        // ── Vista agrupada por día y hora ──
-        <div style={{ maxHeight: 520, overflowY: "auto" }}>
-          {clavesOrdenadas.map(k => {
-            const [dia, hora] = k.split("|");
-            const evs = grupos[k];
+      ) : vista === "compacta" ? (
+        // ── COMPACTA: una linea por cambio, lo mas liviano ──
+        <div style={{ maxHeight: 420, overflowY: "auto", fontSize: 12 }}>
+          {visibles.map((e, i) => {
+            const d = new Date(e.ts);
+            const cambio = textoCambio(e.extra);
             return (
-              <div key={k} style={{ marginBottom: 14 }}>
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 8, marginBottom: 6,
-                  position: "sticky", top: 0, background: "var(--surface)", paddingBottom: 4, zIndex: 1,
-                }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, textTransform: "capitalize" }}>{nombreDia(dia)}</span>
-                  <span style={{ fontSize: 13, fontFamily: "var(--mono)", fontWeight: 700, color: "var(--accent)" }}>{hora}</span>
-                  <span style={{ fontSize: 10, color: "var(--muted)" }}>· {evs.length} cambio{evs.length !== 1 ? "s" : ""}</span>
-                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                </div>
-                {evs.map((e, i) => (
-                  <div key={i} style={{
-                    display: "flex", gap: 8, padding: "6px 10px", borderRadius: 8,
-                    background: i % 2 ? "transparent" : "var(--surface2)", marginBottom: 2, alignItems: "flex-start",
-                  }}>
-                    <span style={{ fontSize: 13, flexShrink: 0 }}>{e.icon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 4 }}>
-                        <span style={{ color: colorTipo(e.tipo), fontWeight: 600 }}>{e.texto}</span>
-                        <CambioValor extra={e.extra} />
-                      </div>
-                      {e.objeto && (
-                        <div style={{ fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {e.objetoTipo && <span style={{ opacity: .7 }}>{e.objetoTipo}: </span>}{e.objeto}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0, fontSize: 10, color: "var(--muted)" }}>
-                      <div style={{ fontFamily: "var(--mono)" }}>{new Date(e.ts).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}</div>
-                      {e.actor && <div style={{ opacity: .7 }}>{e.actor}</div>}
-                    </div>
-                  </div>
-                ))}
+              <div key={i} style={{
+                display: "flex", gap: 8, padding: "4px 8px", alignItems: "baseline",
+                background: i % 2 ? "transparent" : "var(--surface2)", borderRadius: 5,
+              }}>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--muted)", flexShrink: 0, minWidth: 82 }}>
+                  {nombreDia(localDateStr(d))} {d.toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span style={{ flexShrink: 0 }}>{e.icon}</span>
+                <span style={{ color: colorTipo(e.tipo), whiteSpace: "nowrap", flexShrink: 0 }}>{e.texto}</span>
+                {cambio && <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text)", flexShrink: 0 }}>{cambio}</span>}
+                {e.objeto && (
+                  <span style={{ color: "var(--muted)", fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title={e.objeto}>
+                    · {e.objeto}
+                  </span>
+                )}
               </div>
             );
           })}
         </div>
+      ) : vista === "horas" ? (
+        // ── POR HORA: agrupada, para ir directo a la hora de una caida ──
+        (() => {
+          const grupos = {};
+          visibles.forEach(e => {
+            const d = new Date(e.ts);
+            const k = `${localDateStr(d)}|${String(d.getHours()).padStart(2, "0")}:00`;
+            if (!grupos[k]) grupos[k] = [];
+            grupos[k].push(e);
+          });
+          return (
+            <div style={{ maxHeight: 420, overflowY: "auto" }}>
+              {Object.keys(grupos).sort().reverse().map(k => {
+                const [dia, hora] = k.split("|");
+                const evs = grupos[k];
+                return (
+                  <div key={k} style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: "capitalize" }}>{nombreDia(dia)}</span>
+                      <span style={{ fontSize: 12, fontFamily: "var(--mono)", fontWeight: 700, color: "var(--accent)" }}>{hora}</span>
+                      <span style={{ fontSize: 10, color: "var(--muted)" }}>· {evs.length}</span>
+                      <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                    </div>
+                    {evs.map((e, i) => {
+                      const cambio = textoCambio(e.extra);
+                      return (
+                        <div key={i} style={{ display: "flex", gap: 7, padding: "3px 8px 3px 14px", fontSize: 12, alignItems: "baseline" }}>
+                          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
+                            {new Date(e.ts).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <span style={{ flexShrink: 0 }}>{e.icon}</span>
+                          <span style={{ color: colorTipo(e.tipo), flexShrink: 0 }}>{e.texto}</span>
+                          {cambio && <span style={{ fontFamily: "var(--mono)", fontSize: 10, flexShrink: 0 }}>{cambio}</span>}
+                          {e.objeto && <span style={{ color: "var(--muted)", fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }} title={e.objeto}>· {e.objeto}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
       ) : (
-        // ── Vista de lista simple (tabla) ──
-        <div style={{ maxHeight: 520, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+        // ── TABLA ──
+        <div style={{ maxHeight: 420, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
           <table className="tbl" style={{ width: "100%", fontSize: 12 }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Fecha y hora</th>
+                <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Fecha</th>
                 <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Cambio</th>
                 <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Objeto</th>
                 <th style={{ position: "sticky", top: 0, background: "var(--surface)" }}>Autor</th>
               </tr>
             </thead>
             <tbody>
-              {lista.map((e, i) => (
-                <tr key={i}>
-                  <td style={{ whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 11 }}>
-                    {new Date(e.ts).toLocaleString("es-EC", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                  </td>
-                  <td>
-                    <span style={{ marginRight: 5 }}>{e.icon}</span>
-                    <span style={{ color: colorTipo(e.tipo) }}>{e.texto}</span>
-                    <CambioValor extra={e.extra} />
-                  </td>
-                  <td style={{ maxWidth: 280, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={e.objeto}>
-                    {e.objeto || <span style={{ color: "var(--border)" }}>—</span>}
-                  </td>
-                  <td style={{ fontSize: 11, color: "var(--muted)" }}>{e.actor || "—"}</td>
-                </tr>
-              ))}
+              {visibles.map((e, i) => {
+                const cambio = textoCambio(e.extra);
+                return (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: "nowrap", fontFamily: "var(--mono)", fontSize: 11 }}>
+                      {new Date(e.ts).toLocaleString("es-EC", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td>
+                      <span style={{ marginRight: 4 }}>{e.icon}</span>
+                      <span style={{ color: colorTipo(e.tipo) }}>{e.texto}</span>
+                      {cambio && <span style={{ fontFamily: "var(--mono)", fontSize: 10, marginLeft: 6 }}>{cambio}</span>}
+                    </td>
+                    <td style={{ maxWidth: 240, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={e.objeto}>
+                      {e.objeto || <span style={{ color: "var(--border)" }}>—</span>}
+                    </td>
+                    <td style={{ fontSize: 11, color: "var(--muted)" }}>{e.actor || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Diagnóstico: respuesta cruda de la API */}
+      {/* Ver más */}
+      {lista.length > visibles.length && (
+        <div style={{ textAlign: "center", marginTop: 10 }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setLimite(l => l + 100)}>
+            Ver más ({lista.length - visibles.length} restantes)
+          </button>
+        </div>
+      )}
+
+      {truncado && (
+        <div style={{ fontSize: 10, color: "var(--amber)", marginTop: 8, textAlign: "center" }}>
+          ⚠️ Se alcanzó el tope de 300 cambios. Acota el rango de fechas para ver el resto.
+        </div>
+      )}
+
+      {/* Diagnóstico */}
       {crudo && (
-        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
           <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, color: "var(--muted)" }} onClick={() => setVerCrudo(v => !v)}>
-            {verCrudo ? "▼" : "▶"} Ver respuesta cruda de la API (diagnóstico)
+            {verCrudo ? "▼" : "▶"} Respuesta cruda de la API (diagnóstico)
           </button>
           {verCrudo && (
-            <pre style={{
-              marginTop: 8, padding: 10, background: "var(--surface2)", borderRadius: 8,
-              fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 200,
-            }}>{JSON.stringify(crudo, null, 2)}</pre>
+            <pre style={{ marginTop: 6, padding: 9, background: "var(--surface2)", borderRadius: 7, fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 180 }}>
+              {JSON.stringify(crudo, null, 2)}
+            </pre>
           )}
         </div>
       )}
 
-      <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
-        Meta conserva el registro de actividad aproximadamente 180 días. Los cambios aparecen
-        con la hora de la cuenta publicitaria.
+      <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 8 }}>
+        Meta conserva el registro aproximadamente 180 días.
       </div>
     </div>
   );
