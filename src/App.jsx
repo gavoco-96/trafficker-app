@@ -11165,9 +11165,10 @@ function ChangePasswordInline({ client, onUpdate }) {
 
 // ─── PERFIL DEL CLIENTE (fusionado en la tab APOLLO/HERMES) ───────────────────
 function PerfilClienteBloque({ client, nicheLabel, onUpdate }) {
+  // Nota: la barra de progreso NO va aqui — ya la muestra HermesAdminView
+  // al inicio de la tab, y duplicarla confunde.
   return (
           <div>
-            <HermesProgressBar client={client} onUpdate={onUpdate} readOnly={false} />
             <div className="card">
               <div className="card-title">Información del cliente</div>
               <div className="grid2">
