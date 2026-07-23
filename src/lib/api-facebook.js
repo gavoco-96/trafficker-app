@@ -381,14 +381,28 @@ export function describirEventoFB(eventType) {
 // since/until en formato YYYY-MM-DD. Devuelve eventos ordenados del mas
 // reciente al mas antiguo, con la respuesta cruda del primer lote para
 // diagnostico (los campos que expone Meta varian entre versiones).
-export async function fetchBitacoraFB(token, cuentas, since, until) {
+export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
   const activas = (cuentas || []).filter(c => c.adAccountId);
   if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
 
+  // Tope de eventos a traer. Evita cargar miles de registros y volver
+  // pesada la vista; el usuario puede pedir mas si lo necesita.
+  const maxEventos = opts.maxEventos || 300;
+  const maxLotes = opts.maxLotes || 4;
+
+  // IMPORTANTE: /activities trata `until` como EXCLUSIVO. Si since==until
+  // (ej. filtro "Ayer") el rango queda vacio. Sumamos un dia al until.
+  const untilExc = (() => {
+    const d = new Date(until + "T12:00:00");
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+
   const eventos = [];
-  let algunError = null, algunOk = false, muestraCruda = null;
+  let algunError = null, algunOk = false, muestraCruda = null, truncado = false;
 
   for (const cuenta of activas) {
+    if (eventos.length >= maxEventos) { truncado = true; break; }
     try {
       const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/activities`);
       // Pedimos los campos documentados; si alguno no existe, Meta lo omite
@@ -398,12 +412,13 @@ export async function fetchBitacoraFB(token, cuentas, since, until) {
         "extra_data", "translated_event_type",
       ].join(","));
       url.searchParams.set("since", since);
-      url.searchParams.set("until", until);
-      url.searchParams.set("limit", "200");
+      url.searchParams.set("until", untilExc);
+      url.searchParams.set("limit", "100");
       url.searchParams.set("access_token", token);
 
       let next = url.toString(), lote = 0;
-      while (next && lote < 15) { // tope de seguridad
+      while (next && lote < maxLotes) {
+        if (eventos.length >= maxEventos) { truncado = true; break; }
         const json = await fetch(next).then(r => r.json());
         if (json.error) { algunError = json.error; break; }
         algunOk = true;
@@ -441,7 +456,8 @@ export async function fetchBitacoraFB(token, cuentas, since, until) {
   eventos.sort((a, b) => b.ts - a.ts);
   return {
     ok: algunOk || !algunError,
-    eventos,
+    eventos: eventos.slice(0, maxEventos),
+    truncado, // true si se alcanzo el tope (hay mas cambios sin traer)
     salud: diagnosticarSaludFB(algunOk, algunError),
     errorFB: algunError,
     muestraCruda, // para el modo diagnostico
