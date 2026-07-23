@@ -4452,9 +4452,11 @@ function exportarTabla(headers, rows, nombreArchivo, tipo) {
 
 const LEGAL_TITULAR = "Jorge Falcones";
 const LEGAL_MARCA = "Traffiker Pro";
+const LEGAL_EMPRESA = "Advantagestrat";
 const LEGAL_CONTACTO = "admin@trafficker-pro.com";
 const LEGAL_DOMINIO = "trafficker-pro.com";
 const LEGAL_VIGENCIA = "23 de julio de 2026";
+const LEGAL_ANIO = new Date().getFullYear();
 
 function LegalModal({ tipo, onClose }) {
   return (
@@ -4503,10 +4505,10 @@ function LegalContenido({ tipo, onClose }) {
           {esPriv ? (
             <>
               <P>
-                Esta Política de Privacidad describe cómo {LEGAL_MARCA}, operado por {LEGAL_TITULAR}
-                ("nosotros", "la plataforma"), recopila, utiliza, almacena y protege la información
-                cuando usted utiliza nuestro servicio de análisis y gestión de campañas publicitarias
-                disponible en {LEGAL_DOMINIO}.
+                Esta Política de Privacidad describe cómo {LEGAL_MARCA}, marca registrada de
+                {" "}{LEGAL_EMPRESA} y operada por {LEGAL_TITULAR} ("nosotros", "la plataforma"),
+                recopila, utiliza, almacena y protege la información cuando usted utiliza nuestro
+                servicio de análisis y gestión de campañas publicitarias disponible en {LEGAL_DOMINIO}.
               </P>
 
               <H>1. Información que recopilamos</H>
@@ -4612,8 +4614,9 @@ function LegalContenido({ tipo, onClose }) {
             <>
               <P>
                 Estos Términos de Servicio regulan el acceso y uso de {LEGAL_MARCA} ("la plataforma"),
-                operada por {LEGAL_TITULAR}. Al utilizar el servicio, usted acepta estos términos en su
-                totalidad. Si no está de acuerdo, no debe utilizar la plataforma.
+                marca registrada de {LEGAL_EMPRESA} y operada por {LEGAL_TITULAR}. Al utilizar el
+                servicio, usted acepta estos términos en su totalidad. Si no está de acuerdo, no debe
+                utilizar la plataforma.
               </P>
 
               <H>1. Descripción del servicio</H>
@@ -4683,9 +4686,16 @@ function LegalContenido({ tipo, onClose }) {
 
               <H>7. Propiedad intelectual</H>
               <P>
-                El software, diseño, marca y documentación de {LEGAL_MARCA} son propiedad de
-                {" "}{LEGAL_TITULAR}. Estos términos no le otorgan derechos sobre la propiedad intelectual
-                de la plataforma más allá del derecho de uso conforme a lo aquí establecido.
+                <b>{LEGAL_MARCA}®</b> es una marca registrada de {LEGAL_EMPRESA}. El software, código
+                fuente, diseño de interfaz, arquitectura, documentación, nombre comercial y elementos
+                gráficos de la plataforma son propiedad exclusiva de {LEGAL_EMPRESA} y se encuentran
+                protegidos por la legislación de propiedad intelectual aplicable.
+              </P>
+              <P>
+                Estos términos no le otorgan derechos sobre la propiedad intelectual de la plataforma
+                más allá del derecho de uso limitado, personal y revocable conforme a lo aquí establecido.
+                Queda prohibida la reproducción, distribución, modificación, descompilación o creación de
+                obras derivadas sin autorización previa y por escrito de {LEGAL_EMPRESA}.
               </P>
               <P>
                 Los datos de sus campañas y los contenidos que usted registra permanecen bajo su propiedad.
@@ -4732,11 +4742,17 @@ function LegalContenido({ tipo, onClose }) {
             </>
           )}
 
-          <div style={{ marginTop: 24, paddingTop: 14, borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--muted)" }}>
-            {LEGAL_MARCA} · {LEGAL_TITULAR} · {LEGAL_CONTACTO}
+          <div style={{ marginTop: 24, paddingTop: 14, borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }}>
+            <b>{LEGAL_MARCA}®</b> es una marca registrada de {LEGAL_EMPRESA}.
             <br />
-            Este documento describe las prácticas actuales de la plataforma. No constituye asesoría legal;
-            se recomienda su revisión por un profesional según la jurisdicción aplicable.
+            © {LEGAL_ANIO} {LEGAL_EMPRESA}. Todos los derechos reservados.
+            <br />
+            Contacto: {LEGAL_CONTACTO} · {LEGAL_DOMINIO}
+            <br /><br />
+            <span style={{ opacity: .7 }}>
+              Este documento describe las prácticas actuales de la plataforma. No constituye asesoría legal;
+              se recomienda su revisión por un profesional según la jurisdicción aplicable.
+            </span>
           </div>
         </div>
     </>
@@ -4759,6 +4775,11 @@ function LegalPagina({ tipo }) {
         <div className="card" style={{ padding: 0 }}>
           <LegalContenido tipo={tipo} />
         </div>
+        <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>
+          {LEGAL_MARCA}® es una marca registrada de {LEGAL_EMPRESA}
+          <br />
+          © {LEGAL_ANIO} {LEGAL_EMPRESA} · Todos los derechos reservados
+        </div>
       </div>
     </div>
   );
@@ -4773,10 +4794,18 @@ function LegalFooter() {
   };
   return (
     <>
-      <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-        <button style={linkStyle} onClick={() => setModal("privacidad")}>Privacidad</button>
-        <span style={{ color: "var(--border)", fontSize: 10 }}>·</span>
-        <button style={linkStyle} onClick={() => setModal("terminos")}>Términos</button>
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+          <button style={linkStyle} onClick={() => setModal("privacidad")}>Privacidad</button>
+          <span style={{ color: "var(--border)", fontSize: 10 }}>·</span>
+          <button style={linkStyle} onClick={() => setModal("terminos")}>Términos</button>
+        </div>
+        {/* Marca de agua: propiedad y derechos reservados */}
+        <div style={{ textAlign: "center", marginTop: 7, fontSize: 9, lineHeight: 1.5, color: "var(--muted)", opacity: .55 }}>
+          {LEGAL_MARCA}® es una marca registrada de {LEGAL_EMPRESA}
+          <br />
+          © {LEGAL_ANIO} {LEGAL_EMPRESA} · Todos los derechos reservados
+        </div>
       </div>
       {modal && <LegalModal tipo={modal} onClose={() => setModal(null)} />}
     </>
