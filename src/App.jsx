@@ -2498,7 +2498,7 @@ function ComparativaCplPanel({ client }) {
             ))}
           </div>
           <div className="period-pills">
-            {[["cplAcum", "CPL acumulado"], ["cplHora", "CPL de la hora"]].map(([k, l]) => (
+            {[["cplAcum", "CPL acumulado (real)"], ["cplHora", "CPL por hora (volátil)"]].map(([k, l]) => (
               <button key={k} className={"pill " + (metrica === k ? "active" : "")} onClick={() => setMetrica(k)}>{l}</button>
             ))}
           </div>
@@ -2612,8 +2612,8 @@ function ComparativaCplPanel({ client }) {
         )}
 
         <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
-          <strong>CPL acumulado</strong>: cómo iba el costo por lead del día hasta esa hora (así lo ves en el panel en vivo).{" "}
-          <strong>CPL de la hora</strong>: el costo solo de los leads de esa hora (útil para detectar franjas caras o baratas).
+          <strong>CPL acumulado (real)</strong>: gasto total del día ÷ leads totales hasta esa hora. Es el mismo cálculo del panel en vivo y refleja el costo real de la operación.{" "}
+          <strong>CPL por hora (volátil)</strong>: gasto de esa hora ÷ leads de esa hora. Sirve para detectar franjas caras o baratas, pero da picos extremos porque los leads no siempre llegan en la misma hora en que se gastó — no lo uses como referencia de costo real.
         </div>
       </>)}
     </div>
@@ -2631,6 +2631,8 @@ function PaisesPanel({ client, onUpdate }) {
 
   // Países principales definidos por el usuario (guardados en el perfil del cliente)
   const paisesPrincipales = client.paisesPrincipales || [];
+  // Filtro por cuenta publicitaria: "todas" = consolidado
+  const [cuentaFiltro, setCuentaFiltro] = useState("todas");
 
   // Rango de fechas
   const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); });
@@ -2699,7 +2701,22 @@ function PaisesPanel({ client, onUpdate }) {
   }
 
   // Procesar datos de gasto
-  const porPais = gasto?.porPais || {};
+  // ── Datos filtrados por cuenta ──────────────────────────────────────────
+  // Si hay una cuenta seleccionada, reconstruimos los mapas usando el cruce
+  // país×cuenta; si es "todas", usamos los consolidados.
+  const porPais = (() => {
+    if (cuentaFiltro === "todas") return gasto?.porPais || {};
+    const cruce = gasto?.porPaisCuenta || {};
+    const out = {};
+    Object.entries(cruce).forEach(([k, v]) => {
+      const [code, cta] = k.split("|");
+      if (cta !== cuentaFiltro) return;
+      if (!out[code]) out[code] = { inv:0, leads:0, impr:0, reach:0 };
+      out[code].inv += v.inv; out[code].leads += v.leads;
+      out[code].impr += v.impr || 0; out[code].reach += v.reach || 0;
+    });
+    return out;
+  })();
   const codigosConGasto = Object.keys(porPais).sort((a,b) => porPais[b].inv - porPais[a].inv);
   const totalInv = codigosConGasto.reduce((s,c)=>s+porPais[c].inv,0);
   const totalLeads = codigosConGasto.reduce((s,c)=>s+porPais[c].leads,0);
@@ -2709,10 +2726,24 @@ function PaisesPanel({ client, onUpdate }) {
   const conGastoOtros = codigosConGasto.filter(c => !paisesPrincipales.includes(c));
   const [showOtros, setShowOtros] = useState(false);
 
-  // Presupuesto
-  const monoPais = presup?.monoPais || {};
-  const compartidos = presup?.compartidos || [];
+  // Presupuesto (también filtrado por cuenta)
+  const monoPais = (() => {
+    if (cuentaFiltro === "todas") return presup?.monoPais || {};
+    const cruce = presup?.monoPaisCuenta || {};
+    const out = {};
+    Object.entries(cruce).forEach(([k, v]) => {
+      const [code, cta] = k.split("|");
+      if (cta !== cuentaFiltro) return;
+      out[code] = (out[code] || 0) + v;
+    });
+    return out;
+  })();
+  const compartidos = (presup?.compartidos || []).filter(c => cuentaFiltro === "todas" || c.cuenta === cuentaFiltro);
   const totalMonoDiario = Object.values(monoPais).reduce((s,v)=>s+v,0);
+  // Presupuesto diario total según el filtro
+  const presupDiarioVista = cuentaFiltro === "todas"
+    ? (presup?.totalDiario || 0)
+    : (presup?.presupPorCuenta?.[cuentaFiltro]?.diario || 0);
 
   const fmt = (n) => "$" + fmtNum(n, 2);
   const pct = (n) => totalInv>0 ? ((n/totalInv)*100).toFixed(1) + "%" : "—";
@@ -2746,13 +2777,14 @@ function PaisesPanel({ client, onUpdate }) {
 
   // ── Exportar el desglose por país a CSV ──
   function exportarCSV() {
-    const filas = [["Pais","Codigo","Inversion","Leads","CPL","% del total","Presupuesto diario"]];
+    const filas = [["Vista", "Pais","Codigo","Inversion","Leads","CPL","% del total","Presupuesto diario"]];
+    const vista = cuentaFiltro === "todas" ? "Consolidado" : cuentaFiltro;
     codigosConGasto.forEach(code => {
       const d = porPais[code];
       const cpl = d.leads>0 ? d.inv/d.leads : 0;
       const presDiario = monoPais[code] || 0;
       filas.push([
-        paisNombre(code), code,
+        vista, paisNombre(code), code,
         d.inv.toFixed(2), Math.round(d.leads),
         cpl>0?cpl.toFixed(2):"", totalInv>0?((d.inv/totalInv)*100).toFixed(1)+"%":"",
         presDiario>0?presDiario.toFixed(2):""
@@ -2761,7 +2793,7 @@ function PaisesPanel({ client, onUpdate }) {
     // Fila de compartidos (informativa)
     compartidos.forEach(c => {
       filas.push([
-        "[Compartido] "+c.nombre, c.paises[0]==="WW"?"Mundial":c.paises.join("+"),
+        c.cuenta || vista, "[Compartido] "+c.nombre, c.paises[0]==="WW"?"Mundial":c.paises.join("+"),
         "","","","", c.budget.toFixed(2)+" ("+c.tipo+")"
       ]);
     });
@@ -2770,7 +2802,8 @@ function PaisesPanel({ client, onUpdate }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `paises_${(client.nombre||"cliente").replace(/[^a-z0-9]/gi,"_")}_${desde}_${hasta}.csv`;
+    const sufijo = cuentaFiltro === "todas" ? "consolidado" : cuentaFiltro.replace(/[^a-z0-9]/gi,"_");
+    a.download = `presupuesto_${(client.name||client.nombre||"cliente").replace(/[^a-z0-9]/gi,"_")}_${sufijo}_${desde}_${hasta}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -2780,8 +2813,25 @@ function PaisesPanel({ client, onUpdate }) {
       {/* Header + configuración de países principales */}
       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:12}}>
         <div>
-          <div style={{fontWeight:700, fontSize:16}}>💰 Presupuesto e inversión</div>
-          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>Gasto ejecutado y presupuesto activo, por cuenta publicitaria y por país</div>
+          <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap"}}>
+            <div style={{fontWeight:700, fontSize:16}}>💰 Presupuesto e inversión</div>
+            {/* Selector de cuenta junto al título: consolidado o una cuenta */}
+            {cuentas.length > 1 && (
+              <select value={cuentaFiltro} onChange={e=>setCuentaFiltro(e.target.value)}
+                title="Ver el consolidado o filtrar por una cuenta publicitaria"
+                style={{width:"auto", fontSize:12, padding:"3px 8px",
+                  borderColor: cuentaFiltro!=="todas" ? "var(--accent)" : "var(--border)",
+                  color: cuentaFiltro!=="todas" ? "var(--accent)" : "var(--text)", fontWeight:600}}>
+                <option value="todas">🏢 Todas ({cuentas.length}) — consolidado</option>
+                {cuentas.map(c => <option key={c.id||c.adAccountId} value={c.nombre}>🏢 {c.nombre}</option>)}
+              </select>
+            )}
+          </div>
+          <div style={{fontSize:11, color:"var(--muted)", marginTop:2}}>
+            {cuentaFiltro === "todas"
+              ? "Gasto ejecutado y presupuesto activo, consolidado de todas las cuentas"
+              : `Mostrando solo la cuenta: ${cuentaFiltro}`}
+          </div>
         </div>
         <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
           <label style={{display:"flex", alignItems:"center", gap:5, fontSize:11, color:"var(--muted)", cursor:"pointer"}}>
@@ -2869,7 +2919,12 @@ function PaisesPanel({ client, onUpdate }) {
                   const pctInv = totInvC>0 ? (g.inv/totInvC)*100 : 0;
                   // Días de runway estimados con el presupuesto diario actual
                   return (
-                    <div key={n} style={{padding:"12px 14px", borderRadius:10, background:"var(--surface2)", border:"1px solid var(--border)"}}>
+                    <div key={n} onClick={()=>setCuentaFiltro(cuentaFiltro===n?"todas":n)}
+                      title={cuentaFiltro===n?"Clic para ver todas las cuentas":`Clic para filtrar solo ${n}`}
+                      style={{padding:"12px 14px", borderRadius:10, cursor:"pointer",
+                        background: cuentaFiltro===n ? "rgba(77,159,255,.08)" : "var(--surface2)",
+                        border: cuentaFiltro===n ? "1px solid var(--accent)" : "1px solid var(--border)",
+                        transition:"background .2s, border-color .2s"}}>
                       <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, gap:6}}>
                         <div style={{minWidth:0}}>
                           <div style={{fontWeight:700, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>🏢 {n}</div>
@@ -2991,7 +3046,7 @@ function PaisesPanel({ client, onUpdate }) {
           <div>
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:10}}>
               <div style={{fontWeight:700, fontSize:14}}>📋 Presupuesto activo</div>
-              <div style={{fontSize:11, color:"var(--muted)"}}>Diario: <span style={{fontFamily:"var(--mono)", fontWeight:700, color:"var(--text)"}}>{fmt(presup?.totalDiario||0)}</span></div>
+              <div style={{fontSize:11, color:"var(--muted)"}}>Diario: <span style={{fontFamily:"var(--mono)", fontWeight:700, color:"var(--text)"}}>{fmt(presupDiarioVista)}</span>{cuentaFiltro!=="todas" && <span style={{marginLeft:5,color:"var(--accent)"}}>({cuentaFiltro})</span>}</div>
             </div>
             <div style={{fontSize:10, color:"var(--muted)", marginBottom:10}}>Lo que está programado ahora en adsets activos, según a qué países apuntan</div>
 
@@ -7513,7 +7568,8 @@ async function fetchGastoPorPais(token, cuentas, since, until) {
   const activas = (cuentas||[]).filter(c => c.adAccountId);
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
   const porPais = {};
-  const porCuenta = {}; // nombre cuenta → { inv, leads, impr, adAccountId }
+  const porCuenta = {};      // nombre cuenta → { inv, leads, impr, adAccountId }
+  const porPaisCuenta = {};  // "CODE|cuenta" → { inv, leads } para filtrar por cuenta
   const LEAD_TYPES = ["offsite_complete_registration_add_meta_leads","omni_complete_registration","complete_registration","offsite_conversion.fb_pixel_complete_registration","offsite_conversion.fb_pixel_lead","lead"];
   const LEAD_EXCLUIR = new Set(["onsite_conversion.lead","onsite_web_lead","offsite_search_add_meta_leads","offsite_content_view_add_meta_leads"]);
   for (const cuenta of activas) {
@@ -7540,18 +7596,25 @@ async function fetchGastoPorPais(token, cuentas, since, until) {
           if (!porCuenta[cuenta.nombre]) porCuenta[cuenta.nombre] = { inv:0, leads:0, impr:0, adAccountId: cuenta.adAccountId };
           porCuenta[cuenta.nombre].inv  += _inv;
           porCuenta[cuenta.nombre].impr += parseFloat(d.impressions)||0;
+          // Cruce país × cuenta: permite ver "cuánto gasté en México, solo en Perú"
+          const kPC = `${code}|${cuenta.nombre}`;
+          if (!porPaisCuenta[kPC]) porPaisCuenta[kPC] = { inv:0, leads:0, impr:0, reach:0 };
+          porPaisCuenta[kPC].inv   += _inv;
+          porPaisCuenta[kPC].impr  += parseFloat(d.impressions)||0;
+          porPaisCuenta[kPC].reach += parseFloat(d.reach)||0;
           const acts = d.actions||[];
           let nl = 0;
           for (const t of LEAD_TYPES) { if(LEAD_EXCLUIR.has(t))continue; const a=acts.find(x=>x.action_type===t); if(a){const v=parseFloat(a.value)||0;if(v>nl)nl=v;} }
           if (nl===0) acts.filter(x=>!LEAD_EXCLUIR.has(x.action_type)&&x.action_type?.includes("registration")).forEach(x=>{const v=parseFloat(x.value)||0;if(v>nl)nl=v;});
           porPais[code].leads += nl;
           if (porCuenta[cuenta.nombre]) porCuenta[cuenta.nombre].leads += nl;
+          if (porPaisCuenta[kPC]) porPaisCuenta[kPC].leads += nl;
         }
         next = json.paging?.next || null;
       }
     } catch(e) { console.error("[Países]", cuenta.nombre, e.message); }
   }
-  return { ok:true, porPais, porCuenta };
+  return { ok:true, porPais, porCuenta, porPaisCuenta };
 }
 
 // ── PRESUPUESTO PROGRAMADO por país: lee adsets activos + su targeting ──
@@ -7563,6 +7626,7 @@ async function fetchPresupuestoPorPais(token, cuentas) {
   if (!activas.length) return { ok:false, error:"Sin cuentas configuradas" };
 
   const monoPais = {};        // CODE → presupuesto diario (solo de un país)
+  const monoPaisCuenta = {};  // "CODE|cuenta" → presupuesto (filtro por cuenta)
   const compartidos = [];     // multi-país / mundial (no divisible por país)
   const presupPorCuenta = {}; // nombre cuenta → { diario, adsets, campanasCBO, adAccountId }
   let totalDiario = 0;
@@ -7632,6 +7696,8 @@ async function fetchPresupuestoPorPais(token, cuentas) {
 
           if (paises.length === 1) {
             monoPais[paises[0]] = (monoPais[paises[0]]||0) + budget;
+            const kPC = `${paises[0]}|${cuenta.nombre}`;
+            monoPaisCuenta[kPC] = (monoPaisCuenta[kPC]||0) + budget;
           } else {
             compartidos.push({
               nombre: a.name || "(sin nombre)",
@@ -7653,6 +7719,8 @@ async function fetchPresupuestoPorPais(token, cuentas) {
         presupPorCuenta[cuenta.nombre].campanasCBO += 1;
         if (paises.length === 1) {
           monoPais[paises[0]] = (monoPais[paises[0]]||0) + budget;
+          const kPC = `${paises[0]}|${cuenta.nombre}`;
+          monoPaisCuenta[kPC] = (monoPaisCuenta[kPC]||0) + budget;
         } else {
           compartidos.push({
             nombre: info.nombre,
@@ -7664,7 +7732,7 @@ async function fetchPresupuestoPorPais(token, cuentas) {
       }
     } catch(e) { console.error("[Presup]", cuenta.nombre, e.message); }
   }
-  return { ok:true, monoPais, compartidos, totalDiario, presupPorCuenta };
+  return { ok:true, monoPais, monoPaisCuenta, compartidos, totalDiario, presupPorCuenta };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
