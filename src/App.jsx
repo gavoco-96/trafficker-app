@@ -34,7 +34,7 @@ import {
   useAutoSyncDiario,
 } from "./lib/autosync.js";
 import {
-  CampanasFBPanel, ComparativaCplPanel, PaisesPanel,
+  CampanasFBPanel, ComparativaCplPanel, PaisesPanel, BitacoraPanel,
 } from "./components/MetricasPanels.jsx";
 import { TikTokConfigPanel, TikTokMetricasPanel } from "./components/TikTokPanels.jsx";
 import {
@@ -11404,6 +11404,10 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
                 <ComparativaCplPanel key={client.id} client={client} />
               </div>
             )}
+            {/* Bitacora: que cambio y cuando (cruza con las caidas del CPL) */}
+            <div style={{ marginTop:"1.5rem" }}>
+              <BitacoraPanel key={client.id} client={client} />
+            </div>
             {/* Configuracion de Facebook Ads — fusionada aqui para reducir tabs */}
             <div style={{ marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid var(--border)" }}>
               <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>⚙️ Configuración de Facebook Ads</div>
