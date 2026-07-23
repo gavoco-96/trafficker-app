@@ -47,3 +47,7 @@ export const db = {
     } catch (e) { return { ok: false, error: e.message }; }
   }
 };
+
+// Headers para tablas auxiliares (links, wa_eventos, wa_grupos).
+// Identicos a H; se mantiene el alias porque el codigo historico lo usa asi.
+export const HL = { apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}`, "Content-Type": "application/json" };
