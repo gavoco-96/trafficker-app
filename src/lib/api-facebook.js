@@ -387,10 +387,12 @@ export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
   const activas = (cuentas || []).filter(c => c.adAccountId);
   if (!activas.length) return { ok: false, error: "Sin cuentas configuradas" };
 
-  // Tope de eventos a traer. Evita cargar miles de registros y volver
-  // pesada la vista; el usuario puede pedir mas si lo necesita.
-  const maxEventos = opts.maxEventos || 300;
-  const maxLotes = opts.maxLotes || 4;
+  // Tope de eventos a traer. Debe ser alto: en cuentas activas un solo dia
+  // puede generar cientos de cambios, y si cortamos antes se pierden las
+  // horas mas antiguas del rango (los eventos vienen del mas reciente).
+  // La vista solo pinta 50 a la vez, asi que el peso real esta acotado ahi.
+  const maxEventos = opts.maxEventos || 2000;
+  const maxLotes = opts.maxLotes || 25;
 
   // IMPORTANTE: /activities trata `until` como EXCLUSIVO. Si since==until
   // (ej. filtro "Ayer") el rango queda vacio. Sumamos un dia al until.
@@ -415,7 +417,7 @@ export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
       ].join(","));
       url.searchParams.set("since", since);
       url.searchParams.set("until", untilExc);
-      url.searchParams.set("limit", "100");
+      url.searchParams.set("limit", "200");
       url.searchParams.set("access_token", token);
 
       let next = url.toString(), lote = 0;
