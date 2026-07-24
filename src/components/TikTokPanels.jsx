@@ -9,7 +9,9 @@ import {
   getCuentasTT, getCuentasTTActivas, getTokenTT, ttListo,
   ttFetch, fetchMetricasTTPorNivel,
 } from "../lib/api-tiktok.js";
-import { TablaMetricasFB, SaludFBBadge } from "./MetricasPanels.jsx";
+import {
+  TablaMetricasFB, SaludFBBadge, BarraCarga, BotonCarga, SkeletonTabla,
+} from "./MetricasPanels.jsx";
 
 // ─── PANEL DE CONFIGURACIÓN DE TIKTOK ADS ─────────────────────────────────
 export function TikTokConfigPanel({ client, onUpdate, show }) {
@@ -253,7 +255,8 @@ export function TikTokMetricasPanel({ client, onUpdate }) {
         <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
         <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
         <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
-        <button className="btn btn-primary btn-sm" onClick={recargarTodo} disabled={loading || !hayConfig}>{loading ? "⟳ Consultando..." : "🔄 Actualizar"}</button>
+        <BotonCarga cargando={loading} onClick={recargarTodo} disabled={!hayConfig}
+          textoCargando="Consultando...">🔄 Actualizar</BotonCarga>
       </div>
 
       {/* Filtros + export */}
@@ -278,12 +281,18 @@ export function TikTokMetricasPanel({ client, onUpdate }) {
 
       {error && <div className="card" style={{ padding: "12px 14px", marginBottom: 12, borderColor: "var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
 
+      {/* Refrescando con datos ya en pantalla */}
+      <BarraCarga activo={loading && filasRaw.length > 0} texto="Actualizando datos..." />
+
       {!hayConfig ? (
         <div style={{ padding: 30, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
           Configura tu cuenta de TikTok Ads abajo para ver las métricas.
         </div>
       ) : loading && !filasRaw.length ? (
-        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando TikTok...</div>
+        <div>
+          <BarraCarga activo texto="Consultando TikTok Ads..." />
+          <SkeletonTabla filas={7} columnas={6} />
+        </div>
       ) : filas.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Sin datos en el rango seleccionado.</div>
       ) : (
