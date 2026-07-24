@@ -109,7 +109,7 @@ export function CampanasFBPanel({ client, onUpdate }) {
   const hayConfig = fbListo(client);
 
   const [nivel, setNivel] = useState("campaign"); // campaign | adset | ad
-  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return localDateStr(d); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("30d");
   const [busqueda, setBusqueda] = useState("");
@@ -136,7 +136,7 @@ export function CampanasFBPanel({ client, onUpdate }) {
     else if (p === "7d") d.setDate(d.getDate() - 6);
     else if (p === "30d") d.setDate(d.getDate() - 29);
     else if (p === "90d") d.setDate(d.getDate() - 89);
-    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
+    if (p !== "custom") { setDesde(localDateStr(d)); setHasta(localDateStr(hoy)); }
   }
 
   async function cargar(n = nivel, forzar = false) {
@@ -251,7 +251,7 @@ export function CampanasFBPanel({ client, onUpdate }) {
     snapshots[hoy]._meta = { desde, hasta, ts: Date.now() };
     // Retención: 180 días
     const limite = new Date(); limite.setDate(limite.getDate() - 180);
-    const limStr = limite.toISOString().slice(0, 10);
+    const limStr = localDateStr(limite);
     Object.keys(snapshots).forEach(k => { if (k < limStr) delete snapshots[k]; });
     const r = await onUpdate({ ...client, fbSnapshots: snapshots });
     client.fbSnapshots = snapshots;
@@ -490,7 +490,7 @@ export function ComparativaCplPanel({ client }) {
   // Por defecto: últimos 7 días (una semana permite decisiones sólidas)
   const [fechas, setFechas] = useState(() => {
     const out = [];
-    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); out.push(d.toISOString().slice(0, 10)); }
+    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); out.push(localDateStr(d)); }
     return out;
   });
   const [datos, setDatos] = useState({});   // fecha → { horas, totalInv, ... }
@@ -890,7 +890,7 @@ export function PaisesPanel({ client, onUpdate }) {
   const [cuentaFiltro, setCuentaFiltro] = useState("todas");
 
   // Rango de fechas
-  const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return d.toISOString().slice(0,10); });
+  const [desde, setDesde] = useState(() => { const d=new Date(); d.setDate(d.getDate()-30); return localDateStr(d); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("30d");
 
@@ -909,7 +909,7 @@ export function PaisesPanel({ client, onUpdate }) {
     else if (p === "7d") d.setDate(d.getDate()-6);
     else if (p === "30d") d.setDate(d.getDate()-29);
     else if (p === "90d") d.setDate(d.getDate()-89);
-    if (p !== "custom") { setDesde(d.toISOString().slice(0,10)); setHasta(hoy.toISOString().slice(0,10)); }
+    if (p !== "custom") { setDesde(localDateStr(d)); setHasta(localDateStr(hoy)); }
   }
 
   async function cargar() {
@@ -1361,7 +1361,7 @@ export function BitacoraPanel({ client }) {
   const hayConfig = fbListo(client);
 
   const [abierto, setAbierto] = useState(false);   // colapsado por defecto
-  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10); });
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return localDateStr(d); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("7d");
   const [eventos, setEventos] = useState(null);
@@ -1381,7 +1381,7 @@ export function BitacoraPanel({ client }) {
     const hoy = new Date();
     if (p === "ayer") {
       const d = new Date(); d.setDate(d.getDate() - 1);
-      const s = d.toISOString().slice(0, 10);
+      const s = localDateStr(d);
       setDesde(s); setHasta(s);
       return;
     }
@@ -1389,8 +1389,8 @@ export function BitacoraPanel({ client }) {
     if (p === "hoy") d = hoy;
     else if (p === "7d") d.setDate(d.getDate() - 6);
     else if (p === "30d") d.setDate(d.getDate() - 29);
-    setDesde(d.toISOString().slice(0, 10));
-    setHasta(hoy.toISOString().slice(0, 10));
+    setDesde(localDateStr(d));
+    setHasta(localDateStr(hoy));
   }
 
   async function cargar(rangoDesde = desde, rangoHasta = hasta) {
@@ -1408,12 +1408,12 @@ export function BitacoraPanel({ client }) {
   function presetYCargar(p) {
     const hoy = new Date();
     let s, h;
-    if (p === "ayer") { const d = new Date(); d.setDate(d.getDate() - 1); s = h = d.toISOString().slice(0, 10); }
-    else if (p === "hoy") { s = h = hoy.toISOString().slice(0, 10); }
+    if (p === "ayer") { const d = new Date(); d.setDate(d.getDate() - 1); s = h = localDateStr(d); }
+    else if (p === "hoy") { s = h = localDateStr(hoy); }
     else {
       const d = new Date();
       d.setDate(d.getDate() - (p === "7d" ? 6 : 29));
-      s = d.toISOString().slice(0, 10); h = hoy.toISOString().slice(0, 10);
+      s = localDateStr(d); h = localDateStr(hoy);
     }
     setPreset(p); setDesde(s); setHasta(h);
     cargar(s, h);
