@@ -267,7 +267,7 @@ export function CplWAChart({ client }) {
 
   const fechaHoyISO = (() => {
     const ec = new Date(Date.now() - 5*60*60*1000);
-    return ec.toISOString().slice(0,10);
+    return localDateStr(ec);
   })();
 
   // Historial desde records.personas_wp
@@ -532,7 +532,7 @@ export function CplTradingChart({ client, onUpdate, externalPuntos }) {
     [...existing, ...nuevosPuntos].forEach(p => { mapa[p.ts] = p; });
     cplRtData[hoy] = Object.values(mapa).sort((a,b)=>a.ts-b.ts).slice(-2880);
     const limite = new Date(); limite.setDate(limite.getDate()-90);
-    Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+    Object.keys(cplRtData).forEach(k => { if(k < localDateStr(limite)) delete cplRtData[k]; });
     try {
       if (idAlGuardar !== client.id) return; // cambió de cliente: descartar
       // La tabla clients guarda todo dentro del jsonb "data" → usar db.upsert
@@ -688,7 +688,7 @@ export function CplTradingChart({ client, onUpdate, externalPuntos }) {
     const ahora = Date.now();
     const ahoraDate = new Date(ahora);
     const ayer = new Date(ahora); ayer.setDate(ayer.getDate()-1);
-    const ayerStr = ayer.toISOString().slice(0,10);
+    const ayerStr = localDateStr(ayer);
 
     // ── Ventana deslizante sincronizada ────────────────────────────────────
     // Inicio de ventana = ayer a la misma hora exacta que ahora
@@ -744,7 +744,7 @@ export function CplTradingChart({ client, onUpdate, externalPuntos }) {
   } else if (rango==="1W") {
     for (let i=6; i>=0; i--) {
       const d=new Date(); d.setDate(d.getDate()-i);
-      const ds=d.toISOString().slice(0,10);
+      const ds=localDateStr(d);
       const pts=client.cplRtData?.[ds]||[];
       if (pts.length>0) {
         const avgCpl = pts.reduce((a,p)=>a+p.cpl,0)/pts.length;
