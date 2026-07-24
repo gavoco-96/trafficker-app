@@ -136,7 +136,7 @@ export function TikTokMetricasPanel({ client, onUpdate }) {
   const hayConfig = ttListo(client);
 
   const [nivel, setNivel] = useState("campaign");
-  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return localDateStr(d); });
   const [hasta, setHasta] = useState(localDateStr());
   const [preset, setPreset] = useState("30d");
   const [busqueda, setBusqueda] = useState("");
@@ -159,7 +159,7 @@ export function TikTokMetricasPanel({ client, onUpdate }) {
     else if (p === "7d") d.setDate(d.getDate() - 6);
     else if (p === "30d") d.setDate(d.getDate() - 29);
     else if (p === "90d") d.setDate(d.getDate() - 89);
-    if (p !== "custom") { setDesde(d.toISOString().slice(0, 10)); setHasta(hoy.toISOString().slice(0, 10)); }
+    if (p !== "custom") { setDesde(localDateStr(d)); setHasta(localDateStr(hoy)); }
   }
 
   async function cargar(n = nivel, forzar = false) {
