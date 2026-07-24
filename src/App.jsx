@@ -187,7 +187,7 @@ function calcAntecedentes(form) {
 function exportClientJSON(client) {
   const blob = new Blob([JSON.stringify(client, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = `cliente_${client.name}_${new Date().toISOString().slice(0, 10)}.json`; a.click();
+  const a = document.createElement("a"); a.href = url; a.download = `cliente_${client.name}_${localDateStr(new Date())}.json`; a.click();
   URL.revokeObjectURL(url);
 }
 function exportAntecedentes(antecedentes, clientName, formato) {
@@ -585,7 +585,7 @@ function ContratosPanel({ client, onUpdate }) {
 
   function addContrato() {
     const svcs = (client.serviciosContratados || []).map(id => ({ id, nombre: SERVICIOS_DEFAULT.find(x => x.id === id)?.nombre || id, precio: "" }));
-    onUpdate({ ...client, contratos: [...contratos, { id: "ct" + Date.now(), fechaInicio: new Date().toISOString().slice(0, 10), fechaFin: "", servicios: svcs, cuotas: [{ monto: "", pagado: false, fecha: "" }, { monto: "", pagado: false, fecha: "" }], notas: "" }] });
+    onUpdate({ ...client, contratos: [...contratos, { id: "ct" + Date.now(), fechaInicio: localDateStr(new Date()), fechaFin: "", servicios: svcs, cuotas: [{ monto: "", pagado: false, fecha: "" }, { monto: "", pagado: false, fecha: "" }], notas: "" }] });
   }
 
   async function saveContrato(i, ct2) {
@@ -875,7 +875,7 @@ function exportMetricas(rows, client, formato) {
   const content = [headers, ...dataRows].map(r => r.map(v => '"' + String(v) + '"').join(sep)).join("\n");
   const blob = new Blob(["\ufeff" + content], { type: formato === "csv" ? "text/csv" : "application/vnd.ms-excel" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href = url; a.download = `metricas_${client.name}_${new Date().toISOString().slice(0,10)}.${formato}`; a.click();
+  const a = document.createElement("a"); a.href = url; a.download = `metricas_${client.name}_${localDateStr(new Date())}.${formato}`; a.click();
   URL.revokeObjectURL(url);
 }
 
@@ -2841,7 +2841,7 @@ function MetricaCard({ label, value, rawVal, color, records, campo, prefix, suff
     const csv = "Fecha," + label + "\n" + histData.map(d => d.fecha + "," + d.val).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    a.download = label.replace(/[^a-z0-9]/gi,"_") + "_" + new Date().toISOString().slice(0,10) + ".csv";
+    a.download = label.replace(/[^a-z0-9]/gi,"_") + "_" + localDateStr(new Date()) + ".csv";
     a.click();
   }
 
@@ -3635,7 +3635,7 @@ function CalendarioPanel({ client, onUpdate, readOnly, allClients }) {
         {eventos.length > 0 && (
           <div className="card" style={{ marginTop: "1rem" }}>
             <div className="card-title">Proximas citas</div>
-            {[...eventos].sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora)).filter(e => e.fecha >= hoy.toISOString().slice(0,10)).map(ev => {
+            {[...eventos].sort((a,b) => (a.fecha+a.hora).localeCompare(b.fecha+b.hora)).filter(e => e.fecha >= localDateStr(hoy)).map(ev => {
               const tipo = TIPO_AGENDA.find(t => t.id === ev.tipo);
               return (
                 <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
@@ -4480,7 +4480,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
   const [syncResult, setSyncResult] = useState(null);
   const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [syncDesde, setSyncDesde] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10);
+    const d = new Date(); d.setDate(d.getDate() - 30); return localDateStr(d);
   });
   const [syncHasta, setSyncHasta] = useState(localDateStr());
   const [form, setForm] = useState({ nombre: "", categoria: "Valor", fechaGrabacion: "", enlaceTerabox: "", alcance_pza: "", likes: "", comentarios: "", compartidos: "", guardados: "", ctr_pza: "", retencion3s: "", retencion50: "", retencionFinal: "" });
@@ -4835,7 +4835,7 @@ function BibliotecaPanel({ client, onUpdate, readOnly }) {
 function FilmakerDashboard({ filmmaker, allClients, onLogout, onUpdate }) {
   const [view, setView] = useState("agenda"); // agenda | disponibilidad
   const misClientes = allClients.filter(c => c.filmakerAsignado === filmmaker.id);
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = localDateStr(new Date());
 
   // Recopilar todas las grabaciones de sus clientes
   const grabaciones = [];
@@ -5412,7 +5412,7 @@ function AddRecordForm({ client, onSave, onCancel }) {
   const isWA = client.niche === "whatsapp";
   const isWeb = client.niche === "web";
   const isLaunch = !isWA && !isWeb;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
   const dateRef = useRef(null);
   // formRef guarda referencias directas a cada input por nombre
   const formRef = useRef({});
@@ -5586,7 +5586,7 @@ function SchedulerPanel({ client, onUpdate }) {
     const ahora = new Date(); const result = [];
     for (let i = 0; i < 14 && result.length < 3; i++) {
       const d = new Date(ahora); d.setDate(d.getDate() + i);
-      const ds = d.getDay(); const fs = d.toISOString().slice(0,10);
+      const ds = d.getDay(); const fs = localDateStr(d);
       if (!dias.includes(ds)) continue;
       if (fechaInicio && fs < fechaInicio) continue;
       if (fechaFin && fs > fechaFin) continue;
@@ -5814,9 +5814,9 @@ function FacebookPanel({ client, onUpdate }) {
   const [lastSync, setLastSync]     = useState(fbConfig.lastSync || null);
   const [syncing, setSyncing]       = useState(false);
   const [saving, setSaving]         = useState(false);
-  const [syncDate, setSyncDate]     = useState(new Date(Date.now()-86400000).toISOString().slice(0,10));
-  const [rangeFrom, setRangeFrom]   = useState(new Date(Date.now()-7*86400000).toISOString().slice(0,10));
-  const [rangeTo, setRangeTo]       = useState(new Date(Date.now()-86400000).toISOString().slice(0,10));
+  const [syncDate, setSyncDate]     = useState(localDateStr(new Date(Date.now()-86400000)));
+  const [rangeFrom, setRangeFrom]   = useState(localDateStr(new Date(Date.now()-7*86400000)));
+  const [rangeTo, setRangeTo]       = useState(localDateStr(new Date(Date.now()-86400000)));
   const [syncMode, setSyncMode]     = useState("single"); // single | range
   const [syncStatus, setSyncStatus] = useState(null);     // null | loading | ok | err
   const [syncLog, setSyncLog]       = useState([]);
@@ -5989,7 +5989,7 @@ function FacebookPanel({ client, onUpdate }) {
       let d = new Date(rangeFrom);
       const end = new Date(rangeTo);
       while (d <= end) {
-        fechas.push(d.toISOString().slice(0,10));
+        fechas.push(localDateStr(d));
         d.setDate(d.getDate()+1);
       }
       if (fechas.length > 90) return show("Máximo 90 días por rango", "err");
@@ -6257,7 +6257,7 @@ function FacebookPanel({ client, onUpdate }) {
             <input type="date" value={syncDate} onChange={e=>setSyncDate(e.target.value)}
               max={localDateStr()} style={{width:"auto"}} />
             <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(localDateStr())}>Hoy</button>
-            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(new Date(Date.now()-86400000).toISOString().slice(0,10))}>Ayer</button>
+            <button className="btn btn-ghost btn-sm" onClick={()=>setSyncDate(localDateStr(new Date(Date.now()-86400000)))}>Ayer</button>
           </div>
         ) : (
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -10953,7 +10953,7 @@ function LinkAnalytics({ link, onClose }) {
   const hoy = new Date();
   const clicksPorDia = Array.from({length:14},(_,i)=>{
     const d = new Date(hoy); d.setDate(d.getDate()-i);
-    const key = d.toISOString().slice(0,10);
+    const key = localDateStr(d);
     return { fecha: key.slice(5), count: clicks.filter(c=>c.ts?.slice(0,10)===key).length };
   }).reverse();
 
@@ -11325,7 +11325,7 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
               [...(cplRtData[hoy]||[]), ...cplPendientesRef.current].forEach(p=>{mapaP[p.ts]=p;});
               cplRtData[hoy] = Object.values(mapaP).sort((a,b)=>a.ts-b.ts).slice(-2880);
               const limite = new Date(); limite.setDate(limite.getDate()-90);
-              Object.keys(cplRtData).forEach(k => { if(k < limite.toISOString().slice(0,10)) delete cplRtData[k]; });
+              Object.keys(cplRtData).forEach(k => { if(k < localDateStr(limite)) delete cplRtData[k]; });
               // Guardia final: nunca escribir puntos en el cliente equivocado
               if (clienteIdDelCiclo !== client.id) { cplPendientesRef.current = []; return; }
               // La tabla clients guarda todo el cliente en el jsonb "data" → db.upsert
@@ -11554,7 +11554,7 @@ function ClienteWAResumenAdmin({ client }) {
   const [loading,   setLoading]   = useState(false);
   const [ultimaAct, setUltimaAct] = useState(null);
 
-  const fechaHoyISO = new Date(Date.now()-5*60*60*1000).toISOString().slice(0,10);
+  const fechaHoyISO = localDateStr(new Date(Date.now()-5*60*60*1000));
   const ultRec = (client.records||[]).slice(-1)[0];
   const gastoPrev = parseFloat(ultRec?.inversion)||0;
 
@@ -11622,7 +11622,7 @@ function ClientWelcomeScreen({ client, banners, onGoToTab, onUpdate }) {
   // Formato YYYY-MM-DD en hora Ecuador
   const fechaHoyISO = (() => {
     const ec = new Date(hoy.getTime() - 5*60*60*1000);
-    return ec.toISOString().slice(0,10);
+    return localDateStr(ec);
   })();
 
   const [joinsHoy,    setJoinsHoy]    = useState(null);
@@ -11980,7 +11980,7 @@ function ClientMetricasView({ client }) {
     const dias = period==="7d"?7:period==="30d"?30:hoy.getDate();
     if (period==="all") return records;
     const desde = new Date(hoy); desde.setDate(desde.getDate()-dias+1);
-    return records.filter(r => r.date >= desde.toISOString().slice(0,10));
+    return records.filter(r => r.date >= localDateStr(desde));
   })();
 
   const inv    = filtered.reduce((a,r)=>a+(parseFloat(r.inversion)||0),0);
@@ -12310,7 +12310,7 @@ function FilmakersAdminPanel({ filmmakers, clients, onSave }) {
 function AgendaConsolidadaPanel({ clients }) {
   const [filtro, setFiltro] = useState("proximas"); // proximas | todas
   const [filtroTipo, setFiltroTipo] = useState("todos");
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = localDateStr(new Date());
 
   // Recopilar todos los eventos de todos los clientes
   const todos = [];
@@ -12448,8 +12448,8 @@ function getNotificaciones(clients) {
     }
 
     // 5. Eventos de agenda hoy o mañana
-    const hoyStr = hoy.toISOString().slice(0, 10);
-    const manana = new Date(hoy.getTime() + 86400000).toISOString().slice(0, 10);
+    const hoyStr = localDateStr(hoy);
+    const manana = localDateStr(new Date(hoy.getTime() + 86400000));
     (client.hermesData?.agenda || []).forEach(ev => {
       if (ev.fecha === hoyStr) {
         notifs.push({ id: `${client.id}-ev-${ev.id}`, tipo: "blue", icon: "📅",
@@ -13486,7 +13486,7 @@ function useNotificaciones(clients) {
 
   async function checkAlertas() {
     if (!clients?.length) return;
-    const hoy = new Date().toISOString().slice(0,10);
+    const hoy = localDateStr(new Date());
     const nuevas = [];
     for (const c of clients) {
       if (!c?.id || c.id.startsWith("__")) continue;
