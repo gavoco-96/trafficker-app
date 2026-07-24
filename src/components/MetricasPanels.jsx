@@ -1573,8 +1573,26 @@ export function BitacoraPanel({ client }) {
 
   const visibles = lista.slice(0, limite);
 
+  // Los chips deben contar sobre los mismos datos que ve el usuario:
+  // respetan cuenta, franja horaria y busqueda, pero NO el filtro de tipo
+  // (si respetaran el tipo, al elegir uno los demas quedarian en 0).
+  const baseConteo = (eventos || [])
+    .filter(e => cuentaFiltro === "todas" || e.cuenta === cuentaFiltro)
+    .filter(e => {
+      if (horaIni === "" && horaFin === "") return true;
+      const h = new Date(e.ts).getHours();
+      return h >= (horaIni === "" ? 0 : parseInt(horaIni))
+        && h <= (horaFin === "" ? 23 : parseInt(horaFin));
+    })
+    .filter(e => {
+      if (!busqueda) return true;
+      const q = busqueda.toLowerCase();
+      return (e.objeto || "").toLowerCase().includes(q)
+        || (e.texto || "").toLowerCase().includes(q)
+        || (e.actor || "").toLowerCase().includes(q);
+    });
   const conteo = {};
-  (eventos || []).forEach(e => { conteo[e.tipo] = (conteo[e.tipo] || 0) + 1; });
+  baseConteo.forEach(e => { conteo[e.tipo] = (conteo[e.tipo] || 0) + 1; });
 
   const nombreDia = (f) => {
     const hoy = localDateStr();
@@ -1595,45 +1613,78 @@ export function BitacoraPanel({ client }) {
   // Meta a veces manda valores planos ("5000") y a veces objetos anidados
   // ({daily_budget:"5000", lifetime_budget:null}). Hay que aplanarlos o se
   // imprime "[object Object]".
+  // Formatea el antes → despues de extra_data.
+  // Meta no documenta bien esta estructura y varia segun el tipo de evento:
+  // a veces son valores planos, a veces objetos anidados, y a veces las claves
+  // del objeto son nombres de campo (payment_amount, daily_budget...).
+  // Por eso el enfoque es defensivo: si no se puede extraer algo legible,
+  // devolvemos null en vez de imprimir basura como "[object Object]".
   function textoCambio(extra) {
     if (!extra || typeof extra !== "object") return null;
 
-    // Campos de presupuesto conocidos, en orden de preferencia
-    const CAMPOS_MONEDA = ["daily_budget", "lifetime_budget", "budget", "bid_amount", "spend_cap"];
+    const ES_MONEDA = /budget|amount|cap|spend|cost|bid|price/i;
 
-    // Extrae un valor legible de lo que sea que venga
-    function aplanar(v) {
+    // Convierte un valor en algo mostrable. Devuelve null si no hay nada util.
+    function extraer(v, claveContexto = "") {
       if (v === undefined || v === null || v === "") return null;
+
+      // Objeto: buscar dentro un valor primitivo real
       if (typeof v === "object") {
-        // Buscar primero un campo de dinero con valor
-        for (const k of CAMPOS_MONEDA) {
-          if (v[k] !== undefined && v[k] !== null && v[k] !== "") {
-            return { valor: v[k], esMoneda: true };
-          }
+        if (Array.isArray(v)) {
+          const items = v.filter(x => x !== null && x !== undefined && typeof x !== "object");
+          return items.length ? { valor: items.join(", "), moneda: false } : null;
         }
-        // Si no, tomar el primer campo con valor útil
         for (const [k, val] of Object.entries(v)) {
-          if (val !== undefined && val !== null && val !== "" && typeof val !== "object") {
-            return { valor: val, esMoneda: /budget|amount|cap|spend|cost/i.test(k) };
-          }
+          if (val === null || val === undefined || val === "" || typeof val === "object") continue;
+          // El valor debe ser un dato, no el nombre del campo repetido
+          if (String(val) === k) continue;
+          return { valor: val, moneda: ES_MONEDA.test(k) };
         }
         return null;
       }
-      return { valor: v, esMoneda: false };
+
+      // Primitivo
+      return { valor: v, moneda: ES_MONEDA.test(claveContexto) };
     }
 
-    const rawAntes = extra.old_value ?? extra.old_budget ?? extra.old_status ?? extra.old;
-    const rawDespues = extra.new_value ?? extra.new_budget ?? extra.new_status ?? extra.new;
-    const a = aplanar(rawAntes), d = aplanar(rawDespues);
+    // Buscar el par antes/despues con las variantes conocidas de Meta
+    const PARES = [
+      ["old_value", "new_value"],
+      ["old_budget", "new_budget"],
+      ["old_status", "new_status"],
+      ["old", "new"],
+    ];
+    let a = null, d = null, clave = "";
+    for (const [ka, kd] of PARES) {
+      if (extra[ka] !== undefined || extra[kd] !== undefined) {
+        a = extraer(extra[ka], ka);
+        d = extraer(extra[kd], kd);
+        clave = ka;
+        break;
+      }
+    }
     if (!a && !d) return null;
+
+    // Si ambos lados dan el mismo texto, el dato no aporta nada
+    if (a && d && String(a.valor) === String(d.valor)) return null;
 
     const fmt = (x) => {
       if (!x) return "—";
-      const n = Number(x.valor);
-      // Los presupuestos de Meta vienen en centavos
-      if (!isNaN(n) && (x.esMoneda || n > 1000)) return "$" + fmtNum(n / 100, 2);
-      if (!isNaN(n)) return String(n);
-      return String(x.valor);
+      const s = String(x.valor);
+      const n = Number(s);
+      if (!isNaN(n) && s.trim() !== "") {
+        // Los montos de Meta vienen en centavos
+        if (x.moneda || ES_MONEDA.test(clave)) return "$" + fmtNum(n / 100, 2);
+        return fmtNum(n, n % 1 === 0 ? 0 : 2);
+      }
+      // Texto: traducir los estados mas comunes
+      const ESTADOS = {
+        ACTIVE: "Activa", PAUSED: "Pausada", ARCHIVED: "Archivada",
+        DELETED: "Eliminada", PENDING_REVIEW: "En revisión",
+        DISAPPROVED: "Rechazada", CAMPAIGN_PAUSED: "Campaña pausada",
+        ADSET_PAUSED: "Conjunto pausado",
+      };
+      return ESTADOS[s] || s;
     };
     return `${fmt(a)} → ${fmt(d)}`;
   }
@@ -1681,7 +1732,12 @@ export function BitacoraPanel({ client }) {
         <div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>📋 Bitácora de cambios</div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-            {eventos ? `${lista.length} cambio${lista.length !== 1 ? "s" : ""}${truncado ? " (tope alcanzado)" : ""}` : "Cargando..."}
+            {eventos ? (() => {
+              const hayFiltro = filtroTipo !== "todos" || busqueda || horaIni !== "" || horaFin !== "" || cuentaFiltro !== "todas";
+              return hayFiltro
+                ? `${lista.length} de ${eventos.length} cambios (filtrado)`
+                : `${eventos.length} cambio${eventos.length !== 1 ? "s" : ""}${truncado ? " · tope alcanzado" : ""}`;
+            })() : "Cargando..."}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -1775,7 +1831,7 @@ export function BitacoraPanel({ client }) {
                 color: filtroTipo === k ? "var(--accent)" : "var(--muted)",
                 fontWeight: filtroTipo === k ? 700 : 400,
               }}>
-              {l} {k === "todos" ? eventos.length : conteo[k]}
+              {l} {k === "todos" ? baseConteo.length : conteo[k]}
             </button>
           ))}
         </div>
@@ -1933,11 +1989,32 @@ export function BitacoraPanel({ client }) {
           <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, color: "var(--muted)" }} onClick={() => setVerCrudo(v => !v)}>
             {verCrudo ? "▼" : "▶"} Respuesta cruda de la API (diagnóstico)
           </button>
-          {verCrudo && (
-            <pre style={{ marginTop: 6, padding: 9, background: "var(--surface2)", borderRadius: 7, fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 180 }}>
+          {verCrudo && (<>
+            <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6, marginBottom: 4 }}>
+              Primer evento devuelto por Meta (para verificar el mapeo de campos):
+            </div>
+            <pre style={{ padding: 9, background: "var(--surface2)", borderRadius: 7, fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 180 }}>
               {JSON.stringify(crudo, null, 2)}
             </pre>
-          )}
+            {/* Muestra de extra_data de los eventos que si lo traen: es lo que
+                necesitamos para saber como formatear el antes/despues */}
+            {(() => {
+              const conExtra = (eventos || []).filter(e => e.extra).slice(0, 3);
+              if (!conExtra.length) return (
+                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
+                  Ninguno de los eventos traídos incluye <code>extra_data</code>.
+                </div>
+              );
+              return (<>
+                <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 8, marginBottom: 4 }}>
+                  Ejemplos de <code>extra_data</code> ({conExtra.length} de {(eventos || []).filter(e => e.extra).length} eventos que lo traen):
+                </div>
+                <pre style={{ padding: 9, background: "var(--surface2)", borderRadius: 7, fontSize: 10, overflowX: "auto", color: "var(--muted)", maxHeight: 200 }}>
+                  {conExtra.map(e => `[${e.eventType}]\n${JSON.stringify(e.extra, null, 2)}`).join("\n\n")}
+                </pre>
+              </>);
+            })()}
+          </>)}
         </div>
       )}
 
