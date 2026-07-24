@@ -1504,18 +1504,51 @@ export function BitacoraPanel({ client }) {
   }[t] || "var(--muted)");
 
   // Antes → despues, cuando extra_data lo trae
+  // Formatea el antes → despues de extra_data.
+  // Meta a veces manda valores planos ("5000") y a veces objetos anidados
+  // ({daily_budget:"5000", lifetime_budget:null}). Hay que aplanarlos o se
+  // imprime "[object Object]".
   function textoCambio(extra) {
     if (!extra || typeof extra !== "object") return null;
-    const antes = extra.old_value ?? extra.old_budget ?? extra.old_status ?? extra.old;
-    const despues = extra.new_value ?? extra.new_budget ?? extra.new_status ?? extra.new;
-    if (antes === undefined && despues === undefined) return null;
-    const fmt = (v) => {
-      if (v === undefined || v === null || v === "") return "—";
-      const n = Number(v);
-      if (!isNaN(n) && n > 1000) return "$" + fmtNum(n / 100, 2);
-      return String(v);
+
+    // Campos de presupuesto conocidos, en orden de preferencia
+    const CAMPOS_MONEDA = ["daily_budget", "lifetime_budget", "budget", "bid_amount", "spend_cap"];
+
+    // Extrae un valor legible de lo que sea que venga
+    function aplanar(v) {
+      if (v === undefined || v === null || v === "") return null;
+      if (typeof v === "object") {
+        // Buscar primero un campo de dinero con valor
+        for (const k of CAMPOS_MONEDA) {
+          if (v[k] !== undefined && v[k] !== null && v[k] !== "") {
+            return { valor: v[k], esMoneda: true };
+          }
+        }
+        // Si no, tomar el primer campo con valor útil
+        for (const [k, val] of Object.entries(v)) {
+          if (val !== undefined && val !== null && val !== "" && typeof val !== "object") {
+            return { valor: val, esMoneda: /budget|amount|cap|spend|cost/i.test(k) };
+          }
+        }
+        return null;
+      }
+      return { valor: v, esMoneda: false };
+    }
+
+    const rawAntes = extra.old_value ?? extra.old_budget ?? extra.old_status ?? extra.old;
+    const rawDespues = extra.new_value ?? extra.new_budget ?? extra.new_status ?? extra.new;
+    const a = aplanar(rawAntes), d = aplanar(rawDespues);
+    if (!a && !d) return null;
+
+    const fmt = (x) => {
+      if (!x) return "—";
+      const n = Number(x.valor);
+      // Los presupuestos de Meta vienen en centavos
+      if (!isNaN(n) && (x.esMoneda || n > 1000)) return "$" + fmtNum(n / 100, 2);
+      if (!isNaN(n)) return String(n);
+      return String(x.valor);
     };
-    return `${fmt(antes)} → ${fmt(despues)}`;
+    return `${fmt(a)} → ${fmt(d)}`;
   }
 
   function exportarCSV() {
@@ -1790,10 +1823,17 @@ export function BitacoraPanel({ client }) {
         const masNuevo = eventos[0];
         if (!masViejo || !masNuevo) return null;
         const fmtT = (ts) => new Date(ts).toLocaleString("es-EC", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+        // Detectar si Meta devolvio eventos fuera del rango pedido
+        const iniPedido = new Date(desde + "T00:00:00").getTime();
+        const finPedido = new Date(hasta + "T23:59:59").getTime();
+        const fueraRango = eventos.filter(e => e.ts < iniPedido || e.ts > finPedido).length;
         return (
           <div style={{ fontSize: 10, color: truncado ? "var(--amber)" : "var(--muted)", marginTop: 8, textAlign: "center" }}>
             {truncado && "⚠️ "}
             Cobertura: {fmtT(masViejo.ts)} → {fmtT(masNuevo.ts)}
+            {fueraRango > 0 && (
+              <span style={{ color: "var(--amber)" }}> · {fueraRango} evento(s) fuera del rango pedido</span>
+            )}
             {truncado && ` · Se alcanzó el tope de ${eventos.length} cambios; acota el rango de fechas para ver los más antiguos.`}
           </div>
         );
