@@ -3,6 +3,8 @@
 // Siempre usar time_range={"since":...,"until":...} como JSON.
 // Extraído de App.jsx (Fase 2 de modularización)
 
+import { localDateStr } from "./utils.js";
+
 // ─── FACEBOOK ADS INTEGRATION ────────────────────────────────────────────────
 
 // Métricas disponibles de Facebook Ads API
@@ -395,7 +397,7 @@ export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
   const untilExc = (() => {
     const d = new Date(until + "T12:00:00");
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   })();
 
   const eventos = [];
