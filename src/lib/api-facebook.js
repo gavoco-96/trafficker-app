@@ -3,8 +3,6 @@
 // Siempre usar time_range={"since":...,"until":...} como JSON.
 // Extraído de App.jsx (Fase 2 de modularización)
 
-import { localDateStr } from "./utils.js";
-
 // ─── FACEBOOK ADS INTEGRATION ────────────────────────────────────────────────
 
 // Métricas disponibles de Facebook Ads API
@@ -394,13 +392,13 @@ export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
   const maxEventos = opts.maxEventos || 2000;
   const maxLotes = opts.maxLotes || 25;
 
-  // IMPORTANTE: /activities trata `until` como EXCLUSIVO. Si since==until
-  // (ej. filtro "Ayer") el rango queda vacio. Sumamos un dia al until.
-  const untilExc = (() => {
-    const d = new Date(until + "T12:00:00");
-    d.setDate(d.getDate() + 1);
-    return localDateStr(d);
-  })();
+  // IMPORTANTE: /activities interpreta since/until como fechas en la zona de
+  // la cuenta publicitaria (UTC), no en la del navegador. Al pedir "2026-07-23"
+  // Meta entiende 23/07 00:00 UTC = 22/07 19:00 en Ecuador, y devolvia eventos
+  // del dia anterior. La solucion es enviar TIMESTAMPS UNIX calculados desde la
+  // medianoche LOCAL, asi el rango coincide con lo que ve el usuario.
+  const tsDesde = Math.floor(new Date(since + "T00:00:00").getTime() / 1000);
+  const tsHasta = Math.floor(new Date(until + "T23:59:59").getTime() / 1000);
 
   const eventos = [];
   let algunError = null, algunOk = false, muestraCruda = null, truncado = false;
@@ -415,8 +413,8 @@ export async function fetchBitacoraFB(token, cuentas, since, until, opts = {}) {
         "object_id", "object_name", "object_type",
         "extra_data", "translated_event_type",
       ].join(","));
-      url.searchParams.set("since", since);
-      url.searchParams.set("until", untilExc);
+      url.searchParams.set("since", String(tsDesde));
+      url.searchParams.set("until", String(tsHasta));
       url.searchParams.set("limit", "200");
       url.searchParams.set("access_token", token);
 
