@@ -344,6 +344,29 @@ export const css = `
   .loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:16px;color:var(--muted)}
   .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── Indicadores de carga ────────────────────────────────────────────── */
+  /* Barra indeterminada: no sabemos cuanto falta, solo que esta trabajando */
+  .load-bar{position:relative;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+  .load-bar::after{content:"";position:absolute;inset:0;width:40%;border-radius:2px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    animation:loadSlide 1.1s ease-in-out infinite}
+  @keyframes loadSlide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+
+  /* Spinner pequeño para botones */
+  .spin-sm{display:inline-block;width:11px;height:11px;border:2px solid rgba(255,255,255,.25);
+    border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite;
+    vertical-align:-1px;margin-right:5px}
+
+  /* Skeleton: bloques grises que laten mientras llega el contenido */
+  .skeleton{background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);
+    background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;border-radius:6px}
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  /* Punto que late junto al texto de estado */
+  .load-dot{display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--accent);
+    margin-right:6px;animation:loadPulse 1s ease-in-out infinite}
+  @keyframes loadPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:1000;padding:1rem}
   .modal-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r2);padding:2rem;max-width:480px;width:100%}
   .modal-title{font-size:18px;font-weight:600;margin-bottom:.75rem}
