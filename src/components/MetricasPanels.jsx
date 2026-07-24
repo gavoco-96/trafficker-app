@@ -499,22 +499,35 @@ export function ComparativaCplPanel({ client }) {
   const [metrica, setMetrica] = useState("cplAcum"); // cplAcum | cplHora
   const [nuevaFecha, setNuevaFecha] = useState(localDateStr());
   const [copiado, setCopiado] = useState(false);
+  // Filtro por cuenta publicitaria: "todas" = consolidado
+  const [cuentaFiltro, setCuentaFiltro] = useState("todas");
+  // Cuentas que realmente se consultan segun el filtro
+  const cuentasConsulta = cuentaFiltro === "todas" ? cuentas : cuentas.filter(c => c.nombre === cuentaFiltro);
 
   const PALETA = ["#FFDE59", "#4D9FFF", "#10B981", "#EF4444", "#A855F7", "#F59E0B", "#EC4899"];
 
-  async function cargar(lista = fechas) {
+  async function cargar(lista = fechas, cuentasUsar = cuentasConsulta, reiniciar = false) {
     if (!hayConfig) return;
     setLoading(true);
-    const out = { ...datos };
+    const out = reiniciar ? {} : { ...datos };
     for (const f of lista) {
       if (out[f]) continue; // ya cargada
-      const r = await fetchCplHorarioPorDia(token, cuentas, f);
+      const r = await fetchCplHorarioPorDia(token, cuentasUsar, f);
       if (r.ok) out[f] = r;
     }
     setDatos(out);
     setLoading(false);
   }
   useEffect(() => { if (hayConfig) cargar(); /* eslint-disable-next-line */ }, []);
+
+  // Al cambiar de cuenta hay que descartar el cache y volver a consultar:
+  // los datos guardados corresponden a la seleccion anterior.
+  function cambiarCuenta(nombre) {
+    setCuentaFiltro(nombre);
+    const nuevas = nombre === "todas" ? cuentas : cuentas.filter(c => c.nombre === nombre);
+    setDatos({});
+    cargar(fechas, nuevas, true);
+  }
 
   function agregarFecha() {
     if (!nuevaFecha || fechas.includes(nuevaFecha)) return;
@@ -535,8 +548,13 @@ export function ComparativaCplPanel({ client }) {
 
   // ── Exportar a Sheets/CSV: filas por hora, columnas por día ──
   function construirTSV() {
-    const cab = ["Hora", ...fechas.map(f => nombreDia(f))];
-    const filas = [cab];
+    const vista = cuentaFiltro === "todas" ? "Consolidado (todas las cuentas)" : `Cuenta: ${cuentaFiltro}`;
+    const metricaTxt = metrica === "cplAcum" ? "CPL acumulado" : "CPL por hora";
+    const filas = [];
+    // Encabezado informativo: deja claro que vista se exporto
+    filas.push([vista, metricaTxt]);
+    filas.push([]);
+    filas.push(["Hora", ...fechas.map(f => nombreDia(f))]);
     for (let h = 0; h < 24; h++) {
       const fila = [String(h).padStart(2, "0") + ":00"];
       fechas.forEach(f => {
@@ -562,7 +580,8 @@ export function ComparativaCplPanel({ client }) {
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `cpl_horario_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}.csv`;
+    const sufijo = cuentaFiltro === "todas" ? "consolidado" : cuentaFiltro.replace(/[^a-z0-9]/gi, "_");
+    a.href = url; a.download = `cpl_horario_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}_${sufijo}.csv`;
     a.click(); URL.revokeObjectURL(url);
   }
 
@@ -685,9 +704,26 @@ export function ComparativaCplPanel({ client }) {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Comparativa de CPL por día</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>📊 Comparativa de CPL por día</div>
+            {/* Filtro de cuenta: consolidado o una cuenta especifica */}
+            {cuentas.length > 1 && (
+              <select value={cuentaFiltro} onChange={e => cambiarCuenta(e.target.value)}
+                title="Ver el consolidado o filtrar por una cuenta publicitaria"
+                style={{
+                  width: "auto", fontSize: 12, padding: "3px 8px", fontWeight: 600,
+                  borderColor: cuentaFiltro !== "todas" ? "var(--accent)" : "var(--border)",
+                  color: cuentaFiltro !== "todas" ? "var(--accent)" : "var(--text)",
+                }}>
+                <option value="todas">🏢 Todas ({cuentas.length}) — consolidado</option>
+                {cuentas.map(c => <option key={c.id || c.adAccountId} value={c.nombre}>🏢 {c.nombre}</option>)}
+              </select>
+            )}
+          </div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-            Evolución horaria del costo por lead — compara hasta 7 días para detectar patrones
+            {cuentaFiltro === "todas"
+              ? "Evolución horaria del costo por lead — compara hasta 7 días para detectar patrones"
+              : `Mostrando solo la cuenta: ${cuentaFiltro}`}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
