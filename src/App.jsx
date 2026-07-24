@@ -3688,15 +3688,17 @@ function FaseItem({ fase, client, onUpdate }) {
   );
 }
 
-function HermesAdminView({ client, allClients, onUpdate }) {
+function HermesAdminView({ client, allClients, onUpdate, nicheLabel }) {
   const isApollo = client.producto?.startsWith("APOLLO");
   const [subTab, setSubTab] = useState("dashboard");
   const [period, setPeriod] = useState("all");
   const [from, setFrom] = useState(""); const [to, setTo] = useState("");
 
+  // El perfil va como sub-tab: asi la barra de progreso siempre queda arriba
+  // y el perfil solo se carga cuando el usuario lo pide.
   const subTabs = isApollo
-    ? [["dashboard","🚀 Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Mision"],["fases","📋 Fases"]]
-    : [["dashboard","✦ Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Calendario"],["fases","📋 Fases"]];
+    ? [["dashboard","🚀 Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Mision"],["fases","📋 Fases"],["perfil","👤 Perfil"]]
+    : [["dashboard","✦ Dashboard"],["biblioteca","🎬 Biblioteca"],["calendario","📅 Calendario"],["fases","📋 Fases"],["perfil","👤 Perfil"]];
 
   const fases = isApollo ? APOLLO_FASES : HERMES_FASES;
 
@@ -3724,6 +3726,7 @@ function HermesAdminView({ client, allClients, onUpdate }) {
 
       {subTab === "biblioteca" && <BibliotecaPanel client={client} onUpdate={onUpdate} readOnly={false} />}
       {subTab === "calendario" && <CalendarioPanel client={client} onUpdate={onUpdate} readOnly={false} allClients={allClients} />}
+      {subTab === "perfil" && <PerfilClienteBloque client={client} nicheLabel={nicheLabel} onUpdate={onUpdate} />}
 
       {subTab === "fases" && (
         <div>
@@ -11379,13 +11382,8 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
           ))}
         </div>
         {tab === "hermes" && (
-          <div>
-            {/* Perfil del cliente — fusionado aqui para reducir tabs */}
-            <PerfilClienteBloque client={client} nicheLabel={nicheLabel} onUpdate={handleUpdate} />
-            <div style={{ borderTop:"2px solid var(--border)", marginTop:"1.5rem", paddingTop:"1.5rem" }}>
-              <HermesAdminView client={client} allClients={allClients} onUpdate={handleUpdate} />
-            </div>
-          </div>
+          <HermesAdminView client={client} allClients={allClients}
+            onUpdate={handleUpdate} nicheLabel={nicheLabel} />
         )}
 
         {tab === "metricas" && (
