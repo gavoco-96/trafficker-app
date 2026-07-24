@@ -1408,6 +1408,9 @@ export function BitacoraPanel({ client }) {
   const [busqueda, setBusqueda] = useState("");
   const [cuentaFiltro, setCuentaFiltro] = useState("todas");
   const [vista, setVista] = useState("compacta"); // compacta | horas | tabla
+  // Filtro por franja horaria: permite ir directo a la hora donde se movio el CPL
+  const [horaIni, setHoraIni] = useState("");  // "" = sin filtro
+  const [horaFin, setHoraFin] = useState("");
   const [limite, setLimite] = useState(50);       // cuantos pintar
   const [crudo, setCrudo] = useState(null);
   const [verCrudo, setVerCrudo] = useState(false);
@@ -1465,6 +1468,14 @@ export function BitacoraPanel({ client }) {
   const lista = (eventos || [])
     .filter(e => cuentaFiltro === "todas" || e.cuenta === cuentaFiltro)
     .filter(e => filtroTipo === "todos" || e.tipo === filtroTipo)
+    // Franja horaria: si se define, solo eventos dentro de esas horas
+    .filter(e => {
+      if (horaIni === "" && horaFin === "") return true;
+      const h = new Date(e.ts).getHours();
+      const ini = horaIni === "" ? 0 : parseInt(horaIni);
+      const fin = horaFin === "" ? 23 : parseInt(horaFin);
+      return h >= ini && h <= fin;
+    })
     .filter(e => {
       if (!busqueda) return true;
       const q = busqueda.toLowerCase();
@@ -1517,7 +1528,10 @@ export function BitacoraPanel({ client }) {
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `bitacora_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}_${desde}_${hasta}.csv`;
+    // El nombre refleja la franja horaria si hay filtro activo
+    const fr = (horaIni !== "" || horaFin !== "")
+      ? `_${String(horaIni || 0).padStart(2, "0")}h-${String(horaFin || 23).padStart(2, "0")}h` : "";
+    a.href = url; a.download = `bitacora_${(client.name || "cliente").replace(/[^a-z0-9]/gi, "_")}_${desde}_${hasta}${fr}.csv`;
     a.click(); URL.revokeObjectURL(url);
   }
 
@@ -1585,11 +1599,49 @@ export function BitacoraPanel({ client }) {
               <button key={k} className={"pill " + (vista === k ? "active" : "")} onClick={() => setVista(k)}>{l}</button>
             ))}
           </div>
-          <div style={{ position: "relative", width: 220 }}>
+          <div style={{ position: "relative", width: 200 }}>
             <input type="text" value={busqueda} onChange={e => { setBusqueda(e.target.value); setLimite(50); }}
               placeholder="Buscar..." style={{ width: "100%", paddingLeft: 28, fontSize: 12 }} />
             <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--muted)", fontSize: 12 }}>🔍</span>
           </div>
+        </div>
+
+        {/* Filtro por franja horaria: ir directo a la hora donde se movio el CPL */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10,
+          padding: "7px 10px", background: (horaIni !== "" || horaFin !== "") ? "rgba(77,159,255,.07)" : "var(--surface2)",
+          borderRadius: 8, border: (horaIni !== "" || horaFin !== "") ? "1px solid var(--accent)" : "1px solid var(--border)" }}>
+          <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600 }}>🕐 Franja horaria:</span>
+          <select value={horaIni} onChange={e => { setHoraIni(e.target.value); setLimite(50); }}
+            style={{ width: "auto", fontSize: 11, padding: "2px 6px" }}>
+            <option value="">Desde…</option>
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>→</span>
+          <select value={horaFin} onChange={e => { setHoraFin(e.target.value); setLimite(50); }}
+            style={{ width: "auto", fontSize: 11, padding: "2px 6px" }}>
+            <option value="">Hasta…</option>
+            {Array.from({ length: 24 }, (_, h) => (
+              <option key={h} value={h}>{String(h).padStart(2, "0")}:59</option>
+            ))}
+          </select>
+          {/* Atajos a las franjas mas consultadas */}
+          <div style={{ display: "flex", gap: 3, marginLeft: 4 }}>
+            {[["Mañana", 6, 11], ["Tarde", 12, 17], ["Noche", 18, 23]].map(([l, a, b]) => (
+              <button key={l} onClick={() => { setHoraIni(String(a)); setHoraFin(String(b)); setLimite(50); }}
+                style={{
+                  fontSize: 10, padding: "2px 8px", borderRadius: 10, cursor: "pointer",
+                  border: (horaIni === String(a) && horaFin === String(b)) ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  background: (horaIni === String(a) && horaFin === String(b)) ? "rgba(77,159,255,.15)" : "transparent",
+                  color: (horaIni === String(a) && horaFin === String(b)) ? "var(--accent)" : "var(--muted)",
+                }}>{l}</button>
+            ))}
+          </div>
+          {(horaIni !== "" || horaFin !== "") && (
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: "1px 8px", marginLeft: "auto" }}
+              onClick={() => { setHoraIni(""); setHoraFin(""); setLimite(50); }}>✕ Quitar</button>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
@@ -1732,11 +1784,20 @@ export function BitacoraPanel({ client }) {
         </div>
       )}
 
-      {truncado && (
-        <div style={{ fontSize: 10, color: "var(--amber)", marginTop: 8, textAlign: "center" }}>
-          ⚠️ Se alcanzó el tope de 300 cambios. Acota el rango de fechas para ver el resto.
-        </div>
-      )}
+      {/* Cobertura real: si el tope corto, avisar hasta que hora se alcanzo */}
+      {eventos && eventos.length > 0 && (() => {
+        const masViejo = eventos[eventos.length - 1];
+        const masNuevo = eventos[0];
+        if (!masViejo || !masNuevo) return null;
+        const fmtT = (ts) => new Date(ts).toLocaleString("es-EC", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+        return (
+          <div style={{ fontSize: 10, color: truncado ? "var(--amber)" : "var(--muted)", marginTop: 8, textAlign: "center" }}>
+            {truncado && "⚠️ "}
+            Cobertura: {fmtT(masViejo.ts)} → {fmtT(masNuevo.ts)}
+            {truncado && ` · Se alcanzó el tope de ${eventos.length} cambios; acota el rango de fechas para ver los más antiguos.`}
+          </div>
+        );
+      })()}
 
       {/* Diagnóstico */}
       {crudo && (
