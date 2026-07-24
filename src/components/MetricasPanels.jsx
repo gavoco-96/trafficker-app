@@ -11,6 +11,76 @@ import {
   fetchBitacoraFB, describirEventoFB,
 } from "../lib/api-facebook.js";
 
+// ─── INDICADORES DE CARGA (reutilizables) ─────────────────────────────────────
+// El usuario necesita saber si la app esta consultando o ya termino.
+
+// Barra delgada que aparece sobre el contenido mientras se consulta.
+// Ocupa altura fija para que la vista no salte al aparecer/desaparecer.
+export function BarraCarga({ activo, texto }) {
+  return (
+    <div style={{ height: activo ? "auto" : 0, overflow: "hidden", transition: "height .2s" }}>
+      {activo && (
+        <div style={{ marginBottom: 10 }}>
+          <div className="load-bar" />
+          {texto && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 5, display: "flex", alignItems: "center" }}>
+              <span className="load-dot" />{texto}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Boton que muestra spinner y cambia de texto mientras trabaja.
+export function BotonCarga({ cargando, onClick, disabled, children, textoCargando, className, style }) {
+  return (
+    <button
+      className={className || "btn btn-primary btn-sm"}
+      onClick={onClick}
+      disabled={disabled || cargando}
+      style={{ ...style, opacity: cargando ? .85 : 1, cursor: cargando ? "wait" : undefined }}>
+      {cargando ? (<><span className="spin-sm" />{textoCargando || "Consultando..."}</>) : children}
+    </button>
+  );
+}
+
+// Placeholder con forma de tabla mientras llegan los datos.
+// Da sensacion de progreso, en vez de una pantalla vacia.
+export function SkeletonTabla({ filas = 6, columnas = 5 }) {
+  return (
+    <div style={{ padding: "4px 0" }}>
+      {/* Cabecera */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        {Array.from({ length: columnas }, (_, i) => (
+          <div key={i} className="skeleton" style={{ height: 11, flex: i === 0 ? 2.5 : 1 }} />
+        ))}
+      </div>
+      {/* Filas */}
+      {Array.from({ length: filas }, (_, r) => (
+        <div key={r} style={{ display: "flex", gap: 10, marginBottom: 8, opacity: 1 - r * 0.11 }}>
+          {Array.from({ length: columnas }, (_, c) => (
+            <div key={c} className="skeleton" style={{ height: 13, flex: c === 0 ? 2.5 : 1 }} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Placeholder con forma de grafica.
+export function SkeletonGrafica({ alto = 130 }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: alto, padding: "8px 0" }}>
+      {Array.from({ length: 24 }, (_, i) => (
+        <div key={i} className="skeleton"
+          style={{ flex: 1, height: `${35 + Math.sin(i / 2.5) * 25 + (i % 3) * 8}%`, borderRadius: "3px 3px 0 0" }} />
+      ))}
+    </div>
+  );
+}
+
 // ─── TABLA REUTILIZABLE DE MÉTRICAS FB (sirve para campañas/conjuntos/anuncios) ─
 // Ordenamiento asc/desc por cualquier columna, scroll propio, resaltado de CPL.
 export function TablaMetricasFB({ filas, cplGlobal, mostrarPadre, mostrarCuenta, padreLabel, maxHeight = 440 }) {
@@ -301,7 +371,8 @@ export function CampanasFBPanel({ client, onUpdate }) {
         <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
         <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
         <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
-        <button className="btn btn-primary btn-sm" onClick={recargarTodo} disabled={loading || !hayConfig}>{loading ? "⟳ Consultando..." : "🔄 Actualizar"}</button>
+        <BotonCarga cargando={loading} onClick={recargarTodo} disabled={!hayConfig}
+          textoCargando="Consultando...">🔄 Actualizar</BotonCarga>
       </div>
 
       {/* Filtros + acciones */}
@@ -330,11 +401,17 @@ export function CampanasFBPanel({ client, onUpdate }) {
       {guardadoMsg && <div style={{ fontSize: 12, color: "var(--green)", marginBottom: 10, padding: "6px 12px", background: "rgba(16,185,129,.08)", borderRadius: 8 }}>{guardadoMsg}</div>}
       {error && <div className="card" style={{ padding: "12px 14px", marginBottom: 12, borderColor: "var(--red)", color: "var(--red)", fontSize: 13 }}>{error}</div>}
 
+      {/* Refrescando con datos ya en pantalla */}
+      <BarraCarga activo={loading && filasRaw.length > 0} texto="Actualizando datos..." />
+
       {/* Tabla */}
       {!hayConfig ? (
         <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Configura Facebook Ads en la tab 📘 Facebook para activar esta vista.</div>
       ) : loading && !filasRaw.length ? (
-        <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando Facebook...</div>
+        <div>
+          <BarraCarga activo texto={`Consultando ${nivel === "campaign" ? "campañas" : nivel === "adset" ? "conjuntos" : "anuncios"} en Facebook...`} />
+          <SkeletonTabla filas={7} columnas={6} />
+        </div>
       ) : filas.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Sin datos en el rango seleccionado.</div>
       ) : (
@@ -613,7 +690,10 @@ export function ComparativaCplPanel({ client }) {
   const GraficaDia = ({ fecha, color, alto = 130, mostrarEje = true }) => {
     const [hov, setHov] = useState(null);
     const d = datos[fecha];
-    if (!d) return <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin datos</div>;
+    // Mientras se consulta este dia, mostrar el esqueleto de la grafica
+    if (!d) return loading
+      ? <SkeletonGrafica alto={alto} />
+      : <div style={{ padding: 20, textAlign: "center", color: "var(--muted)", fontSize: 11 }}>Sin datos</div>;
     const W = Math.max(anchoPx, 320), H = alto, PAD = { t: 10, r: 14, b: mostrarEje ? 22 : 6, l: 52 };
     const cW = W - PAD.l - PAD.r, cH = H - PAD.t - PAD.b;
     const pts = d.horas.filter(h => h[metrica] > 0);
@@ -763,12 +843,18 @@ export function ComparativaCplPanel({ client }) {
             <span key={f} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, padding: "4px 10px", borderRadius: 14, background: "var(--surface2)", border: `1px solid ${PALETA[i % PALETA.length]}55` }}>
               <span style={{ width: 8, height: 8, borderRadius: 4, background: PALETA[i % PALETA.length] }} />
               {nombreDia(f)}
-              {datos[f] && <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>{fmt(datos[f].cplDia)}</span>}
+              {datos[f]
+                ? <span style={{ color: "var(--muted)", fontFamily: "var(--mono)" }}>{fmt(datos[f].cplDia)}</span>
+                : loading && <span className="spin-sm" style={{ borderTopColor: PALETA[i % PALETA.length], marginRight: 0 }} />}
               <button onClick={() => quitarFecha(f)} style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", padding: 0, fontSize: 13 }}>×</button>
             </span>
           ))}
-          {loading && <span style={{ fontSize: 11, color: "var(--muted)" }}>⟳ Consultando Facebook...</span>}
+
         </div>
+
+        {/* Progreso de carga: cuantos dias van consultados */}
+        <BarraCarga activo={loading}
+          texto={`Consultando Facebook... ${Object.keys(datos).length} de ${fechas.length} día(s) listos`} />
 
         {/* VISTA APILADA */}
         {vista === "apilada" && (
@@ -1172,10 +1258,11 @@ export function PaisesPanel({ client, onUpdate }) {
         <input type="date" value={desde} onChange={e=>{setDesde(e.target.value);setPreset("custom");}} max={hasta} style={{width:"auto",fontSize:12}} />
         <span style={{fontSize:12,color:"var(--muted)"}}>→</span>
         <input type="date" value={hasta} onChange={e=>{setHasta(e.target.value);setPreset("custom");}} max={localDateStr()} style={{width:"auto",fontSize:12}} />
-        <button className="btn btn-primary btn-sm" onClick={cargar} disabled={loading||!hayConfig}>
-          {loading?"⟳ Consultando...":"🔄 Actualizar"}
-        </button>
+        <BotonCarga cargando={loading} onClick={cargar} disabled={!hayConfig}
+          textoCargando="Consultando...">🔄 Actualizar</BotonCarga>
       </div>
+
+      <BarraCarga activo={loading} texto="Consultando gasto y presupuesto en Facebook..." />
 
       {error && <div className="card" style={{padding:"12px 14px", marginBottom:12, borderColor:"var(--red)", color:"var(--red)", fontSize:13}}>{error}</div>}
 
@@ -1313,7 +1400,7 @@ export function PaisesPanel({ client, onUpdate }) {
             <div style={{fontSize:10, color:"var(--muted)", marginBottom:10}}>Dato real de dónde cayó el gasto (funciona aunque las campañas apunten a varios países)</div>
 
             {loading && !gasto ? (
-              <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Consultando Facebook...</div>
+              <SkeletonTabla filas={4} columnas={3} />
             ) : codigosConGasto.length === 0 ? (
               <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Sin gasto en el rango seleccionado.</div>
             ) : (<>
@@ -1342,7 +1429,7 @@ export function PaisesPanel({ client, onUpdate }) {
             <div style={{fontSize:10, color:"var(--muted)", marginBottom:10}}>Lo que está programado ahora en adsets activos, según a qué países apuntan</div>
 
             {loading && !presup ? (
-              <div style={{padding:20, textAlign:"center", color:"var(--muted)", fontSize:12}}>Consultando adsets...</div>
+              <SkeletonTabla filas={4} columnas={2} />
             ) : (<>
               {/* Mono-país */}
               {Object.keys(monoPais).sort((a,b)=>monoPais[b]-monoPais[a]).map(code => (
@@ -1619,10 +1706,11 @@ export function BitacoraPanel({ client }) {
         <input type="date" value={desde} onChange={e => { setDesde(e.target.value); setPreset("custom"); }} max={hasta} style={{ width: "auto", fontSize: 12 }} />
         <span style={{ fontSize: 12, color: "var(--muted)" }}>→</span>
         <input type="date" value={hasta} onChange={e => { setHasta(e.target.value); setPreset("custom"); }} max={localDateStr()} style={{ width: "auto", fontSize: 12 }} />
-        <button className="btn btn-primary btn-sm" onClick={() => cargar()} disabled={loading}>
-          {loading ? "⟳" : "🔄"} Actualizar
-        </button>
+        <BotonCarga cargando={loading} onClick={() => cargar()}
+          textoCargando="Consultando...">🔄 Actualizar</BotonCarga>
       </div>
+
+      <BarraCarga activo={loading} texto="Leyendo el registro de actividad de Facebook..." />
 
       {/* Vista + filtros */}
       {eventos && eventos.length > 0 && (<>
@@ -1697,7 +1785,7 @@ export function BitacoraPanel({ client }) {
 
       {/* Contenido */}
       {loading && !eventos ? (
-        <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Consultando el registro de actividad...</div>
+        <SkeletonTabla filas={8} columnas={4} />
       ) : !lista.length ? (
         <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
           {eventos && eventos.length ? "Sin cambios que coincidan con los filtros." : "Sin cambios registrados en este rango."}
