@@ -40,6 +40,7 @@ import { TikTokConfigPanel, TikTokMetricasPanel } from "./components/TikTokPanel
 import {
   GraficasMetricas, MiniLineChart, CplWAChart, CplTradingChart,
 } from "./components/Charts.jsx";
+import { BriefPanel } from "./components/BriefPanel.jsx";
 
 // ─── ESTILOS ──────────────────────────────────────────────────────────────────
 
@@ -11375,15 +11376,19 @@ function AdminClientDetail({ client, allClients, onBack, onUpdate }) {
       </div>
       <div className="content">
         <div className="tab-row">
-          {["hermes", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "tiktok", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "telegram", "bot"].map(t2 => (
+          {["hermes", "brief", ...(client.producto?.startsWith("APOLLO") ? [] : ["estudio"]), "metricas", "tiktok", "embudos", ...(client.waConfig?.enabled ? ["grupos"] : []), "captura", ...(client.producto?.startsWith("APOLLO") ? ["calidad"] : []), "telegram", "bot"].map(t2 => (
             <button key={t2} className={`tab ${tab === t2 ? "active" : ""}`} onClick={() => setTab(t2)}>
-              {t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "📘 Métricas FB" : t2 === "tiktok" ? "🎵 Métricas TikTok" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
+              {t2 === "hermes" ? (client.producto?.startsWith("APOLLO") ? "🚀 APOLLO" : "✦ HERMES") : t2 === "brief" ? "📝 Brief" : t2 === "estudio" ? "🎬 Estudio" : t2 === "metricas" ? "📘 Métricas FB" : t2 === "tiktok" ? "🎵 Métricas TikTok" : t2 === "embudos" ? "🎯 Embudos" : t2 === "grupos" ? "💬 Grupos WA" : t2 === "captura" ? "📊 Captura WP" : t2 === "calidad" ? "⭐ Calidad" : t2 === "bot" ? "🤖 Bot WA" : "✈️ Telegram"}
             </button>
           ))}
         </div>
         {tab === "hermes" && (
           <HermesAdminView client={client} allClients={allClients}
             onUpdate={handleUpdate} nicheLabel={nicheLabel} />
+        )}
+
+        {tab === "brief" && (
+          <BriefPanel key={client.id} client={client} onUpdate={handleUpdate} />
         )}
 
         {tab === "metricas" && (
