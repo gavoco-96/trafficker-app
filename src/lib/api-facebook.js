@@ -238,10 +238,14 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
       presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, campanasCBO:0, adAccountId: cuenta.adAccountId };
     }
     try {
-      // ── PASO 1: Campañas activas con presupuesto a nivel campaña (CBO) ──
-      // Algunas cuentas usan CBO/Advantage: el presupuesto vive en la campaña,
-      // no en los adsets. Sin esto el presupuesto aparecía vacío.
-      const cboPorCampana = {}; // campaignId → { daily, life, nombre }
+      // ── PASO 1: TODAS las campañas activas ──────────────────────────────
+      // Antes solo guardábamos las campañas CON presupuesto CBO. El problema:
+      // necesitamos conocer el estado de TODAS las campañas activas para poder
+      // descartar adsets cuya campaña padre está pausada. Meta a veces devuelve
+      // un adset con effective_status=ACTIVE aunque su campaña esté PAUSED, y
+      // esos adsets NO entregan → no deben contarse ni sumar presupuesto.
+      const campanasActivas = new Set();   // ids de campañas realmente ACTIVE
+      const cboPorCampana = {};            // campaignId → { daily, life, nombre } (solo CBO)
       const cUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns`);
       cUrl.searchParams.set("fields", "id,name,daily_budget,lifetime_budget,effective_status");
       cUrl.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
@@ -253,6 +257,7 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
         if (cj.error) { console.warn("[Presup campañas]", cuenta.nombre, cj.error.message); break; }
         for (const c of (cj.data||[])) {
           if (c.effective_status !== "ACTIVE") continue;
+          campanasActivas.add(c.id);
           const d = parseFloat(c.daily_budget||0)/100;
           const l = parseFloat(c.lifetime_budget||0)/100;
           if (d > 0 || l > 0) cboPorCampana[c.id] = { daily:d, life:l, nombre: c.name || "(sin nombre)" };
@@ -260,7 +265,7 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
         cNext = cj.paging?.next || null;
       }
 
-      // ── PASO 2: Adsets activos (con su campaign_id para saber si hay CBO) ──
+      // ── PASO 2: Adsets activos, filtrando por campaña padre activa ───────
       const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/adsets`);
       url.searchParams.set("fields", "name,campaign_id,daily_budget,lifetime_budget,effective_status,targeting{geo_locations}");
       url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
@@ -268,12 +273,18 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
       url.searchParams.set("access_token", token);
       // Países que toca cada campaña CBO (para poder asignar su presupuesto)
       const paisesPorCampanaCBO = {}; // campaignId → Set(paises)
+      const cbosConAdsetActivo = new Set(); // campañas CBO que tienen ≥1 adset activo
       let next = url.toString();
       while (next) {
         const json = await fetch(next).then(r=>r.json());
         if (json.error) { console.warn("[Presup adsets]", cuenta.nombre, json.error.message); break; }
         for (const a of (json.data||[])) {
           if (a.effective_status !== "ACTIVE") continue;
+          // ── FIX CLAVE: descartar adsets cuya campaña padre NO está activa.
+          // Estos son los "adsets fantasma" que inflaban el conteo (31 vs 27)
+          // y el presupuesto. No entregan porque su campaña está pausada.
+          if (!campanasActivas.has(a.campaign_id)) continue;
+
           const geo = a.targeting?.geo_locations || {};
           let paises = (geo.countries || []).slice();
           (geo.regions||[]).forEach(r=>{ if(r.country&&!paises.includes(r.country))paises.push(r.country); });
@@ -281,15 +292,21 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
 
           const esCBO = !!cboPorCampana[a.campaign_id];
           if (esCBO) {
-            // El presupuesto lo maneja la campaña: registramos los países que cubre
+            // Presupuesto vive en la campaña. Pero el adset SÍ cuenta como
+            // conjunto activo (entrega bajo la campaña). El presupuesto se
+            // suma una sola vez por campaña en el Paso 3.
             if (!paisesPorCampanaCBO[a.campaign_id]) paisesPorCampanaCBO[a.campaign_id] = new Set();
             paises.forEach(p => paisesPorCampanaCBO[a.campaign_id].add(p));
-            continue; // no sumar el adset (evita duplicar)
+            cbosConAdsetActivo.add(a.campaign_id);
+            presupPorCuenta[cuenta.nombre].adsets += 1; // contar el conjunto
+            continue; // no sumar presupuesto aquí (evita duplicar con la campaña)
           }
 
+          // Adset ABO: presupuesto propio.
           const daily = parseFloat(a.daily_budget||0)/100;
           const life  = parseFloat(a.lifetime_budget||0)/100;
           const budget = daily || life;
+          // Sin presupuesto propio Y sin ser CBO = no entrega presupuesto medible.
           if (budget <= 0) continue;
 
           totalDiario += daily;
@@ -312,8 +329,11 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
         next = json.paging?.next || null;
       }
 
-      // ── PASO 3: Asignar el presupuesto de las campañas CBO ──
+      // ── PASO 3: Presupuesto de campañas CBO ─────────────────────────────
+      // Solo las CBO que tienen al menos un adset activo (si todos sus adsets
+      // están pausados, la campaña no entrega aunque figure con presupuesto).
       for (const [campId, info] of Object.entries(cboPorCampana)) {
+        if (!cbosConAdsetActivo.has(campId)) continue; // CBO sin adsets activos → no entrega
         const paises = Array.from(paisesPorCampanaCBO[campId] || []);
         const budget = info.daily || info.life;
         totalDiario += info.daily;
