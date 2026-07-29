@@ -235,23 +235,29 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
 
   for (const cuenta of activas) {
     if (!presupPorCuenta[cuenta.nombre]) {
-      presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, campanasCBO:0, adAccountId: cuenta.adAccountId };
+      // Contadores separados por tipo (regla confirmada con el usuario):
+      //   campanasCBO → nº de campañas CBO activas con ≥1 adset activo
+      //                 (es lo que en Meta ves como "campañas", el presupuesto vive aquí)
+      //   adsetsCBO   → nº de conjuntos dentro de campañas CBO (informativo)
+      //   adsetsABO   → nº de conjuntos ABO activos (para ABO, el presupuesto vive aquí)
+      //   adsets      → total de conjuntos activos (CBO + ABO), compatibilidad
+      presupPorCuenta[cuenta.nombre] = { diario:0, adsets:0, adsetsCBO:0, adsetsABO:0, campanasCBO:0, adAccountId: cuenta.adAccountId };
     }
     try {
       // ═══════════════════════════════════════════════════════════════════
       // REGLA (confirmada con el usuario):
       // Una cuenta puede mezclar campañas CBO y ABO. Se clasifica CADA campaña:
       //   • CBO  → la campaña tiene daily_budget/lifetime_budget propio.
-      //            El presupuesto es el de la CAMPAÑA, y solo cuenta si tiene
-      //            ≥1 adset activo (si apagas todos sus adsets, no entrega).
+      //            Presupuesto = el de la CAMPAÑA (no de sus adsets), y solo
+      //            cuenta si la campaña tiene ≥1 adset activo. CONTEO: campañas.
       //   • ABO  → la campaña NO tiene budget propio; vive en cada adset.
-      //            El presupuesto = suma del budget de cada ADSET activo.
-      // Conteo de "conjuntos activos": cada adset activo suma 1 (CBO y ABO).
-      // La campaña padre debe estar activa en ambos casos.
+      //            Presupuesto = suma del budget de cada ADSET activo.
+      //            CONTEO: conjuntos (adsets).
+      // Un adset cuya campaña padre no está activa se descarta (no entrega).
       // ═══════════════════════════════════════════════════════════════════
 
       // ── PASO 1: Campañas activas → clasificar CBO vs ABO ────────────────
-      const campanas = {}; // campId → { tipo:"CBO"|"ABO", budget, tipoBudget, nombre }
+      const campanas = {}; // campId → { tipo, budget, tipoBudget, nombre }
       const cUrl = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/campaigns`);
       cUrl.searchParams.set("fields", "id,name,daily_budget,lifetime_budget,effective_status");
       cUrl.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
@@ -265,7 +271,6 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
           if (c.effective_status !== "ACTIVE") continue;
           const d = parseFloat(c.daily_budget||0)/100;
           const l = parseFloat(c.lifetime_budget||0)/100;
-          // Si la campaña tiene budget propio → CBO. Si no → ABO.
           if (d > 0 || l > 0) {
             campanas[c.id] = { tipo:"CBO", budget:(d||l), tipoBudget:(d?"diario":"total"), nombre:c.name||"(sin nombre)" };
           } else {
@@ -276,15 +281,12 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
       }
 
       // ── PASO 2: Adsets activos ──────────────────────────────────────────
-      // Para CBO: solo registramos países y marcamos que la campaña tiene
-      //   adsets activos (el presupuesto se suma después, a nivel campaña).
-      // Para ABO: sumamos el budget de cada adset activo directamente.
       const url = new URL(`https://graph.facebook.com/v19.0/act_${cuenta.adAccountId}/adsets`);
       url.searchParams.set("fields", "name,campaign_id,daily_budget,lifetime_budget,effective_status,targeting{geo_locations}");
       url.searchParams.set("effective_status", JSON.stringify(["ACTIVE"]));
       url.searchParams.set("limit", "500");
       url.searchParams.set("access_token", token);
-      const paisesPorCampanaCBO = {};   // campId → Set(paises) — para asignar su budget
+      const paisesPorCampanaCBO = {};   // campId → Set(paises)
       const cboConAdsetActivo = new Set(); // campañas CBO con ≥1 adset activo
       let next = url.toString();
       while (next) {
@@ -293,8 +295,7 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
         for (const a of (json.data||[])) {
           if (a.effective_status !== "ACTIVE") continue;
           const camp = campanas[a.campaign_id];
-          // Descartar adsets cuya campaña padre no esté activa (no entregan).
-          if (!camp) continue;
+          if (!camp) continue; // campaña padre no activa → no entrega
 
           const geo = a.targeting?.geo_locations || {};
           let paises = (geo.countries || []).slice();
@@ -302,20 +303,24 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
           (geo.cities||[]).forEach(c=>{ if(c.country&&!paises.includes(c.country))paises.push(c.country); });
 
           if (camp.tipo === "CBO") {
-            // El presupuesto vive en la campaña. El adset SÍ cuenta como conjunto.
+            // Presupuesto vive en la campaña (se suma en Paso 3). El conjunto
+            // se registra como adset CBO (informativo), pero el número que
+            // cuenta para CBO son las CAMPAÑAS, no los adsets.
             if (!paisesPorCampanaCBO[a.campaign_id]) paisesPorCampanaCBO[a.campaign_id] = new Set();
             paises.forEach(p => paisesPorCampanaCBO[a.campaign_id].add(p));
             cboConAdsetActivo.add(a.campaign_id);
+            presupPorCuenta[cuenta.nombre].adsetsCBO += 1;
             presupPorCuenta[cuenta.nombre].adsets += 1;
             continue;
           }
 
-          // ── ABO: presupuesto propio del adset ──
+          // ── ABO: presupuesto propio del adset, y cuenta como conjunto ──
           const daily = parseFloat(a.daily_budget||0)/100;
           const life  = parseFloat(a.lifetime_budget||0)/100;
           const budget = daily || life;
-          presupPorCuenta[cuenta.nombre].adsets += 1; // cuenta como conjunto activo
-          if (budget <= 0) continue; // activo pero sin budget: cuenta pero no suma
+          presupPorCuenta[cuenta.nombre].adsetsABO += 1;
+          presupPorCuenta[cuenta.nombre].adsets += 1;
+          if (budget <= 0) continue; // activo pero sin budget: cuenta, no suma
 
           totalDiario += daily;
           presupPorCuenta[cuenta.nombre].diario += daily;
@@ -336,17 +341,15 @@ export async function fetchPresupuestoPorPais(token, cuentas) {
         next = json.paging?.next || null;
       }
 
-      // ── PASO 3: Presupuesto de campañas CBO ─────────────────────────────
-      // Solo las CBO con ≥1 adset activo. Si apagaste todos sus adsets, la
-      // campaña no entrega aunque siga "activa" → no suma su presupuesto.
+      // ── PASO 3: Presupuesto de campañas CBO (con ≥1 adset activo) ────────
       for (const [campId, info] of Object.entries(campanas)) {
         if (info.tipo !== "CBO") continue;
-        if (!cboConAdsetActivo.has(campId)) continue;
+        if (!cboConAdsetActivo.has(campId)) continue; // sin adsets activos → no entrega
         const paises = Array.from(paisesPorCampanaCBO[campId] || []);
         const budget = info.budget;
         const esDiario = info.tipoBudget === "diario";
         if (esDiario) { totalDiario += budget; presupPorCuenta[cuenta.nombre].diario += budget; }
-        presupPorCuenta[cuenta.nombre].campanasCBO += 1;
+        presupPorCuenta[cuenta.nombre].campanasCBO += 1; // ← el conteo CBO son campañas
         if (paises.length === 1) {
           monoPais[paises[0]] = (monoPais[paises[0]]||0) + budget;
           const kPC = `${paises[0]}|${cuenta.nombre}`;
