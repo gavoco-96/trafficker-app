@@ -1325,9 +1325,17 @@ export function PaisesPanel({ client, onUpdate }) {
                       <div style={{marginTop:8, paddingTop:8, borderTop:"1px solid var(--border)", display:"flex", justifyContent:"space-between", fontSize:10, color:"var(--muted)", gap:6, flexWrap:"wrap"}}>
                         <span>{Math.round(g.leads)} leads · CPL {cplC>0?fmt(cplC):"—"}</span>
                         <span>
-                          {p.adsets>0 && `${p.adsets} adset${p.adsets!==1?"s":""}`}
-                          {p.adsets>0 && p.campanasCBO>0 && " · "}
-                          {p.campanasCBO>0 && `${p.campanasCBO} CBO`}
+                          {(() => {
+                            // CBO se cuenta por CAMPAÑAS (así lo muestra Meta);
+                            // ABO se cuenta por CONJUNTOS (adsets). Mostramos
+                            // solo lo que aplica para no confundir.
+                            const partes = [];
+                            if (p.campanasCBO>0) partes.push(`${p.campanasCBO} CBO`);
+                            if (p.adsetsABO>0) partes.push(`${p.adsetsABO} conjunto${p.adsetsABO!==1?"s":""} ABO`);
+                            // Fallback para datos antiguos sin desglose por tipo
+                            if (!partes.length && p.adsets>0) partes.push(`${p.adsets} conjunto${p.adsets!==1?"s":""}`);
+                            return partes.join(" · ");
+                          })()}
                         </span>
                       </div>
                       <div style={{height:5, borderRadius:3, background:"var(--border)", overflow:"hidden", marginTop:8}}>
